@@ -130,25 +130,17 @@ jobs:
             return $result
           }
 
-          # Run `check_msrv` for every crate within monero-oxide
-          #
-          # This on purposely checks from the bottom to the top, as to not flag a higher-level
-          # dependency as having the correct MSRV solely because a dependency incorrectly specified
-          # its MSRV.
+          # Get the members array from the workspace's Cargo.toml
+          cargo_toml_lines=$(cat ./Cargo.toml | wc -l)
+          members=$(cat Cargo.toml | grep "members\ \=\ \[" -m1 -A$cargo_toml_lines | grep "]" -m1 -B$cargo_toml_lines)
+          # Prune `members = [` to `[` by replacing the first line with just `[`
+          members=$(echo "$members" | sed "1s/.*/\[/")
+          # Remove the trailing comma by replacing the last line's "," with ""
+          members_array_lines=$(echo "$members" | wc -l)
+          members=$(echo "$members" | sed "$(($members_array_lines - 1))s/\,//")
 
-          cd monero-oxide
-
-          # Debug comment while resolving issues with the CI
-          ls
-
-          check_msrv generators
-          check_msrv io
-          check_msrv primitives
-          check_msrv ringct/borromean
-          check_msrv ringct/bulletproofs
-          check_msrv ringct/mlsag
-          check_msrv ringct/clsag
-          check_msrv .
-          check_msrv rpc
-          check_msrv wallet/address
-          check_msrv wallet
+          # Check each member of the workspace
+          echo $members | jq -r ".[]" | while read -r member; do
+            echo "Checking $member"
+            check_msrv $member
+          done
