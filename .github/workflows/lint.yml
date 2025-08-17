@@ -91,25 +91,24 @@ jobs:
         run: |
           cargo +1.89 install cargo-msrv --version =0.18.4
 
-          check_msrv() {
-            # Find the existing rust-version
-            existing=$(cat ./Cargo.toml | grep "rust-version" | grep -Eo "[0-9]+\.[0-9]+")
-
-            # Remove it from the Cargo.toml, as required because else earlier versions of Rust won't
-            # even try to compile this crate.
-            #
-            # echo is needed as a buffer, else we immediately overwrite Cargo.toml and read nothing.
-            # The quotes are to preserve the newlines, which would otherwise be stripped out.
-            echo "$(cat ./Cargo.toml | grep -v "rust-version")" > Cargo.toml
-
-            # Find the actual rust-version
-            actual=$(cargo msrv find --output-format minimal | grep -Eo "^[0-9]+\.[0-9]+")
-
-            # Compare them
-            [ $existing == $actual ]
-
-            # Return if they're equal or not
-            return $?
+          # First, find the existing `rust-version` using `grep` (for the right line) and then a
+          # regex (to strip to the major and minor version).
+          #
+          # We then use an inverted (`-v`) grep to remove it from the Cargo.toml, as required
+          # because else earlier versions of Rust won't even attempt to compile this crate.
+          #
+          # echo is needed as a buffer, else we immediately overwrite the Cargo.toml and read
+          # nothing. The quotes are to preserve the newlines, which would otherwise be collapsed.
+          #
+          # We then find the actual `rust-version` using `cargo-msrv` (again stripping to just the
+          # major and minor version).
+          #
+          # Finally, we compare the two.
+          function check_msrv {                                                                    \
+            existing=$(cat ./Cargo.toml | grep "rust-version" | grep -Eo "[0-9]+\.[0-9]+");        \
+            echo "$(cat ./Cargo.toml | grep -v "rust-version")" > Cargo.toml;                      \
+            actual=$(cargo msrv find --output-format minimal | grep -Eo "^[0-9]+\.[0-9]+");        \
+            [ $existing == $actual ];                                                              \
           }
 
           # Run `check_msrv` for every crate within monero-oxide
