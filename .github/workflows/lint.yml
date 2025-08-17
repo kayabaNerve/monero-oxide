@@ -91,60 +91,61 @@ jobs:
         run: |
           cargo +1.89 install cargo-msrv --version =0.18.4
 
-          # First, find the existing `rust-version` using `grep` (for the right line) and then a
-          # regex (to strip to the major and minor version).
+          # We `cd` into the directory passed as the first argument.
           #
-          # We then use an inverted (`-v`) grep to remove it from the Cargo.toml, as required
-          # because else earlier versions of Rust won't even attempt to compile this crate.
+          # We then find the existing `rust-version` using `grep` (for the right line) and then a
+          # regex (to strip to just the major and minor version).
           #
-          # echo is needed as a buffer, else we immediately overwrite the Cargo.toml and read
-          # nothing. The quotes are to preserve the newlines, which would otherwise be collapsed.
+          # We then backup the `Cargo.toml`, allowing us to restore it after, saving time on future
+          # MSRV checks (as they'll benefit from immediately exiting if the queried version is less
+          # than the declared MSRV).
+          #
+          # We then use an inverted (`-v`) grep to remove the existing `rust-version` from the
+          # `Cargo.toml`, as required because else earlier versions of Rust won't even attempt to
+          # compile this crate.
           #
           # We then find the actual `rust-version` using `cargo-msrv` (again stripping to just the
           # major and minor version).
           #
-          # Finally, we compare the two.
+          # Finally, we compare the two, restore the original `Cargo.toml`, and return to the
+          # directory called from.
           function check_msrv {                                                                    \
+            return_to=$(pwd);                                                                      \
+            cd $1;                                                                                 \
+                                                                                                   \
             existing=$(cat ./Cargo.toml | grep "rust-version" | grep -Eo "[0-9]+\.[0-9]+");        \
-            echo "$(cat ./Cargo.toml | grep -v "rust-version")" > Cargo.toml;                      \
+                                                                                                   \
+            mv ./Cargo.toml ./Cargo.toml.bak;                                                      \
+            cat ./Cargo.toml.bak | grep -v "rust-version" > Cargo.toml;                            \
+                                                                                                   \
             actual=$(cargo msrv find --output-format minimal | grep -Eo "^[0-9]+\.[0-9]+");        \
+                                                                                                   \
             [ $existing == $actual ];                                                              \
+            result=$?;                                                                             \
+                                                                                                   \
+            rm Cargo.toml;                                                                         \
+            mv ./Cargo.toml.bak ./Cargo.toml;                                                      \
+                                                                                                   \
+            cd $return_to;                                                                         \
+            return $result;                                                                        \
           }
 
           # Run `check_msrv` for every crate within monero-oxide
+          #
           # This on purposely checks from the bottom to the top, as to not flag a higher-level
           # dependency as having the correct MSRV solely because a dependency incorrectly specified
-          # its MSRV
+          # its MSRV.
 
           cd monero-oxide
 
-          cd generators
-          check_msrv # monero-generators
-          cd ../io
-          check_msrv # monero-io
-          cd ../primitives
-          check_msrv # monero-primitives
-          cd ..
-
-          cd ringct
-          cd borromean
-          check_msrv # monero-borromean
-          cd ../bulletproofs
-          check_msrv # monero-bulletproofs
-          cd ../mlsag
-          check_msrv # monero-mlsag
-          cd ../clsag
-          check_msrv # monero-clsag
-          cd ../..
-
-          check_msrv # monero-oxide
-          cd rpc
-          check_msrv # monero-rpc
-          cd ../
-
-          cd wallet
-
-          cd address
-          check_msrv # monero-address
-          cd ..
-          check_msrv # monero-wallet
+          check_msrv generators
+          check_msrv io
+          check_msrv primitives
+          check_msrv ringct/borromean
+          check_msrv ringct/bulletproofs
+          check_msrv ringct/mlsag
+          check_msrv ringct/clsag
+          check_msrv .
+          check_msrv rpc
+          check_msrv wallet/address
+          check_msrv wallet
