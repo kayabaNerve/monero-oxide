@@ -109,29 +109,26 @@ jobs:
           #
           # Finally, we compare the two, restore the original `Cargo.toml`, and return to the
           # directory called from.
-          function check_msrv {                                                                    \
-            return_to=$(pwd);                                                                      \
-            cd $1;                                                                                 \
-                                                                                                   \
-            existing=$(cat ./Cargo.toml | grep "rust-version" | grep -Eo "[0-9]+\.[0-9]+");        \
-                                                                                                   \
-            mv ./Cargo.toml ./Cargo.toml.bak;                                                      \
-            cat ./Cargo.toml.bak | grep -v "rust-version" > Cargo.toml;                            \
-                                                                                                   \
-            actual=$(cargo msrv find --output-format minimal | grep -Eo "^[0-9]+\.[0-9]+");        \
-                                                                                                   \
-            [ $existing == $actual ];                                                              \
-            result=$?;                                                                             \
-                                                                                                   \
-            rm Cargo.toml;                                                                         \
-            mv ./Cargo.toml.bak ./Cargo.toml;                                                      \
-                                                                                                   \
-            cd $return_to;                                                                         \
-            return $result;                                                                        \
-          }
+          function check_msrv {
+            return_to=$(pwd)
+            cd $1
 
-          echo "Declared `check_msrv` function"
-          ls
+            existing=$(cat ./Cargo.toml | grep "rust-version" | grep -Eo "[0-9]+\.[0-9]+")
+
+            mv ./Cargo.toml ./Cargo.toml.bak
+            cat ./Cargo.toml.bak | grep -v "rust-version" > Cargo.toml
+
+            actual=$(cargo msrv find --output-format minimal | grep -Eo "^[0-9]+\.[0-9]+")
+
+            [ $existing == $actual ]
+            result=$?
+
+            rm Cargo.toml
+            mv ./Cargo.toml.bak ./Cargo.toml
+
+            cd $return_to
+            return $result
+          }
 
           # Run `check_msrv` for every crate within monero-oxide
           #
@@ -141,7 +138,7 @@ jobs:
 
           cd monero-oxide
 
-          echo "`cd monero-oxide`'d'"
+          # Debug comment while resolving issues with the CI
           ls
 
           check_msrv generators
