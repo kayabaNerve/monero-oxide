@@ -81,3 +81,71 @@ jobs:
         run: |
           cargo +1.89 install cargo-machete --version =0.8.0
           cargo +1.89 machete
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
+      - name: Verify claimed `rust-version`
+        shell: bash
+        run: |
+          cargo +1.89 install cargo-msrv --version =0.18.4
+
+          check_msrv() {
+            # Find the existing rust-version
+            existing=$(cat ./Cargo.toml | grep "rust-version" | grep -Eo "[0-9]+\.[0-9]+")
+
+            # Remove it from the Cargo.toml, as required because else earlier versions of Rust won't
+            # even try to compile this crate.
+            #
+            # echo is needed as a buffer, else we immediately overwrite Cargo.toml and read nothing.
+            # The quotes are to preserve the newlines, which would otherwise be stripped out.
+            echo "$(cat ./Cargo.toml | grep -v "rust-version")" > Cargo.toml
+
+            # Find the actual rust-version
+            actual=$(cargo msrv find --output-format minimal | grep -Eo "^[0-9]+\.[0-9]+")
+
+            # Compare them
+            [ $existing == $actual ]
+
+            # Return if they're equal or not
+            return $?
+          }
+
+          # Run `check_msrv` for every crate within monero-oxide
+          # This on purposely checks from the bottom to the top, as to not flag a higher-level
+          # dependency as having the correct MSRV solely because a dependency incorrectly specified
+          # its MSRV
+
+          cd monero-oxide
+
+          cd generators
+          check_msrv # monero-generators
+          cd ../io
+          check_msrv # monero-io
+          cd ../primitives
+          check_msrv # monero-primitives
+          cd ..
+
+          cd ringct
+          cd borromean
+          check_msrv # monero-borromean
+          cd ../bulletproofs
+          check_msrv # monero-bulletproofs
+          cd ../mlsag
+          check_msrv # monero-mlsag
+          cd ../clsag
+          check_msrv # monero-clsag
+          cd ../..
+
+          check_msrv # monero-oxide
+          cd rpc
+          check_msrv # monero-rpc
+          cd ../
+
+          cd wallet
+
+          cd address
+          check_msrv # monero-address
+          cd ..
+          check_msrv # monero-wallet
