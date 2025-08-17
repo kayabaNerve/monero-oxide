@@ -91,6 +91,8 @@ jobs:
         run: |
           cargo +1.89 install cargo-msrv --version =0.18.4
 
+          echo "Installed cargo msrv"
+
           # We `cd` into the directory passed as the first argument.
           #
           # We then find the existing `rust-version` using `grep` (for the right line) and then a
@@ -129,6 +131,8 @@ jobs:
             cd $return_to;                                                                         \
             return $result;                                                                        \
           }
+
+          echo "Declared `check_msrv` function"
 
           # Run `check_msrv` for every crate within monero-oxide
           #
