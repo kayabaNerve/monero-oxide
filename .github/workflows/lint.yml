@@ -111,6 +111,7 @@ jobs:
           # directory called from.
           function check_msrv {
             return_to=$(pwd)
+            echo "Checking $1"
             cd $1
 
             existing=$(cat ./Cargo.toml | grep "rust-version" | grep -Eo "[0-9]+\.[0-9]+")
@@ -120,6 +121,8 @@ jobs:
 
             actual=$(cargo msrv find --output-format minimal | grep -Eo "^[0-9]+\.[0-9]+")
 
+            echo "Declared rust-version: $existing"
+            echo "Actual rust-version: $actual"
             [ $existing == $actual ]
             result=$?
 
@@ -140,7 +143,13 @@ jobs:
           members=$(echo "$members" | sed "$(($members_array_lines - 1))s/\,//")
 
           # Check each member of the workspace
-          echo $members | jq -r ".[]" | while read -r member; do
-            echo "Checking $member"
-            check_msrv $member
-          done
+          function check_workspace {
+            echo $members | jq -r ".[]" | while read -r member; do
+              check_msrv $member
+              correct=$?
+              if [ $correct -ne 0 ]; then
+                return $correct
+              fi
+            done
+          }
+          check_workspace
