@@ -159,8 +159,8 @@ pub fn hash_to_point(bytes: [u8; 32]) -> EdwardsPoint {
   #[allow(non_snake_case)]
   let negative_A = -A;
 
-  // OPEN QUESTION: What is this `step_1` value?
-  let step_1 = {
+  // Sample a FieldElement
+  let sampled_field_element = {
     use crypto_bigint::{Encoding, U256};
     /*
       This isn't a wide reduction, implying it'd be biased, yet the bias should only be negligible
@@ -175,7 +175,9 @@ pub fn hash_to_point(bytes: [u8; 32]) -> EdwardsPoint {
     */
     FieldElement::from_u256(&U256::from_le_bytes(keccak256(&bytes)))
   };
-  let step_1 = step_1.square().double();
+
+  // OPEN QUESTION: What is this value?
+  let step_1 = sampled_field_element.square().double();
 
   /*
     `z` is used as the denominator within projective coordinates for a point on Curve25519. We know
