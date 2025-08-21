@@ -144,7 +144,7 @@ pub fn hash_to_point(bytes: [u8; 32]) -> EdwardsPoint {
   let negative_A = -A;
 
   /*
-    https://arxiv.org/abs/0706.1448 defines a solution for:
+    The paper supposedly implemented defines a solution for:
       g_1(x) = x^n + ax + b
       g_2(x) = x^n + ax^2 + bx
     where `g = g_1` or `g = g_2`.
