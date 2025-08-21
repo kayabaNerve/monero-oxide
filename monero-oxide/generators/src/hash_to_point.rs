@@ -24,7 +24,11 @@ use crate::keccak256;
 /// "Elligator: Elliptic-curve points indistinguishable from uniform random strings"
 /// (https://eprint.iacr.org/2013/325). Specifically, Section 5.5 details the application of
 /// Elligator 2 to Curve25519, after which the result is mapped to Ed25519.
-pub fn hash_to_point(bytes: [u8; 32]) -> EdwardsPoint {
+///
+/// As this only applies Elligator 2 once, it's limited to a subset of points where a certain
+/// derivative of their `u` coordinates (in Montgomery form) are quadratic residues. It's biased
+/// accordingly.
+pub fn biased_hash_to_point(bytes: [u8; 32]) -> EdwardsPoint {
   /*
     Curve25519 is a Montgomery curve with equation `v^2 = u^3 + 486662 u^2 + u`.
 
