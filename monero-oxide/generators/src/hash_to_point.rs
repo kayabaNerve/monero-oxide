@@ -1,4 +1,4 @@
-use subtle::{ConstantTimeEq, ConditionallySelectable};
+use subtle::{Choice, ConstantTimeEq, ConditionallySelectable};
 
 use group::ff::{Field, PrimeField};
 use curve25519_dalek::edwards::EdwardsPoint;
@@ -7,6 +7,84 @@ use dalek_ff_group::FieldElement;
 use monero_io::decompress_point;
 
 use crate::keccak256;
+
+/*
+  This function and the following `curve25519_u_z_and_x_sign_to_ed25519_point_slow` function are
+  SOLELY INTENDED for use with `hash_to_point`. They do not accept arbitrary `u, z, sign` values,
+  expecting the values to rely within a certain set. They MUST NOT be used within any other
+  context.
+*/
+fn curve25519_u_z_and_x_sign_to_ed25519_point(
+  u: FieldElement,
+  z: FieldElement,
+  sign: Choice,
+) -> EdwardsPoint {
+  /*
+  Map from the Curve25519 `u` coordinate to an Ed25519 `y` coordinate.
+
+  Instead of normalizing, then mapping, the following equation optimizes to a single inversion.
+
+  If `u / z` is actually the coordinate of a point on Curve25519, the following `unwrap` calls
+  will never trigger due to the map from Curve25519 to Ed25519 being well-defined.
+  */
+  let y = (u - z) * (u + z).invert().unwrap();
+  debug_assert_eq!(
+    y,
+    {
+      let u = u * z.invert().expect("unreachable modulo 2^{255} - 19 due to how `z` was chosen");
+      (u - FieldElement::ONE) * (u + FieldElement::ONE).invert().unwrap()
+    },
+    "normalize and map wasn't equivalent to normalize, then map"
+  );
+
+  /*
+  Encode the `y` coordinate for us to then pass to `curve25519-dalek`, which won't let us
+  construct a point directly from its `x, y` coordinates.
+
+  This is slightly inefficient, as `curve25519-dalek` will redo all the work to perform point
+  decompression. In comparison, we can also immediately calculate the `x` coordinate.
+  */
+  let mut bytes = y.to_repr();
+  // Add the sign bit for which `x` coordinate to take.
+  bytes[31] |= sign.unwrap_u8() << 7;
+
+  /*
+  Ed25519 point decompression works as follows.
+
+  d = (-121665) / 121666
+  x^2 = (y^2 - 1) / ((d y^2) + 1)
+
+  Note `(d y^2) + 1` will always be non-zero as `((2^{255} - 19) - 1) / d` doesn't have a square
+  root modulo `2^{255} - 19`.
+
+  ```sage
+  p = 2**255 - 19
+  d = (-121665) * inverse_mod(121666, p)
+  Mod((p - 1) * inverse_mod(d, p), p).is_square() == False
+  ```
+
+  If `u / z` is actually the coordinate of a point on Curve25519, `y` will actually be the
+  coordinate of a point on Ed25519 due to the map from Curve25519 to Ed25519 being well-defined.
+  */
+  decompress_point(bytes).expect("point from hash-to-curve wasn't on-curve")
+}
+
+/*
+  This slow function exists as it's much smaller and much more readable. It just also pays the cost
+  of an extra inversion, which isn't cheap, so it's not worth using except as a sanity check.
+*/
+#[cfg(debug_assertions)]
+fn curve25519_u_z_and_x_sign_to_ed25519_point_slow(
+  u: FieldElement,
+  z: FieldElement,
+  sign: Choice,
+) -> EdwardsPoint {
+  curve25519_dalek::MontgomeryPoint(
+    (u * z.invert().expect("unreachable modulo 2^{255} - 19 due to how `z` was chosen")).to_repr(),
+  )
+  .to_edwards(sign.unwrap_u8())
+  .unwrap()
+}
 
 /// Monero's `hash_to_ec` function.
 ///
@@ -40,8 +118,7 @@ pub fn hash_to_point(bytes: [u8; 32]) -> EdwardsPoint {
     use crypto_bigint::{Encoding, U256};
     FieldElement::from_u256(&U256::from_le_bytes(keccak256(&bytes)))
   };
-  let step_1 = step_1.square();
-  let step_1 = step_1.double();
+  let step_1 = step_1.square().double();
 
   /*
     `z` is used as the denominator within projective coordinates for a point on Curve25519. We know
@@ -51,6 +128,8 @@ pub fn hash_to_point(bytes: [u8; 32]) -> EdwardsPoint {
     p = 2**255 - 19
     Mod((p - 1) * inverse_mod(2, p), p).is_square() == False
     ```
+
+    This potentially immediately explains why `let step_1 = step_1.square().double();` occurs.
   */
   let z = step_1 + FieldElement::ONE;
 
@@ -114,66 +193,24 @@ pub fn hash_to_point(bytes: [u8; 32]) -> EdwardsPoint {
   };
 
   /*
-    The following code does not calculate the full coordinates of the resulting point, solely the
-    `Y` coordinate and the sign of the `X` coordinate. We then encode this, passing it to
-    curve25519-dalek to decompress and yield us the instantiated point.
-
-    This resolves the API boundary of how we cannot instantiate a `curve25519_dalek::EdwardsPoint`
-    from its coordinates.
-  */
-
-  /*
     This is the _Projective_ `u` coordinate for a point on Curve25519. The Affine `u` coordinate
     would be `u / z`.
   */
-  // OPEN QUESTION: Why is this a coordinate of a point on Curve25519? Is it uniform?
+  /*
+    OPEN QUESTION: Why is this a coordinate of a point on Curve25519, except with negligible
+    probability? Is it uniform to the set of all `u` coordinates for points on Curve25519?
+  */
   let u =
     FieldElement::conditional_select(&(negative_A * step_1), &negative_A, !u_over_v_was_square);
 
   /*
-    Map from the Curve25519 `u` coordinate to an Ed25519 `y` coordinate.
+    OPEN QUESTION: Why is `!u_over_v_was_square` used for the sign?
 
-    Instead of normalizing, then mapping, the following equation optimizes to a single inversion.
-
-    If `u / z` is actually the coordinate of a point on Curve25519, the following `unwrap` calls
-    will never trigger due to the map from Curve25519 to Ed25519 being well-defined.
+    This is probably best answered by implementing the rest of the calculations for the `x`
+    coordinate in this function, which will probably show the relation.
   */
-  let y = (u - z) * (u + z).invert().unwrap();
-  debug_assert_eq!(
-    y,
-    {
-      let u = u * z.invert().expect("unreachable modulo 2^{255} - 19");
-      (u - FieldElement::ONE) * (u + FieldElement::ONE).invert().unwrap()
-    },
-    "normalize and map wasn't equivalent to normalize, then map"
-  );
-
-  // Encode the `y` coordinate for us to then pass to curve25519_dalek
-  let mut bytes = y.to_repr();
-  // Add the sign bit for which `x` coordinate to take.
-  /*
-    OPEN QUESTION: How does whether this value was square translate to which `x` coordinate to
-    take?
-  */
-  bytes[31] |= (!u_over_v_was_square).unwrap_u8() << 7;
-
-  /*
-    Ed25519 point decompression works as follows.
-
-    d = (-121665) / 121666
-    x^2 = (y^2 - 1) / ((d y^2) + 1)
-
-    Note `(d y^2) + 1` will always be non-zero as `((2^{255} - 19) - 1) / d` doesn't have a square
-    root modulo `2^{255} - 19`.
-
-    ```sage
-    p = 2**255 - 19
-    d = (-121665) * inverse_mod(121666, p)
-    Mod((p - 1) * inverse_mod(d, p), p).is_square() == False
-    ```
-
-    If `u / z` is actually the coordinate of a point on Curve25519, `y` will actually be the
-    coordinate of a point on Ed25519 due to the map from Curve25519 to Ed25519 being well-defined.
-  */
-  decompress_point(bytes).expect("point from hash-to-curve wasn't on-curve").mul_by_cofactor()
+  let x_coordinate_sign = !u_over_v_was_square;
+  let res = curve25519_u_z_and_x_sign_to_ed25519_point(u, z, x_coordinate_sign);
+  debug_assert_eq!(res, curve25519_u_z_and_x_sign_to_ed25519_point_slow(u, z, x_coordinate_sign));
+  res.mul_by_cofactor()
 }
