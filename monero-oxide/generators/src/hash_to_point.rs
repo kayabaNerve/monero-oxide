@@ -35,14 +35,15 @@ pub fn biased_hash_to_point(bytes: [u8; 32]) -> EdwardsPoint {
     A Curve25519 point `(u, v)` may be mapped to an Ed25519 point `(x, y)` with the map
     `(sqrt(-(A + 2)) u / v, (u - 1) / (u + 1))`.
   */
-  #[allow(non_snake_case)]
-  let A = FieldElement::from(486662u64);
-  #[allow(non_snake_case)]
-  let negative_A = -A;
+  use crypto_bigint::U256;
+  const A_U256: U256 = U256::from_u64(486662);
+  const A: FieldElement = FieldElement::from_u256(&A_U256);
+  const MODULUS: U256 = U256::ONE.shl_vartime(255).wrapping_sub(&U256::from_u64(19));
+  const NEGATIVE_A: FieldElement = FieldElement::from_u256(&MODULUS.wrapping_sub(&A_U256));
 
   // Sample a FieldElement
   let r = {
-    use crypto_bigint::{Encoding, U256};
+    use crypto_bigint::Encoding;
     /*
       This isn't a wide reduction, implying it'd be biased, yet the bias should only be negligible
       due to the shape of the prime number. All elements within the prime field field have a
@@ -72,20 +73,21 @@ pub fn biased_hash_to_point(bytes: [u8; 32]) -> EdwardsPoint {
   let one_plus_ur_square_inv = one_plus_ur_square
     .invert()
     .expect("unreachable modulo 2^{255} - 19 due to how `ur_square` was chosen");
-  let upsilon = negative_A * one_plus_ur_square_inv;
+  let upsilon = NEGATIVE_A * one_plus_ur_square_inv;
   /*
     Quoting section 5.5,
     "then \epsilon = 1 and x = \upsilon. Otherwise \epsilon = -1, x = \upsilon u r^2"
 
-    This differs from the map itself defined in 5.2, which sets the other candidate to
-    `-1 upsilon - A`, as the IETF specification for Elligator 2 does when the curve is of the
-    form `y^2 = x^3 + A x^2 + x`.
+    Whereas in the specification present in Section 5.2, the expansion of the `u` coordinate when
+    `\epsilon = -1` is `-\upsilon - A`. Per Section 5.2, in the "Second case",
+    `= -\upsilon - A = \upsilon u r^2`. These two values are equivalent, yet the negation and
+    subtract outperform a multiplication.
   */
-  let other_candidate = upsilon * ur_square;
+  let other_candidate = -upsilon - A;
 
   /*
-    Check if `upsilon` is a valid `u` coordinate by checking for a solution for the square root
-    of `upsilon^3 + A upsilon^2 + upsilon`.
+    Check if `\upsilon` is a valid `u` coordinate by checking for a solution for the square root
+    of `\upsilon^3 + A \upsilon^2 + \upsilon`.
   */
   let epsilon = (((upsilon + A) * upsilon.square()) + upsilon).sqrt().is_some();
   let u = <FieldElement>::conditional_select(&other_candidate, &upsilon, epsilon);
@@ -93,8 +95,8 @@ pub fn biased_hash_to_point(bytes: [u8; 32]) -> EdwardsPoint {
   // Map from Curve25519 to Ed25519
   /*
     Elligator 2's specification in section 5.2 says to choose the negative square root as the
-    `v` coordinate if `upsilon` was chosen (as signaled by `epsilon = 1`). The following
-    chooses the odd `y` coordinate if `upsilon` was chosen.
+    `v` coordinate if `\upsilon` was chosen (as signaled by `\epsilon = 1`). The following
+    chooses the odd `y` coordinate if `\upsilon` was chosen, which is functionally equivalent.
   */
   let res = curve25519_dalek::MontgomeryPoint(u.to_repr())
     .to_edwards(epsilon.unwrap_u8())
