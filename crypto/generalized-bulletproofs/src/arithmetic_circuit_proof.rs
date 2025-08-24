@@ -577,17 +577,34 @@ where
     let z = transcript.challenge::<C>();
     let YzChallenges { y_inv, z } = self.yz_challenges(y, z);
 
-    let mut l_weights = ScalarVector::new(n);
-    let mut r_weights = ScalarVector::new(n);
-    let mut o_weights = ScalarVector::new(n);
-    for (constraint, z) in self.constraints.iter().zip(&z.0) {
-      accumulate_vector(&mut l_weights, &constraint.WL, *z);
-      accumulate_vector(&mut r_weights, &constraint.WR, *z);
-      accumulate_vector(&mut o_weights, &constraint.WO, *z);
+    let (l_weights, mut r_weights, o_weights) = {
+      let mut l_weights = ScalarVector::new(n);
+      let mut r_weights = ScalarVector::new(n);
+      let mut o_weights = ScalarVector::new(n);
+      let mut l_hi = 0;
+      let mut r_hi = 0;
+      let mut o_hi = 0;
+      for (constraint, z) in self.constraints.iter().zip(&z.0) {
+        l_hi = l_hi.max(accumulate_vector(&mut l_weights, &constraint.WL, *z));
+        r_hi = r_hi.max(accumulate_vector(&mut r_weights, &constraint.WR, *z));
+        o_hi = o_hi.max(accumulate_vector(&mut o_weights, &constraint.WO, *z));
+      }
+      l_weights.0.truncate(l_hi + 1);
+      r_weights.0.truncate(r_hi + 1);
+      o_weights.0.truncate(o_hi + 1);
+      (l_weights, r_weights, o_weights)
+    };
+    for (r, y_inv) in r_weights.0.iter_mut().zip(&y_inv.0) {
+      *r *= *y_inv;
     }
-    let r_weights = r_weights * &y_inv;
 
-    let delta = r_weights.inner_product(l_weights.0.iter());
+    let delta = {
+      let mut delta = C::F::ZERO;
+      for (l, r) in l_weights.0.iter().zip(r_weights.0.iter()) {
+        delta += *l * *r;
+      }
+      delta
+    };
 
     let mut T_before_ni = Vec::with_capacity(ni);
     let mut T_after_ni = Vec::with_capacity(t_poly_len - ni - 1);
@@ -659,16 +676,23 @@ where
         verifier.g_bold[i] += wr;
       }
       // WO is weighted by x**jo where jo == 0, hence why we can ignore the x term
-      h_bold_scalars = h_bold_scalars + &(o_weights * verifier_weight);
+      for (res, o) in h_bold_scalars.0.iter_mut().zip(&o_weights.0) {
+        *res += *o * verifier_weight;
+      }
+      for i in h_bold_scalars.len() .. o_weights.len() {
+        h_bold_scalars.0.push(o_weights[i] * verifier_weight);
+      }
 
       let mut cg_weights = Vec::with_capacity(self.C.len());
       for i in 0 .. self.C.len() {
         let mut cg = ScalarVector::new(n);
+        let mut cg_hi = 0;
         for (constraint, z) in self.constraints.iter().zip(&z.0) {
           if let Some(WCG) = constraint.WCG.get(i) {
-            accumulate_vector(&mut cg, WCG, *z);
+            cg_hi = cg_hi.max(accumulate_vector(&mut cg, WCG, *z));
           }
         }
+        cg.0.truncate(cg_hi + 1);
         cg_weights.push(cg);
       }
 
@@ -680,13 +704,18 @@ where
         }
         let j = ni - i;
         verifier.additional.push((x[i], C));
-        h_bold_scalars = h_bold_scalars + &(WCG * x[j]);
+        let weights = WCG * x[j];
+        for (res, w) in h_bold_scalars.0.iter_mut().zip(&weights.0) {
+          *res += w;
+        }
+        if h_bold_scalars.len() < weights.len() {
+          h_bold_scalars.0.extend(&weights.0[h_bold_scalars.len() ..]);
+        }
       }
 
       // All terms for h_bold here have actually been for h_bold', h_bold * y_inv
-      h_bold_scalars = h_bold_scalars * &y_inv;
-      for (i, scalar) in h_bold_scalars.0.into_iter().enumerate() {
-        verifier.h_bold[i] += scalar;
+      for (i, (scalar, y_inv)) in h_bold_scalars.0.into_iter().zip(&y_inv.0).enumerate() {
+        verifier.h_bold[i] += scalar * y_inv;
       }
 
       // Remove u * h from P
