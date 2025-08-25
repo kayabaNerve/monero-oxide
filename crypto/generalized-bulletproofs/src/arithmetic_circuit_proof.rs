@@ -186,6 +186,61 @@ where
     YzChallenges { y_inv, z }
   }
 
+  /// Obtain the weights for the `aL`, `aR`, `aO` vectors' constraints.
+  ///
+  /// These will be truncated to only include values _known to be set_.
+  #[allow(clippy::type_complexity)]
+  fn lro_weights(
+    &self,
+    z: &ScalarVector<C::F>,
+  ) -> (ScalarVector<C::F>, ScalarVector<C::F>, ScalarVector<C::F>) {
+    let n = self.n();
+
+    // Initially, we allocate vectors of full length so we can write into them as needed, without
+    // panicking.
+    let mut l_weights = ScalarVector::new(n);
+    let mut r_weights = ScalarVector::new(n);
+    let mut o_weights = ScalarVector::new(n);
+
+    // Track the highest index written to
+    let mut l_hi = 0;
+    let mut r_hi = 0;
+    let mut o_hi = 0;
+    for (constraint, z) in self.constraints.iter().zip(&z.0) {
+      l_hi = l_hi.max(accumulate_vector(&mut l_weights, &constraint.WL, *z));
+      r_hi = r_hi.max(accumulate_vector(&mut r_weights, &constraint.WR, *z));
+      o_hi = o_hi.max(accumulate_vector(&mut o_weights, &constraint.WO, *z));
+    }
+
+    // Perform the truncation, and as `*_hi` represents the index, add `1` to obtain the length
+    // we're truncating to (preserving all values we did actually write to)
+    l_weights.0.truncate(l_hi + 1);
+    r_weights.0.truncate(r_hi + 1);
+    o_weights.0.truncate(o_hi + 1);
+
+    (l_weights, r_weights, o_weights)
+  }
+
+  /// Obtain the weights for the `CG` matrix's constraints.
+  ///
+  /// Each vector will be truncated to only include values _known to be set_.
+  #[allow(clippy::type_complexity)]
+  fn cg_weights(&self, z: &ScalarVector<C::F>) -> Vec<ScalarVector<C::F>> {
+    let mut cg_weights = Vec::with_capacity(self.c());
+    for i in 0 .. self.c() {
+      let mut cg = ScalarVector::new(self.n());
+      let mut cg_hi = 0;
+      for (constraint, z) in self.constraints.iter().zip(&z.0) {
+        if let Some(WCG) = constraint.WCG.get(i) {
+          cg_hi = cg_hi.max(accumulate_vector(&mut cg, WCG, *z));
+        }
+      }
+      cg.0.truncate(cg_hi + 1);
+      cg_weights.push(cg);
+    }
+    cg_weights
+  }
+
   /// Prove for this statement/witness.
   pub fn prove<R: RngCore + CryptoRng>(
     self,
@@ -351,31 +406,7 @@ where
       r.push(ScalarVector::new(0));
     }
 
-    let (l_weights, r_weights, o_weights) = {
-      let mut l_weights = ScalarVector::new(n);
-      let mut r_weights = ScalarVector::new(n);
-      let mut o_weights = ScalarVector::new(n);
-      /*
-        Track the index of the highest element within this vector actually used.
-
-        This allows us to truncate it after, saving operations over values we know will be zero.
-
-        `l_hi, r_hi` are pre-initialized to lengths we know the resulting vector will need to be to
-        incorprate additional terms once actually placed in the `l, r` polynomials.
-      */
-      let mut l_hi = witness.aR.len();
-      let mut r_hi = witness.aL.len();
-      let mut o_hi = 0;
-      for (constraint, z) in self.constraints.iter().zip(&z.0) {
-        l_hi = l_hi.max(accumulate_vector(&mut l_weights, &constraint.WL, *z));
-        r_hi = r_hi.max(accumulate_vector(&mut r_weights, &constraint.WR, *z));
-        o_hi = o_hi.max(accumulate_vector(&mut o_weights, &constraint.WO, *z));
-      }
-      l_weights.0.truncate(l_hi + 1);
-      r_weights.0.truncate(r_hi + 1);
-      o_weights.0.truncate(o_hi + 1);
-      (l_weights, r_weights, o_weights)
-    };
+    let (l_weights, r_weights, o_weights) = self.lro_weights(&z);
 
     l[ilr] = r_weights;
     for (dest, weight) in l[ilr].0.iter_mut().zip(&y_inv.0) {
@@ -384,12 +415,29 @@ where
     for (dest, src) in l[ilr].0.iter_mut().zip(&witness.aL.0) {
       *dest += src;
     }
-    l[io] = witness.aO.clone();
-    l[is] = sL;
-    r[jlr] = l_weights;
-    for (dest, (src_a, src_b)) in r[jlr].0.iter_mut().zip(witness.aR.0.iter().zip(&y.0)) {
-      *dest += *src_a * *src_b;
+    // If the prior while loop terminated because `l[ilr]` was short, push the rest of `aL`
+    {
+      let l_ilr_len = l[ilr].len();
+      if l_ilr_len < witness.aL.len() {
+        l[ilr].0.extend(&witness.aL.0[l_ilr_len ..]);
+      }
     }
+
+    l[io] = witness.aO.clone();
+
+    l[is] = sL;
+
+    r[jlr] = l_weights;
+    r[jlr].0.reserve(witness.aR.len());
+    let mut aR_y = witness.aR.0.iter().zip(&y.0).map(|(aR, y)| *aR * y);
+    for (dest, aR_y) in r[jlr].0.iter_mut().zip(&mut aR_y) {
+      *dest += aR_y;
+    }
+    // If the prior while loop terminated because `r[jlr]` was short, push the rest of `aR_y`
+    for aR_y in aR_y {
+      r[jlr].0.push(aR_y);
+    }
+
     r[jo] = ScalarVector::new(n);
     for (dest, (o, y)) in r[jo].0.iter_mut().zip(o_weights.0.iter().zip(&y.0)) {
       *dest = *o - *y;
@@ -397,26 +445,13 @@ where
     for i in o_weights.len() .. n {
       r[jo][i] = -y[i];
     }
+
     r[js] = sR * &y;
 
     // We now fill in the vector commitments
     // We use unused coefficients of l increasing from 0 (skipping ilr), and unused coefficients of
     // r decreasing from n' (skipping jlr)
-
-    let mut cg_weights = Vec::with_capacity(witness.c.len());
-    for i in 0 .. witness.c.len() {
-      let mut cg = ScalarVector::new(n);
-      let mut cg_hi = 0;
-      for (constraint, z) in self.constraints.iter().zip(&z.0) {
-        if let Some(WCG) = constraint.WCG.get(i) {
-          cg_hi = cg_hi.max(accumulate_vector(&mut cg, WCG, *z));
-        }
-      }
-      cg.0.truncate(cg_hi + 1);
-      cg_weights.push(cg);
-    }
-
-    for (mut i, (c, cg_weights)) in witness.c.iter().zip(cg_weights).enumerate() {
+    for (mut i, (c, cg_weights)) in witness.c.iter().zip(self.cg_weights(&z)).enumerate() {
       if i >= ilr {
         i += 1;
       }
@@ -432,9 +467,7 @@ where
     for (i, l) in l.iter().enumerate() {
       for (j, r) in r.iter().enumerate() {
         let new_coeff = i + j;
-        for (l, r) in l.0.iter().zip(&r.0) {
-          t[new_coeff] += *l * r;
-        }
+        t[new_coeff] += l.inner_product_without_length_check(r.0.iter());
       }
     }
 
@@ -577,34 +610,14 @@ where
     let z = transcript.challenge::<C>();
     let YzChallenges { y_inv, z } = self.yz_challenges(y, z);
 
-    let (l_weights, mut r_weights, o_weights) = {
-      let mut l_weights = ScalarVector::new(n);
-      let mut r_weights = ScalarVector::new(n);
-      let mut o_weights = ScalarVector::new(n);
-      let mut l_hi = 0;
-      let mut r_hi = 0;
-      let mut o_hi = 0;
-      for (constraint, z) in self.constraints.iter().zip(&z.0) {
-        l_hi = l_hi.max(accumulate_vector(&mut l_weights, &constraint.WL, *z));
-        r_hi = r_hi.max(accumulate_vector(&mut r_weights, &constraint.WR, *z));
-        o_hi = o_hi.max(accumulate_vector(&mut o_weights, &constraint.WO, *z));
-      }
-      l_weights.0.truncate(l_hi + 1);
-      r_weights.0.truncate(r_hi + 1);
-      o_weights.0.truncate(o_hi + 1);
-      (l_weights, r_weights, o_weights)
-    };
+    let (l_weights, mut r_weights, o_weights) = self.lro_weights(&z);
     for (r, y_inv) in r_weights.0.iter_mut().zip(&y_inv.0) {
       *r *= *y_inv;
     }
 
-    let delta = {
-      let mut delta = C::F::ZERO;
-      for (l, r) in l_weights.0.iter().zip(r_weights.0.iter()) {
-        delta += *l * *r;
-      }
-      delta
-    };
+    let delta = l_weights.inner_product_without_length_check(r_weights.0.iter());
+
+    let cg_weights = self.cg_weights(&z);
 
     let mut T_before_ni = Vec::with_capacity(ni);
     let mut T_after_ni = Vec::with_capacity(t_poly_len - ni - 1);
@@ -681,19 +694,6 @@ where
       }
       for i in h_bold_scalars.len() .. o_weights.len() {
         h_bold_scalars.0.push(o_weights[i] * verifier_weight);
-      }
-
-      let mut cg_weights = Vec::with_capacity(self.C.len());
-      for i in 0 .. self.C.len() {
-        let mut cg = ScalarVector::new(n);
-        let mut cg_hi = 0;
-        for (constraint, z) in self.constraints.iter().zip(&z.0) {
-          if let Some(WCG) = constraint.WCG.get(i) {
-            cg_hi = cg_hi.max(accumulate_vector(&mut cg, WCG, *z));
-          }
-        }
-        cg.0.truncate(cg_hi + 1);
-        cg_weights.push(cg);
       }
 
       // Push the terms for C, which increment from 0, and the terms for WC, which decrement from

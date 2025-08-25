@@ -119,12 +119,21 @@ impl<F: PrimeField> ScalarVector<F> {
     self.0.len()
   }
 
-  /*
-  pub(crate) fn sum(mut self) -> F {
-    self.0.drain(..).sum()
+  // The inner product of two vectors, which may have differing lengths.
+  pub(crate) fn inner_product_without_length_check<'a, V: Iterator<Item = &'a F>>(
+    &self,
+    vector: V,
+  ) -> F {
+    let mut res = F::ZERO;
+    for (a, b) in self.0.iter().zip(vector) {
+      res += *a * b;
+    }
+    res
   }
-  */
 
+  // The inner product of two vectors.
+  //
+  // Panics if the argument is shorter than `self`.
   pub(crate) fn inner_product<'a, V: Iterator<Item = &'a F>>(&self, vector: V) -> F {
     let mut count = 0;
     let mut res = F::ZERO;
