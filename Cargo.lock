@@ -485,6 +485,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "generalized-bulletproofs"
+version = "0.1.0"
+dependencies = [
+ "blake2",
+ "ciphersuite",
+ "multiexp",
+ "rand_core",
+ "std-shims",
+ "zeroize",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -938,6 +950,7 @@ dependencies = [
 name = "monero-oxide-no-std-tests"
 version = "0.1.0"
 dependencies = [
+ "generalized-bulletproofs",
  "monero-wallet",
 ]
 
