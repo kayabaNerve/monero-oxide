@@ -194,7 +194,7 @@ where
       transcript.push_point(&L);
       transcript.push_point(&R);
       let x: C::F = transcript.challenge::<C>();
-      let x_inv = x.invert().unwrap();
+      let x_inv = x.invert().expect("transcript challenge was 0");
 
       // The prover and verifier now calculate the following (28-31)
       g_bold = PointVector(Vec::with_capacity(g_bold1.len()));
@@ -332,7 +332,9 @@ where
     for _ in 0 .. lr_len {
       L.push(transcript.read_point::<C>().map_err(|_| IpVerifyError::IncompleteProof)?);
       R.push(transcript.read_point::<C>().map_err(|_| IpVerifyError::IncompleteProof)?);
-      xs.push(transcript.challenge::<C>());
+      let x = transcript.challenge::<C>();
+      assert!(!bool::from(x.is_zero()), "transcript challenge was 0");
+      xs.push(x);
     }
 
     // We calculate their inverse in batch
