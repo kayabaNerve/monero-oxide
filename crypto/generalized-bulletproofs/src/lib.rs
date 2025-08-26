@@ -18,7 +18,7 @@ use ciphersuite::{
 mod scalar_vector;
 pub(crate) use scalar_vector::ScalarVector;
 mod point_vector;
-pub use point_vector::PointVector;
+pub(crate) use point_vector::PointVector;
 
 /// The transcript formats.
 pub mod transcript;
