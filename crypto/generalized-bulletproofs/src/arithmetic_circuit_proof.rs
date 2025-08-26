@@ -15,7 +15,7 @@ use crate::{
   BatchVerifier,
   transcript::*,
   lincomb::accumulate_vector,
-  inner_product::{IpError, IpStatement, IpWitness, P},
+  inner_product::{IpProveError, IpVerifyError, IpStatement, IpWitness, P},
 };
 pub use crate::lincomb::{Variable, LinComb};
 
@@ -57,44 +57,21 @@ pub struct ArithmeticCircuitWitness<C: Ciphersuite> {
   v: Vec<PedersenCommitment<C>>,
 }
 
-/// An error incurred during arithmetic circuit proof operations.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum AcError {
-  /// The vectors of scalars which are multiplied against each other were of different lengths.
-  DifferingLrLengths,
-  /// The matrices of constraints are of different lengths.
-  InconsistentAmountOfConstraints,
-  /// A constraint referred to a non-existent term.
-  ConstrainedNonExistentTerm,
-  /// A constraint referred to a non-existent commitment.
-  ConstrainedNonExistentCommitment,
-  /// There weren't enough generators to prove for this statement.
-  NotEnoughGenerators,
-  /// The witness was inconsistent to the statement.
-  ///
-  /// Sanity checks on the witness are always performed. If the library is compiled with debug
-  /// assertions on, the satisfaction of all constraints and validity of the commitmentsd is
-  /// additionally checked.
-  InconsistentWitness,
-  /// There was an error from the inner-product proof.
-  Ip(IpError),
-  /// The proof wasn't complete and the necessary values could not be read from the transcript.
-  IncompleteProof,
-}
-
 impl<C: Ciphersuite> ArithmeticCircuitWitness<C> {
   /// Constructs a new witness instance.
+  ///
+  /// Returns `None` if `aL.len() != aR.len()`.
   pub fn new(
     aL: Vec<C::F>,
     aR: Vec<C::F>,
     c: Vec<PedersenVectorCommitment<C>>,
     v: Vec<PedersenCommitment<C>>,
-  ) -> Result<Self, AcError> {
+  ) -> Option<Self> {
     let aL = ScalarVector::from(aL);
     let aR = ScalarVector::from(aR);
 
     if aL.len() != aR.len() {
-      Err(AcError::DifferingLrLengths)?;
+      None?;
     }
 
     // The Pedersen Vector Commitments don't have their variables' lengths checked as they aren't
@@ -105,19 +82,58 @@ impl<C: Ciphersuite> ArithmeticCircuitWitness<C> {
     // InconsistentWitness
 
     let aO = aL.clone() * &aR;
-    Ok(ArithmeticCircuitWitness { aL, aR, aO, c, v })
+    Some(ArithmeticCircuitWitness { aL, aR, aO, c, v })
   }
 }
 
-struct YzChallenges<C: Ciphersuite> {
-  y_inv: ScalarVector<C::F>,
-  z: ScalarVector<C::F>,
+/// An error incurred when constructing an arithmetic circuit statement.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AcStatementError {
+  /// A constraint referred to a non-existent term.
+  ConstrainedNonExistentTerm,
+  /// A constraint referred to a non-existent vector commitment.
+  ConstrainedNonExistentVectorCommitment,
+  /// A constraint referred to a non-existent commitment.
+  ConstrainedNonExistentCommitment,
 }
 
 impl<'a, C: Ciphersuite> ArithmeticCircuitStatement<'a, C>
 where
   C::F: FromUniformBytes<64>,
 {
+  /// Create a new ArithmeticCircuitStatement for the specified relationship.
+  ///
+  /// The `LinComb`s passed as `constraints` will be bound to evaluate to 0.
+  ///
+  /// The constraints are not transcripted. They're expected to be deterministic from the context
+  /// and higher-level statement. If your constraints are variable, you MUST transcript them before
+  /// calling prove/verify.
+  ///
+  /// The commitments are expected to have been transcripted extenally to this statement's
+  /// invocation. That's practically ensured by taking a `Commitments` struct here, which is only
+  /// obtainable via a transcript.
+  pub fn new(
+    generators: ProofGenerators<'a, C>,
+    constraints: Vec<LinComb<C::F>>,
+    commitments: Commitments<C>,
+  ) -> Result<Self, AcStatementError> {
+    let Commitments { C, V } = commitments;
+
+    for constraint in &constraints {
+      if Some(generators.len()) <= constraint.highest_a_index {
+        Err(AcStatementError::ConstrainedNonExistentTerm)?;
+      }
+      if Some(C.len()) <= constraint.highest_c_index {
+        Err(AcStatementError::ConstrainedNonExistentVectorCommitment)?;
+      }
+      if Some(V.len()) <= constraint.highest_v_index {
+        Err(AcStatementError::ConstrainedNonExistentCommitment)?;
+      }
+    }
+
+    Ok(Self { generators, constraints, C, V })
+  }
+
   // The amount of multiplications performed.
   fn n(&self) -> usize {
     self.generators.len()
@@ -137,40 +153,17 @@ where
   fn m(&self) -> usize {
     self.V.len()
   }
+}
 
-  /// Create a new ArithmeticCircuitStatement for the specified relationship.
-  ///
-  /// The `LinComb`s passed as `constraints` will be bound to evaluate to 0.
-  ///
-  /// The constraints are not transcripted. They're expected to be deterministic from the context
-  /// and higher-level statement. If your constraints are variable, you MUST transcript them before
-  /// calling prove/verify.
-  ///
-  /// The commitments are expected to have been transcripted extenally to this statement's
-  /// invocation. That's practically ensured by taking a `Commitments` struct here, which is only
-  /// obtainable via a transcript.
-  pub fn new(
-    generators: ProofGenerators<'a, C>,
-    constraints: Vec<LinComb<C::F>>,
-    commitments: Commitments<C>,
-  ) -> Result<Self, AcError> {
-    let Commitments { C, V } = commitments;
+struct YzChallenges<C: Ciphersuite> {
+  y_inv: ScalarVector<C::F>,
+  z: ScalarVector<C::F>,
+}
 
-    for constraint in &constraints {
-      if Some(generators.len()) <= constraint.highest_a_index {
-        Err(AcError::ConstrainedNonExistentTerm)?;
-      }
-      if Some(C.len()) <= constraint.highest_c_index {
-        Err(AcError::ConstrainedNonExistentCommitment)?;
-      }
-      if Some(V.len()) <= constraint.highest_v_index {
-        Err(AcError::ConstrainedNonExistentCommitment)?;
-      }
-    }
-
-    Ok(Self { generators, constraints, C, V })
-  }
-
+impl<'a, C: Ciphersuite> ArithmeticCircuitStatement<'a, C>
+where
+  C::F: FromUniformBytes<64>,
+{
   fn yz_challenges(&self, y: C::F, z_1: C::F) -> YzChallenges<C> {
     let y_inv = y.invert().unwrap();
     let y_inv = ScalarVector::powers(y_inv, self.n());
@@ -188,44 +181,63 @@ where
 
     YzChallenges { y_inv, z }
   }
+}
 
+/// An error incurred when proving an arithmetic circuit statement.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AcProveError {
+  /// An incorrect amount of generators was provided.
+  IncorrectAmountOfGenerators,
+  /// The witness was inconsistent to the statement.
+  ///
+  /// Sanity checks on the witness are always performed. If the library is compiled with
+  /// `debug_assertions = on`, whether or not this witness actually opens the statement is also
+  /// checked. This error is returned if the witness was checked and it did not satisfy the
+  /// statement.
+  InconsistentWitness,
+}
+
+impl<'a, C: Ciphersuite> ArithmeticCircuitStatement<'a, C>
+where
+  C::F: FromUniformBytes<64>,
+{
   /// Prove for this statement/witness.
   pub fn prove<R: RngCore + CryptoRng>(
     self,
     rng: &mut R,
     transcript: &mut Transcript,
     mut witness: ArithmeticCircuitWitness<C>,
-  ) -> Result<(), AcError> {
+  ) -> Result<(), AcProveError> {
     let n = self.n();
     let c = self.c();
     let m = self.m();
 
     // Check the witness length
     if witness.aL.len() > n {
-      Err(AcError::NotEnoughGenerators)?;
+      Err(AcProveError::IncorrectAmountOfGenerators)?;
     }
     for c in &mut witness.c {
       if c.g_values.len() > n {
-        Err(AcError::NotEnoughGenerators)?;
+        Err(AcProveError::IncorrectAmountOfGenerators)?;
       }
     }
 
     // Check the witness's consistency with the statement
     if (c != witness.c.len()) || (m != witness.v.len()) {
-      Err(AcError::InconsistentWitness)?;
+      Err(AcProveError::InconsistentWitness)?;
     }
 
     #[cfg(debug_assertions)]
     {
       for (commitment, opening) in self.V.0.iter().zip(witness.v.iter()) {
         if *commitment != opening.commit(self.generators.g(), self.generators.h()) {
-          Err(AcError::InconsistentWitness)?;
+          Err(AcProveError::InconsistentWitness)?;
         }
       }
       for (commitment, opening) in self.C.0.iter().zip(witness.c.iter()) {
         if Some(*commitment) != opening.commit(self.generators.g_bold_slice(), self.generators.h())
         {
-          Err(AcError::InconsistentWitness)?;
+          Err(AcProveError::InconsistentWitness)?;
         }
       }
       for constraint in &self.constraints {
@@ -269,7 +281,7 @@ where
           .sum::<C::F>();
 
         if eval != C::F::ZERO {
-          Err(AcError::InconsistentWitness)?;
+          Err(AcProveError::InconsistentWitness)?;
         }
       }
     }
@@ -539,9 +551,26 @@ where
     )
     .unwrap()
     .prove(transcript, IpWitness::new(l, r).unwrap())
-    .map_err(AcError::Ip)
+    .map_err(|e| match e {
+      IpProveError::IncorrectAmountOfGenerators => AcProveError::IncorrectAmountOfGenerators,
+      IpProveError::InconsistentWitness => AcProveError::InconsistentWitness,
+    })
   }
+}
 
+/// An error incurred when verifying an arithmetic circuit statement.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AcVerifyError {
+  /// An incorrect amount of generators was provided.
+  IncorrectAmountOfGenerators,
+  /// The proof wasn't complete and the necessary values could not be read from the transcript.
+  IncompleteProof,
+}
+
+impl<'a, C: Ciphersuite> ArithmeticCircuitStatement<'a, C>
+where
+  C::F: FromUniformBytes<64>,
+{
   /// Verify a proof for this statement.
   ///
   /// This solely queues the statement for batch verification. The resulting BatchVerifier MUST
@@ -553,7 +582,7 @@ where
     rng: &mut R,
     verifier: &mut BatchVerifier<C>,
     transcript: &mut VerifierTranscript,
-  ) -> Result<(), AcError> {
+  ) -> Result<(), AcVerifyError> {
     if verifier.g_bold.len() < self.generators.len() {
       verifier.g_bold.resize(self.generators.len(), C::F::ZERO);
       verifier.h_bold.resize(self.generators.len(), C::F::ZERO);
@@ -573,9 +602,9 @@ where
     let l_r_poly_len = 1 + ni + 1;
     let t_poly_len = (2 * l_r_poly_len) - 1;
 
-    let AI = transcript.read_point::<C>().map_err(|_| AcError::IncompleteProof)?;
-    let AO = transcript.read_point::<C>().map_err(|_| AcError::IncompleteProof)?;
-    let S = transcript.read_point::<C>().map_err(|_| AcError::IncompleteProof)?;
+    let AI = transcript.read_point::<C>().map_err(|_| AcVerifyError::IncompleteProof)?;
+    let AO = transcript.read_point::<C>().map_err(|_| AcVerifyError::IncompleteProof)?;
+    let S = transcript.read_point::<C>().map_err(|_| AcVerifyError::IncompleteProof)?;
     let y = transcript.challenge::<C>();
     let z = transcript.challenge::<C>();
     let YzChallenges { y_inv, z } = self.yz_challenges(y, z);
@@ -595,16 +624,16 @@ where
     let mut T_before_ni = Vec::with_capacity(ni);
     let mut T_after_ni = Vec::with_capacity(t_poly_len - ni - 1);
     for _ in 0 .. ni {
-      T_before_ni.push(transcript.read_point::<C>().map_err(|_| AcError::IncompleteProof)?);
+      T_before_ni.push(transcript.read_point::<C>().map_err(|_| AcVerifyError::IncompleteProof)?);
     }
     for _ in 0 .. (t_poly_len - ni - 1) {
-      T_after_ni.push(transcript.read_point::<C>().map_err(|_| AcError::IncompleteProof)?);
+      T_after_ni.push(transcript.read_point::<C>().map_err(|_| AcVerifyError::IncompleteProof)?);
     }
     let x: ScalarVector<C::F> = ScalarVector::powers(transcript.challenge::<C>(), t_poly_len);
 
-    let tau_x = transcript.read_scalar::<C>().map_err(|_| AcError::IncompleteProof)?;
-    let u = transcript.read_scalar::<C>().map_err(|_| AcError::IncompleteProof)?;
-    let t_caret = transcript.read_scalar::<C>().map_err(|_| AcError::IncompleteProof)?;
+    let tau_x = transcript.read_scalar::<C>().map_err(|_| AcVerifyError::IncompleteProof)?;
+    let u = transcript.read_scalar::<C>().map_err(|_| AcVerifyError::IncompleteProof)?;
+    let t_caret = transcript.read_scalar::<C>().map_err(|_| AcVerifyError::IncompleteProof)?;
 
     // Lines 88-90, modified per Generalized Bulletproofs as needed w.r.t. t
     {
@@ -704,7 +733,9 @@ where
     IpStatement::new(self.generators, y_inv, ip_x, P::Verifier { verifier_weight })
       .unwrap()
       .verify(verifier, transcript)
-      .map_err(AcError::Ip)?;
+      .map_err(|e| match e {
+        IpVerifyError::IncompleteProof => AcVerifyError::IncompleteProof,
+      })?;
 
     Ok(())
   }
