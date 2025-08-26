@@ -10,12 +10,12 @@ use generalized_bulletproofs::{
   arithmetic_circuit_proof::{
     Variable, LinComb, ArithmeticCircuitStatement, ArithmeticCircuitWitness,
   },
-  tests::generators,
+  tests::insecure_test_generators,
 };
 
 #[test]
 fn test_zero_arithmetic_circuit() {
-  let generators = generators(1);
+  let generators = insecure_test_generators(&mut OsRng, 1).unwrap();
 
   let value = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let gamma = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
@@ -56,7 +56,7 @@ fn test_zero_arithmetic_circuit() {
 
 #[test]
 fn test_vector_commitment_arithmetic_circuit() {
-  let generators = generators(2);
+  let generators = insecure_test_generators(&mut OsRng, 2).unwrap();
   let reduced = generators.reduce(2).unwrap();
 
   let v1 = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
@@ -107,7 +107,7 @@ fn test_vector_commitment_arithmetic_circuit() {
 
 #[test]
 fn fuzz_test_arithmetic_circuit() {
-  let generators = generators(32);
+  let generators = insecure_test_generators(&mut OsRng, 32).unwrap();
 
   for i in 0 .. 100 {
     dbg!(i);

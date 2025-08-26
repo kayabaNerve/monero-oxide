@@ -11,14 +11,14 @@ use crate::{
   ScalarVector, PointVector, Generators,
   transcript::*,
   inner_product::{P, IpStatement, IpWitness},
-  tests::generators,
+  tests::insecure_test_generators,
 };
 
 #[test]
 fn test_zero_inner_product() {
   let P = <Ristretto as Ciphersuite>::G::identity();
 
-  let generators = generators::<Ristretto>(1);
+  let generators = insecure_test_generators::<_, Ristretto>(&mut OsRng, 1).unwrap();
   let reduced = generators.reduce(1).unwrap();
   let witness = IpWitness::<Ristretto>::new(
     ScalarVector::<<Ristretto as Ciphersuite>::F>::new(1),
@@ -57,7 +57,7 @@ fn test_zero_inner_product() {
 #[test]
 fn test_inner_product() {
   // P = sum(g_bold * a, h_bold * b)
-  let generators = generators::<Ristretto>(32);
+  let generators = insecure_test_generators::<_, Ristretto>(&mut OsRng, 32).unwrap();
   let mut verifier = Generators::batch_verifier();
   for i in 1 ..= 32 {
     let generators = generators.reduce(i).unwrap();

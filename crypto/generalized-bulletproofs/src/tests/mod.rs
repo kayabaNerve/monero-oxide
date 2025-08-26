@@ -1,27 +1,28 @@
-use rand_core::OsRng;
+use rand_core::RngCore;
 
 use ciphersuite::{group::Group, Ciphersuite};
 
-use crate::Generators;
+use crate::{GeneratorsError, Generators};
 
 #[cfg(test)]
 mod inner_product;
 
-#[cfg(test)]
-mod arithmetic_circuit_proof;
-
-/// Generate a set of generators for testing purposes.
+/// Insecurely generate a set of generators for testing purposes.
 ///
-/// This should not be considered secure.
-pub fn generators<C: Ciphersuite>(n: usize) -> Generators<C> {
-  assert_eq!(n.next_power_of_two(), n, "amount of generators wasn't a power of 2");
-
-  let gens = || {
-    let mut res = Vec::with_capacity(n);
+/// This MUST NOT be considered a secure way to generate generators and MUST solely be considered
+/// for testing purposes.
+pub fn insecure_test_generators<R: RngCore, C: Ciphersuite>(
+  rng: &mut R,
+  n: usize,
+) -> Result<Generators<C>, GeneratorsError> {
+  let g = C::G::random(&mut *rng);
+  let h = C::G::random(&mut *rng);
+  let mut bold = || {
+    let mut res = Vec::with_capacity(n.next_power_of_two());
     for _ in 0 .. n {
-      res.push(C::G::random(&mut OsRng));
+      res.push(C::G::random(&mut *rng));
     }
     res
   };
-  Generators::new(C::G::random(&mut OsRng), C::G::random(&mut OsRng), gens(), gens()).unwrap()
+  Generators::new(g, h, bold(), bold())
 }
