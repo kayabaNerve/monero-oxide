@@ -1,8 +1,10 @@
+#![allow(non_snake_case)]
+
 use rand_core::{RngCore, OsRng};
 
 use ciphersuite::{group::ff::Field, Ciphersuite, Ristretto};
 
-use crate::{
+use generalized_bulletproofs::{
   PedersenCommitment, PedersenVectorCommitment, Generators,
   transcript::*,
   arithmetic_circuit_proof::{
@@ -60,7 +62,9 @@ fn test_vector_commitment_arithmetic_circuit() {
   let v1 = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let v2 = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let gamma = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
-  let commitment = (reduced.g_bold(0) * v1) + (reduced.g_bold(1) * v2) + (generators.h() * gamma);
+  let commitment = (generators.g_bold_slice()[0] * v1) +
+    (generators.g_bold_slice()[1] * v2) +
+    (generators.h() * gamma);
   let V = vec![];
   let C = vec![commitment];
 

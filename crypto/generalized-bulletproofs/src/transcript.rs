@@ -38,7 +38,7 @@ where
 /// Commitments written to/read from a transcript.
 // We use a dedicated type for this to coerce the caller into transcripting the commitments as
 // expected.
-#[cfg_attr(test, derive(Clone, PartialEq, Debug))]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Commitments<C: Ciphersuite> {
   pub(crate) C: PointVector<C>,
   pub(crate) V: PointVector<C>,
