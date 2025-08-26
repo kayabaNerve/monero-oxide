@@ -28,30 +28,46 @@ pub enum Variable {
   V(usize),
 }
 
-// Does a NOP as there shouldn't be anything critical here
-impl Zeroize for Variable {
-  fn zeroize(&mut self) {}
-}
-
 /// A linear combination.
 ///
 /// Specifically, `WL aL + WR aR + WO aO + WCG C_G + WV V + c`.
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 #[must_use]
 pub struct LinComb<F: PrimeField> {
+  /// The highest index within `aL`, `aR`, or `aO` which is used.
   pub(crate) highest_a_index: Option<usize>,
+  /// The highest index for a Pedersen vector commitment.
   pub(crate) highest_c_index: Option<usize>,
+  /// The highest index for a Pedersen commitment.
   pub(crate) highest_v_index: Option<usize>,
 
   // Sparse representation of WL/WR/WO
   pub(crate) WL: Vec<(usize, F)>,
   pub(crate) WR: Vec<(usize, F)>,
   pub(crate) WO: Vec<(usize, F)>,
-  // Sparse representation once within a commitment
+  /// A non-sparse representation of the vector commitments, with a sparse representation of the
+  /// weights for the variable within them.
   pub(crate) WCG: Vec<Vec<(usize, F)>>,
-  // Sparse representation of WV
+  /// A sparse representation of the weights for the variables within Pedersen commitments.
   pub(crate) WV: Vec<(usize, F)>,
   pub(crate) c: F,
+}
+
+impl<F: PrimeField> LinComb<F> {
+  /// Create an empty linear combination.
+  pub fn empty() -> Self {
+    Self {
+      highest_a_index: None,
+      highest_c_index: None,
+      highest_v_index: None,
+      WL: vec![],
+      WR: vec![],
+      WO: vec![],
+      WCG: vec![],
+      WV: vec![],
+      c: F::ZERO,
+    }
+  }
 }
 
 impl<F: PrimeField> From<Variable> for LinComb<F> {
@@ -60,20 +76,27 @@ impl<F: PrimeField> From<Variable> for LinComb<F> {
   }
 }
 
+impl<F: PrimeField> LinComb<F> {
+  /// Reconcile two linear combinations, making them interoperable and able to be merged.
+  fn reconcile_for_merging(&mut self, other: &Self) {
+    self.highest_a_index = self.highest_a_index.max(other.highest_a_index);
+    self.highest_c_index = self.highest_c_index.max(other.highest_c_index);
+    self.highest_v_index = self.highest_v_index.max(other.highest_v_index);
+    while self.WCG.len() < other.WCG.len() {
+      self.WCG.push(vec![]);
+    }
+  }
+}
+
 impl<F: PrimeField> Add<&LinComb<F>> for LinComb<F> {
   type Output = Self;
 
   fn add(mut self, constraint: &Self) -> Self {
-    self.highest_a_index = self.highest_a_index.max(constraint.highest_a_index);
-    self.highest_c_index = self.highest_c_index.max(constraint.highest_c_index);
-    self.highest_v_index = self.highest_v_index.max(constraint.highest_v_index);
+    self.reconcile_for_merging(constraint);
 
     self.WL.extend(&constraint.WL);
     self.WR.extend(&constraint.WR);
     self.WO.extend(&constraint.WO);
-    while self.WCG.len() < constraint.WCG.len() {
-      self.WCG.push(vec![]);
-    }
     for (sWC, cWC) in self.WCG.iter_mut().zip(&constraint.WCG) {
       sWC.extend(cWC);
     }
@@ -87,16 +110,11 @@ impl<F: PrimeField> Sub<&LinComb<F>> for LinComb<F> {
   type Output = Self;
 
   fn sub(mut self, constraint: &Self) -> Self {
-    self.highest_a_index = self.highest_a_index.max(constraint.highest_a_index);
-    self.highest_c_index = self.highest_c_index.max(constraint.highest_c_index);
-    self.highest_v_index = self.highest_v_index.max(constraint.highest_v_index);
+    self.reconcile_for_merging(constraint);
 
     self.WL.extend(constraint.WL.iter().map(|(i, weight)| (*i, -*weight)));
     self.WR.extend(constraint.WR.iter().map(|(i, weight)| (*i, -*weight)));
     self.WO.extend(constraint.WO.iter().map(|(i, weight)| (*i, -*weight)));
-    while self.WCG.len() < constraint.WCG.len() {
-      self.WCG.push(vec![]);
-    }
     for (sWC, cWC) in self.WCG.iter_mut().zip(&constraint.WCG) {
       sWC.extend(cWC.iter().map(|(i, weight)| (*i, -*weight)));
     }
@@ -133,21 +151,6 @@ impl<F: PrimeField> Mul<F> for LinComb<F> {
 }
 
 impl<F: PrimeField> LinComb<F> {
-  /// Create an empty linear combination.
-  pub fn empty() -> Self {
-    Self {
-      highest_a_index: None,
-      highest_c_index: None,
-      highest_v_index: None,
-      WL: vec![],
-      WR: vec![],
-      WO: vec![],
-      WCG: vec![],
-      WV: vec![],
-      c: F::ZERO,
-    }
-  }
-
   /// Add a new instance of a term to this linear combination.
   pub fn term(mut self, scalar: F, constrainable: Variable) -> Self {
     match constrainable {
@@ -165,6 +168,11 @@ impl<F: PrimeField> LinComb<F> {
       }
       Variable::CG { commitment: i, index: j } => {
         self.highest_c_index = self.highest_c_index.max(Some(i));
+        /*
+          We use `highest_a_index` to track the highest index within the IPA, hence why it tracks
+          indexes to `aL`, `aR`, and `aO`. The variables within a vector commitment are _also_
+          dependent on the size of the IPA, hence why these _also_ update `highest_a_index`.
+        */
         self.highest_a_index = self.highest_a_index.max(Some(j));
         while self.WCG.len() <= i {
           self.WCG.push(vec![]);
@@ -179,38 +187,38 @@ impl<F: PrimeField> LinComb<F> {
     self
   }
 
-  /// Add to the constant c.
+  /// Add to the constant `c`.
   pub fn constant(mut self, scalar: F) -> Self {
     self.c += scalar;
     self
   }
 
-  /// View the current weights for aL.
+  /// View the current weights for `aL`.
   pub fn WL(&self) -> &[(usize, F)] {
     &self.WL
   }
 
-  /// View the current weights for aR.
+  /// View the current weights for `aR`.
   pub fn WR(&self) -> &[(usize, F)] {
     &self.WR
   }
 
-  /// View the current weights for aO.
+  /// View the current weights for `aO`.
   pub fn WO(&self) -> &[(usize, F)] {
     &self.WO
   }
 
-  /// View the current weights for CG.
+  /// View the current weights for `CG`.
   pub fn WCG(&self) -> &[Vec<(usize, F)>] {
     &self.WCG
   }
 
-  /// View the current weights for V.
+  /// View the current weights for `V`.
   pub fn WV(&self) -> &[(usize, F)] {
     &self.WV
   }
 
-  /// View the current constant.
+  /// View the current constant `c`.
   pub fn c(&self) -> F {
     self.c
   }
