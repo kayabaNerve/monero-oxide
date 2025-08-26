@@ -24,7 +24,7 @@ necessary for completeness. Either:
   knowledge of an opening over the `G` _and_ `H` vectors of generators
 
 This repository initially preferred the first solution, resulting in
-[these proofs](./Security Proofs.pdf). The proofs were then
+[these proofs](<./Security Proofs.pdf>). The proofs were then
 [reviewed by Brandon Goodell](
   https://repo.getmonero.org/-/project/54/uploads/b2d5c8198f55d72b588f1ef138126850/GBP_Security_Review.pdf
 ).
@@ -34,7 +34,7 @@ the gap between the statements the prover can successfully prove and the
 statement proved to the verifier), and the implementation moved to the second
 option. Aaron Goodell was contracted via Cypher Stack to perform the audit of
 the implementation, yielding [this audit](./Audit.pdf), yet also
-[updated security proofs](./Updated Security Proofs.pdf).
+[updated security proofs](<./Updated Security Proofs.pdf>).
 
 For provenance, please see the following links.
 - https://github.com/cypherstack/generalized-bulletproofs/releases
