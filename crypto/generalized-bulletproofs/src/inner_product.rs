@@ -2,7 +2,7 @@ use std_shims::{vec, vec::Vec};
 
 use multiexp::multiexp_vartime;
 use ciphersuite::{
-  group::ff::{Field, FromUniformBytes},
+  group::ff::{Field, FromUniformBytes, BatchInvert},
   Ciphersuite,
 };
 
@@ -15,8 +15,9 @@ pub enum IpError {
   IncorrectAmountOfGenerators,
   /// The witness was inconsistent to the statement.
   ///
-  /// Sanity checks on the witness are always performed. If the library is compiled with debug
-  /// assertions on, whether or not this witness actually opens `P` is checked.
+  /// Sanity checks on the witness are always performed. If the library is compiled with
+  /// `debug_assertions = on`, whether or not this witness actually opens `P` is also checked. This
+  /// error is returned if the witness was checked and it did not satisfy the statement.
   InconsistentWitness,
   /// The proof wasn't complete and the necessary values could not be read from the transcript.
   IncompleteProof,
@@ -87,8 +88,8 @@ where
 
   /// Prove for this Inner-Product statement.
   ///
-  /// Returns an error if this statement couldn't be proven for (such as if the witness isn't
-  /// consistent).
+  /// This function executes in constant-time to all secrets as the witness is not considered a
+  /// secret (as a Bulletproof is not a zero-knowledge proof).
   pub(crate) fn prove(
     self,
     transcript: &mut Transcript,
@@ -98,8 +99,11 @@ where
       let IpStatement { generators, h_bold_weights, u, P } = self;
       let u = generators.g() * u;
 
-      // Ensure we have the exact amount of generators
-      if generators.g_bold_slice().len() != witness.a.len().next_power_of_two() {
+      // Ensure we have the necessary amount of generators
+      if witness.a.len() > ((usize::MAX >> 1) + 1) {
+        Err(IpError::IncorrectAmountOfGenerators)?;
+      }
+      if generators.g_bold_slice().len() < witness.a.len().next_power_of_two() {
         Err(IpError::IncorrectAmountOfGenerators)?;
       }
       // Acquire a local copy of the generators
@@ -144,7 +148,9 @@ where
 
       // Sanity
       debug_assert_eq!(a1.len(), n_hat);
+      debug_assert!(a2.len() <= n_hat);
       debug_assert_eq!(b1.len(), n_hat);
+      debug_assert!(b2.len() <= n_hat);
       debug_assert_eq!(g_bold1.len(), n_hat);
       debug_assert_eq!(g_bold2.len(), n_hat);
       debug_assert_eq!(h_bold1.len(), n_hat);
@@ -270,11 +276,11 @@ where
 
   /// Queue an Inner-Product proof for batch verification.
   ///
-  /// This will return Err if there is an error. This will return Ok if the proof was successfully
-  /// queued for batch verification. The caller is required to verify the batch in order to ensure
-  /// the proof is actually correct.
+  /// This will return `Err(_)` if there is an error. This will return `Ok(_)` if the proof was
+  /// successfully queued for batch verification. The caller is required to verify the batch in
+  /// order to ensure the proof is actually correct.
   ///
-  /// If this proof returns an error, the BatchVerifier MUST be assumed corrupted and discarded.
+  /// If this proof returns `Err(_)`, the BatchVerifier MUST be assumed corrupted and discarded.
   pub(crate) fn verify(
     self,
     verifier: &mut BatchVerifier<C>,
@@ -282,8 +288,9 @@ where
   ) -> Result<(), IpError> {
     if verifier.g_bold.len() < self.generators.len() {
       verifier.g_bold.resize(self.generators.len(), C::F::ZERO);
+    }
+    if verifier.h_bold.len() < self.generators.len() {
       verifier.h_bold.resize(self.generators.len(), C::F::ZERO);
-      verifier.h_sum.resize(self.generators.len(), C::F::ZERO);
     }
 
     let IpStatement { generators, h_bold_weights, u, P } = self;
@@ -313,13 +320,7 @@ where
 
     // We calculate their inverse in batch
     let mut x_invs = xs.clone();
-    {
-      let mut scratch = vec![C::F::ZERO; x_invs.len()];
-      ciphersuite::group::ff::BatchInverter::invert_with_external_scratch(
-        &mut x_invs,
-        &mut scratch,
-      );
-    }
+    (&mut x_invs).batch_invert();
 
     // Now, with x and x_inv, we need to calculate g_bold', h_bold', P'
     //
@@ -333,7 +334,7 @@ where
     // For how that works, please see its own documentation
     let product_cache = {
       let mut challenges = Vec::with_capacity(lr_len);
-
+      verifier.additional.reserve(2 * lr_len);
       let x_iter = xs.into_iter().zip(x_invs);
       let lr_iter = L.into_iter().zip(R);
       for ((x, x_inv), (L, R)) in x_iter.zip(lr_iter) {
