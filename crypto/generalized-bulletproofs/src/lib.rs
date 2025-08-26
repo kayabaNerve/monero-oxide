@@ -16,7 +16,7 @@ use ciphersuite::{
 };
 
 mod scalar_vector;
-pub use scalar_vector::ScalarVector;
+pub(crate) use scalar_vector::ScalarVector;
 mod point_vector;
 pub use point_vector::PointVector;
 
@@ -301,7 +301,7 @@ impl<C: Ciphersuite> PedersenCommitment<C> {
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct PedersenVectorCommitment<C: Ciphersuite> {
   /// The values committed to across the `g` (bold) generators.
-  pub g_values: ScalarVector<C::F>,
+  pub g_values: Vec<C::F>,
   /// The mask blinding the values committed to.
   pub mask: C::F,
 }
@@ -317,7 +317,7 @@ impl<C: Ciphersuite> PedersenVectorCommitment<C> {
     };
 
     let mut terms = vec![(self.mask, h)];
-    for pair in self.g_values.0.iter().copied().zip(g_bold.iter().copied()) {
+    for pair in self.g_values.iter().copied().zip(g_bold.iter().copied()) {
       terms.push(pair);
     }
     let res = multiexp(&terms);

@@ -6,7 +6,6 @@ use ciphersuite::{
   Ciphersuite,
 };
 
-#[rustfmt::skip]
 use crate::{ScalarVector, PointVector, ProofGenerators, BatchVerifier, transcript::*};
 
 /// An error from proving/verifying Inner-Product statements.
@@ -152,8 +151,8 @@ where
       debug_assert_eq!(h_bold2.len(), n_hat);
 
       // cl, cr, lines 21-22
-      let cl = b2.inner_product(a1.0.iter());
-      let cr = a2.inner_product(b1.0.iter());
+      let cl = b2.inner_product_without_length_checks(a1.0.iter());
+      let cr = a2.inner_product_without_length_checks(b1.0.iter());
 
       let L = {
         let mut L_terms = Vec::with_capacity(1 + (2 * g_bold1.len()));

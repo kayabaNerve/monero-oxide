@@ -3,7 +3,7 @@ use rand_core::{RngCore, OsRng};
 use ciphersuite::{group::ff::Field, Ciphersuite, Ristretto};
 
 use crate::{
-  ScalarVector, PedersenCommitment, PedersenVectorCommitment, Generators,
+  PedersenCommitment, PedersenVectorCommitment, Generators,
   transcript::*,
   arithmetic_circuit_proof::{
     Variable, LinComb, ArithmeticCircuitStatement, ArithmeticCircuitWitness,
@@ -20,7 +20,7 @@ fn test_zero_arithmetic_circuit() {
   let commitment = (generators.g() * value) + (generators.h() * gamma);
   let V = vec![commitment];
 
-  let aL = ScalarVector::<<Ristretto as Ciphersuite>::F>(vec![<Ristretto as Ciphersuite>::F::ZERO]);
+  let aL = vec![<Ristretto as Ciphersuite>::F::ZERO];
   let aR = aL.clone();
 
   let mut transcript = Transcript::new([0; 32]);
@@ -64,8 +64,7 @@ fn test_vector_commitment_arithmetic_circuit() {
   let V = vec![];
   let C = vec![commitment];
 
-  let zero_vec =
-    || ScalarVector::<<Ristretto as Ciphersuite>::F>(vec![<Ristretto as Ciphersuite>::F::ZERO]);
+  let zero_vec = || vec![<Ristretto as Ciphersuite>::F::ZERO];
 
   let aL = zero_vec();
   let aR = zero_vec();
@@ -84,7 +83,7 @@ fn test_vector_commitment_arithmetic_circuit() {
   let witness = ArithmeticCircuitWitness::<Ristretto>::new(
     aL,
     aR,
-    vec![PedersenVectorCommitment { g_values: ScalarVector(vec![v1, v2]), mask: gamma }],
+    vec![PedersenVectorCommitment { g_values: vec![v1, v2], mask: gamma }],
     vec![],
   )
   .unwrap();
@@ -110,22 +109,22 @@ fn fuzz_test_arithmetic_circuit() {
     dbg!(i);
 
     // Create aL, aR, aO
-    let mut aL = ScalarVector(vec![]);
-    let mut aR = ScalarVector(vec![]);
+    let mut aL = vec![];
+    let mut aR = vec![];
     while aL.len() < ((OsRng.next_u64() % 8) + 1).try_into().unwrap() {
-      aL.0.push(<Ristretto as Ciphersuite>::F::random(&mut OsRng));
+      aL.push(<Ristretto as Ciphersuite>::F::random(&mut OsRng));
     }
     while aR.len() < aL.len() {
-      aR.0.push(<Ristretto as Ciphersuite>::F::random(&mut OsRng));
+      aR.push(<Ristretto as Ciphersuite>::F::random(&mut OsRng));
     }
-    let aO = aL.clone() * &aR;
+    let aO = aL.iter().copied().zip(&aR).map(|(l, r)| l * r).collect::<Vec<_>>();
 
     // Create C
     let mut C = vec![];
     while C.len() < (OsRng.next_u64() % 16).try_into().unwrap() {
-      let mut g_values = ScalarVector(vec![]);
-      while g_values.0.len() < ((OsRng.next_u64() % 8) + 1).try_into().unwrap() {
-        g_values.0.push(<Ristretto as Ciphersuite>::F::random(&mut OsRng));
+      let mut g_values = vec![];
+      while g_values.len() < ((OsRng.next_u64() % 8) + 1).try_into().unwrap() {
+        g_values.push(<Ristretto as Ciphersuite>::F::random(&mut OsRng));
       }
       C.push(PedersenVectorCommitment {
         g_values,

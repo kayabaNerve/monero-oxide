@@ -85,11 +85,14 @@ pub enum AcError {
 impl<C: Ciphersuite> ArithmeticCircuitWitness<C> {
   /// Constructs a new witness instance.
   pub fn new(
-    aL: ScalarVector<C::F>,
-    aR: ScalarVector<C::F>,
+    aL: Vec<C::F>,
+    aR: Vec<C::F>,
     c: Vec<PedersenVectorCommitment<C>>,
     v: Vec<PedersenCommitment<C>>,
   ) -> Result<Self, AcError> {
+    let aL = ScalarVector::from(aL);
+    let aR = ScalarVector::from(aR);
+
     if aL.len() != aR.len() {
       Err(AcError::DifferingLrLengths)?;
     }
@@ -254,7 +257,7 @@ where
           }))
           .chain(constraint.WCG.iter().zip(&witness.c).flat_map(|(weights, c)| {
             weights.iter().map(|(j, weight)| {
-              if let Some(value) = c.g_values.0.get(*j) {
+              if let Some(value) = c.g_values.get(*j) {
                 *weight * value
               } else {
                 C::F::ZERO
@@ -423,7 +426,7 @@ where
       // Because i has skipped ilr, j will skip jlr
       let j = ni - i;
 
-      l[i] = c.g_values.clone();
+      l[i] = ScalarVector::from(c.g_values.clone());
       r[j] = cg_weights;
     }
 
