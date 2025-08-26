@@ -7,7 +7,7 @@
 use core::fmt;
 use std_shims::{vec, vec::Vec, collections::HashSet};
 
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use multiexp::{multiexp, multiexp_vartime};
 use ciphersuite::{
@@ -43,6 +43,8 @@ pub enum GeneratorsError {
   DifferingGhBoldLengths,
   /// The amount of provided generators were not a power of two.
   NotPowerOfTwo,
+  /// A generator was the identity point.
+  IdentityPoint,
   /// A generator was used multiple times.
   DuplicatedGenerator,
 }
@@ -62,20 +64,20 @@ pub struct Generators<C: Ciphersuite> {
 #[must_use]
 #[derive(Clone)]
 pub struct BatchVerifier<C: Ciphersuite> {
-  /// The summed scalar for the G generator.
+  /// The summed scalar for the `g` generator.
   pub g: C::F,
-  /// The summed scalar for the G generator.
+  /// The summed scalar for the `h` generator.
   pub h: C::F,
 
-  /// The summed scalars for the G_bold generators.
+  /// The summed scalars for the `g` (bold) generators.
   pub g_bold: Vec<C::F>,
-  /// The summed scalars for the H_bold generators.
+  /// The summed scalars for the `h` (bold) generators.
   pub h_bold: Vec<C::F>,
-  /// The summed scalars for the sums of all H generators prior to the index.
+  /// The summed scalars for the sums of all `h` (bold) generators prior to the index.
   ///
-  /// This is not populated with the full set of summed H generators. This is only populated with
-  /// the powers of 2. Accordingly, an index i specifies a scalar for the sum of all H generators
-  /// from H**2**0 ..= H**2**i.
+  /// This is not populated with the full set of summed `h` (bold) generators. This is only
+  /// populated with the powers of two. Accordingly, an index `i` specifies a scalar for the sum of
+  /// all `h` (bold) generators with indexes `0 .. {2**i}`.
   pub h_sum: Vec<C::F>,
 
   /// Additional (non-fixed) points to include in the multiexp.
@@ -135,28 +137,33 @@ impl<C: Ciphersuite> Generators<C> {
     if g_bold.len() != h_bold.len() {
       Err(GeneratorsError::DifferingGhBoldLengths)?;
     }
+    if g_bold.len() > ((usize::MAX >> 1) + 1) {
+      Err(GeneratorsError::NotPowerOfTwo)?;
+    }
     if g_bold.len().next_power_of_two() != g_bold.len() {
       Err(GeneratorsError::NotPowerOfTwo)?;
     }
 
     let mut set = HashSet::new();
     let mut add_generator = |generator: &C::G| {
-      assert!(!bool::from(generator.is_identity()));
+      if bool::from(generator.is_identity()) {
+        return Err(GeneratorsError::IdentityPoint);
+      }
       let bytes = generator.to_bytes();
-      !set.insert(bytes.as_ref().to_vec())
+      Ok(!set.insert(bytes.as_ref().to_vec()))
     };
 
-    assert!(!add_generator(&g), "g was prior present in empty set");
-    if add_generator(&h) {
+    debug_assert!(!add_generator(&g)?, "g was prior present in empty set");
+    if add_generator(&h)? {
       Err(GeneratorsError::DuplicatedGenerator)?;
     }
     for g in &g_bold {
-      if add_generator(g) {
+      if add_generator(g)? {
         Err(GeneratorsError::DuplicatedGenerator)?;
       }
     }
     for h in &h_bold {
-      if add_generator(h) {
+      if add_generator(h)? {
         Err(GeneratorsError::DuplicatedGenerator)?;
       }
     }
@@ -175,7 +182,7 @@ impl<C: Ciphersuite> Generators<C> {
     Ok(Generators { g, h, g_bold, h_bold, h_sum })
   }
 
-  /// Create a BatchVerifier for proofs which use a consistent set of generators.
+  /// Create a `BatchVerifier` for proofs which use a consistent set of generators.
   pub fn batch_verifier() -> BatchVerifier<C> {
     BatchVerifier {
       g: C::F::ZERO,
@@ -189,7 +196,9 @@ impl<C: Ciphersuite> Generators<C> {
     }
   }
 
-  /// Verify all proofs queued for batch verification in this BatchVerifier.
+  /// Verify all proofs queued for batch verification in this `BatchVerifier`.
+  ///
+  /// This function executes in variable time.
   #[must_use]
   pub fn verify(&self, verifier: BatchVerifier<C>) -> bool {
     multiexp_vartime(
@@ -228,14 +237,17 @@ impl<C: Ciphersuite> Generators<C> {
   /// Reduce a set of generators to the quantity necessary to support a certain amount of
   /// in-circuit multiplications/terms in a Pedersen vector commitment.
   ///
-  /// Returns None if reducing to 0 or if the generators reduced are insufficient to provide this
-  /// many generators.
+  /// Returns `None` if reducing to 0, or if the generators reduced are insufficient to provide
+  /// this many generators.
   pub fn reduce(&self, generators: usize) -> Option<ProofGenerators<'_, C>> {
     if generators == 0 {
       None?;
     }
 
-    // Round to the nearest power of 2
+    // Round to the required power of two
+    if generators > ((usize::MAX >> 1) + 1) {
+      None?;
+    }
     let generators = generators.next_power_of_two();
     if generators > self.g_bold.len() {
       None?;
@@ -282,7 +294,7 @@ impl<'a, C: Ciphersuite> ProofGenerators<'a, C> {
 }
 
 /// The opening of a Pedersen commitment.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Zeroize)]
+#[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct PedersenCommitment<C: Ciphersuite> {
   /// The value committed to.
   pub value: C::F,
@@ -298,7 +310,7 @@ impl<C: Ciphersuite> PedersenCommitment<C> {
 }
 
 /// The opening of a Pedersen vector commitment.
-#[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
+#[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct PedersenVectorCommitment<C: Ciphersuite> {
   /// The values committed to across the `g` (bold) generators.
   pub g_values: Vec<C::F>,
@@ -309,7 +321,7 @@ pub struct PedersenVectorCommitment<C: Ciphersuite> {
 impl<C: Ciphersuite> PedersenVectorCommitment<C> {
   /// Commit to the vectors of values.
   ///
-  /// This function returns None if the amount of generators is less than the amount of values
+  /// This function returns `None` if the amount of generators is less than the amount of values
   /// within the relevant vector.
   pub fn commit(&self, g_bold: &[C::G], h: C::G) -> Option<C::G> {
     if g_bold.len() < self.g_values.len() {
