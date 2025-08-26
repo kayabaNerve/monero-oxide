@@ -40,9 +40,7 @@ pub(crate) struct IpWitness<C: Ciphersuite> {
 impl<C: Ciphersuite> IpWitness<C> {
   /// Construct a new witness for an Inner-Product statement.
   ///
-  /// If the witness is less than a power of two, it is padded to the nearest power of two.
-  ///
-  /// This functions return None if the lengths of a, b are mismatched or either are empty.
+  /// This functions return `None` if `a.is_empty() || (a.len() != b.len())`.
   pub(crate) fn new(a: ScalarVector<C::F>, b: ScalarVector<C::F>) -> Option<Self> {
     if a.0.is_empty() || (a.len() != b.len()) {
       None?;
@@ -81,9 +79,9 @@ pub(crate) enum IpProveError {
   IncorrectAmountOfGenerators,
   /// The witness was inconsistent to the statement.
   ///
-  /// Sanity checks on the witness are always performed. If the library is compiled with
-  /// `debug_assertions = on`, whether or not this witness actually opens `P` is also checked. This
-  /// error is returned if the witness was checked and it did not satisfy the statement.
+  /// Sanity checks on the witness are always performed. This library may also check whether or not
+  /// the witness actually opens the statement (such as if `debug_assertions = on`), and if so, may
+  /// return this error if the witness is perceived as inconsistent with the statement.
   InconsistentWitness,
 }
 
