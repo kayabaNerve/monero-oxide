@@ -40,10 +40,15 @@ pub(crate) struct IpWitness<C: Ciphersuite> {
 impl<C: Ciphersuite> IpWitness<C> {
   /// Construct a new witness for an Inner-Product statement.
   ///
-  /// This functions return `None` if `a.is_empty() || (a.len() != b.len())`.
-  pub(crate) fn new(a: ScalarVector<C::F>, b: ScalarVector<C::F>) -> Option<Self> {
-    if a.0.is_empty() || (a.len() != b.len()) {
+  /// This functions return `None` if `a.len() != b.len()`.
+  pub(crate) fn new(mut a: ScalarVector<C::F>, mut b: ScalarVector<C::F>) -> Option<Self> {
+    if a.len() != b.len() {
       None?;
+    }
+    // If no IPA rows were used, pad to have a length of one
+    if a.is_empty() {
+      a.0.push(C::F::ZERO);
+      b.0.push(C::F::ZERO);
     }
     Some(Self { a, b })
   }

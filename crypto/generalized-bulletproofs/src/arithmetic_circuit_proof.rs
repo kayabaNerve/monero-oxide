@@ -60,15 +60,21 @@ pub struct ArithmeticCircuitWitness<C: Ciphersuite> {
 impl<C: Ciphersuite> ArithmeticCircuitWitness<C> {
   /// Constructs a new witness instance.
   ///
-  /// Returns `None` if `aL.is_empty() || (aL.len() != aR.len())`.
+  /// Returns `None` if `aL.len() != aR.len()`.
   pub fn new(
-    aL: Vec<C::F>,
-    aR: Vec<C::F>,
+    mut aL: Vec<C::F>,
+    mut aR: Vec<C::F>,
     c: Vec<PedersenVectorCommitment<C>>,
     v: Vec<PedersenCommitment<C>>,
   ) -> Option<Self> {
-    if (aL.is_empty()) || (aL.len() != aR.len()) {
+    if aL.len() != aR.len() {
       None?;
+    }
+    // If no IPA rows were used, pad to have a length of one
+    // This proof may be pointless, but it'll prove
+    if aL.is_empty() {
+      aL.push(C::F::ZERO);
+      aR.push(C::F::ZERO);
     }
 
     let aL = ScalarVector::from(aL);

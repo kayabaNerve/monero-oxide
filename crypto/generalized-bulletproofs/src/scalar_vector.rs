@@ -110,6 +110,11 @@ impl<F: PrimeField> ScalarVector<F> {
     ScalarVector(res)
   }
 
+  /// If this scalar vector is empty.
+  pub(crate) fn is_empty(&self) -> bool {
+    self.0.is_empty()
+  }
+
   /// The length of this scalar vector.
   pub(crate) fn len(&self) -> usize {
     self.0.len()
