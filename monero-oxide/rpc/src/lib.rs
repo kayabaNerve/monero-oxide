@@ -38,6 +38,9 @@ pub use monero_daemon::*;
 mod provides_transactions;
 pub use provides_transactions::*;
 
+mod provides_blockchain_meta;
+pub use provides_blockchain_meta::*;
+
 mod provides_blockchain;
 pub use provides_blockchain::*;
 
@@ -237,55 +240,6 @@ fn rpc_point(point: &str) -> Result<EdwardsPoint, RpcError> {
 
 /// TODO: docstring
 pub trait Rpc: MoneroDaemon + ProvidesTransactions + ProvidesBlockchain {
-  /// Get the active blockchain protocol version.
-  ///
-  /// This is specifically the major version within the most recent block header.
-  fn get_hardfork_version(&self) -> impl Send + Future<Output = Result<u8, RpcError>> {
-    async move {
-      #[derive(Debug, Deserialize)]
-      struct HeaderResponse {
-        major_version: u8,
-      }
-
-      #[derive(Debug, Deserialize)]
-      struct LastHeaderResponse {
-        block_header: HeaderResponse,
-      }
-
-      Ok(
-        self
-          .json_rpc_call::<LastHeaderResponse>("get_last_block_header", None)
-          .await?
-          .block_header
-          .major_version,
-      )
-    }
-  }
-
-  /// Get the hash of a block from the node.
-  ///
-  /// `number` is the block's zero-indexed position on the blockchain (`0` for the genesis block,
-  /// `height - 1` for the latest block).
-  fn get_block_hash(
-    &self,
-    number: usize,
-  ) -> impl Send + Future<Output = Result<[u8; 32], RpcError>> {
-    async move {
-      #[derive(Debug, Deserialize)]
-      struct BlockHeaderResponse {
-        hash: String,
-      }
-      #[derive(Debug, Deserialize)]
-      struct BlockHeaderByHeightResponse {
-        block_header: BlockHeaderResponse,
-      }
-
-      let header: BlockHeaderByHeightResponse =
-        self.json_rpc_call("get_block_header_by_height", Some(json!({ "height": number }))).await?;
-      hash_hex(&header.block_header.hash)
-    }
-  }
-
   /// Get a block's scannable form.
   fn get_scannable_block(
     &self,
@@ -439,43 +393,6 @@ pub trait Rpc: MoneroDaemon + ProvidesTransactions + ProvidesBlockchain {
 
         FeeRate::new(res.fee * fee_multiplier, res.quantization_mask)
       }
-    }
-  }
-
-  /// Publish a transaction.
-  fn publish_transaction(
-    &self,
-    tx: &Transaction,
-  ) -> impl Send + Future<Output = Result<(), RpcError>> {
-    async move {
-      #[allow(dead_code)]
-      #[derive(Debug, Deserialize)]
-      struct SendRawResponse {
-        status: String,
-        double_spend: bool,
-        fee_too_low: bool,
-        invalid_input: bool,
-        invalid_output: bool,
-        low_mixin: bool,
-        not_relayed: bool,
-        overspend: bool,
-        too_big: bool,
-        too_few_outputs: bool,
-        reason: String,
-      }
-
-      let res: SendRawResponse = self
-        .rpc_call(
-          "send_raw_transaction",
-          Some(json!({ "tx_as_hex": hex::encode(tx.serialize()), "do_sanity_checks": false })),
-        )
-        .await?;
-
-      if res.status != "OK" {
-        Err(RpcError::InvalidTransaction(tx.hash()))?;
-      }
-
-      Ok(())
     }
   }
 
@@ -716,7 +633,7 @@ pub trait DecoyRpc: Sync {
   ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, RpcError>>;
 }
 
-impl<R: Rpc> DecoyRpc for R {
+impl<R: MoneroDaemon + ProvidesTransactions + ProvidesBlockchainMeta> DecoyRpc for R {
   fn get_output_distribution_end_height(
     &self,
   ) -> impl Send + Future<Output = Result<usize, RpcError>> {
@@ -970,6 +887,6 @@ impl<R: Rpc> DecoyRpc for R {
 pub mod prelude {
   pub use crate::{
     FeePriority, FeeRate, ScannableBlock, RpcError, MoneroDaemon, ProvidesTransactions,
-    ProvidesBlockchain, Rpc, DecoyRpc,
+    PublishTransaction, ProvidesBlockchainMeta, ProvidesBlockchain, Rpc, DecoyRpc,
   };
 }

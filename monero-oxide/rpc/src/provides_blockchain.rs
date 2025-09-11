@@ -3,16 +3,13 @@ use alloc::{vec::Vec, string::ToString};
 
 use monero_oxide::block::Block;
 
-use crate::RpcError;
+use crate::{RpcError, ProvidesBlockchainMeta};
 
 /// Provides the blockchain from an untrusted source.
 ///
-/// This provides some methods yet (`get_contiguous_blocks` || `get_block_by_number`) &&
+/// This provides all its methods yet (`get_contiguous_blocks` || `get_block_by_number`) &&
 /// (`get_blocks` || `get_block`) MUST be overriden, ideally the batch methods.
-pub trait ProvidesUnvalidatedBlockchain: Sync {
-  /// Get the number of the latest block.
-  fn get_latest_block_number(&self) -> impl Send + Future<Output = Result<usize, RpcError>>;
-
+pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
   /// Get a contiguous range of blocks.
   ///
   /// No validation is applied to the received blocks other than that they deserialize.
@@ -25,8 +22,8 @@ pub trait ProvidesUnvalidatedBlockchain: Sync {
       // If a caller requests an exorbitant amount of blocks, this may trigger an OOM kill
       // In order to maintain correctness, we have to attempt to service this request though
       let mut blocks = Vec::with_capacity(range.end().wrapping_sub(*range.start()));
-      for num in range {
-        blocks.push(self.get_block_by_number(num).await?);
+      for number in range {
+        blocks.push(self.get_block_by_number(number).await?);
       }
       Ok(blocks)
     }
@@ -71,9 +68,10 @@ pub trait ProvidesUnvalidatedBlockchain: Sync {
     }
   }
 
-  /// Get a block by its index on the blockchain (number).
+  /// Get a block by its number.
   ///
-  /// `0` is the number for the genesis block.
+  /// The number of a block is its index on the blockchain, so the genesis block would have
+  /// `number = 0`.
   ///
   /// No validation is applied to the received blocks other than that it deserializes.
   fn get_block_by_number(
@@ -96,10 +94,7 @@ pub trait ProvidesUnvalidatedBlockchain: Sync {
 }
 
 /// Provides blocks which have been sanity-checked.
-pub trait ProvidesBlockchain: Sync {
-  /// Get the number of the latest block.
-  fn get_latest_block_number(&self) -> impl Send + Future<Output = Result<usize, RpcError>>;
-
+pub trait ProvidesBlockchain: ProvidesBlockchainMeta {
   /// Get a contiguous range of blocks.
   ///
   /// The blocks will be validated to build upon each other, as expected, and have the expected
@@ -124,7 +119,8 @@ pub trait ProvidesBlockchain: Sync {
 
   /// Get a block by its index on the blockchain (number).
   ///
-  /// `0` is the number for the genesis block.
+  /// The number of a block is its index on the blockchain, so the genesis block would have
+  /// `number = 0`.
   ///
   /// The block will be validated to be a block with the requested number.
   fn get_block_by_number(
@@ -134,10 +130,6 @@ pub trait ProvidesBlockchain: Sync {
 }
 
 impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
-  fn get_latest_block_number(&self) -> impl Send + Future<Output = Result<usize, RpcError>> {
-    <P as ProvidesUnvalidatedBlockchain>::get_latest_block_number(self)
-  }
-
   fn get_contiguous_blocks(
     &self,
     range: RangeInclusive<usize>,

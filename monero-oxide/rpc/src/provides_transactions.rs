@@ -266,3 +266,12 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
     }
   }
 }
+
+/// An interface eligible to publish transactions over.
+pub trait PublishTransaction: Sync {
+  /// Publish a transaction.
+  fn publish_transaction(
+    &self,
+    transaction: &Transaction,
+  ) -> impl Send + Future<Output = Result<(), RpcError>>;
+}

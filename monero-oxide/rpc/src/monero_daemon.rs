@@ -11,8 +11,8 @@ use monero_oxide::{
 use monero_address::Address;
 
 use crate::{
-  RpcError, PrunedTransactionWithPrunableHash, ProvidesUnvalidatedTransactions,
-  ProvidesUnvalidatedBlockchain, Rpc, rpc_hex, hash_hex,
+  RpcError, PrunedTransactionWithPrunableHash, ProvidesUnvalidatedTransactions, PublishTransaction,
+  ProvidesBlockchainMeta, ProvidesUnvalidatedBlockchain, Rpc, rpc_hex, hash_hex,
 };
 
 // Monero errors if more than 100 is requested unless using a non-restricted RPC
@@ -275,7 +275,45 @@ mod provides_transaction {
   }
 }
 
-impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
+impl<D: MoneroDaemon> PublishTransaction for D {
+  fn publish_transaction(
+    &self,
+    tx: &Transaction,
+  ) -> impl Send + Future<Output = Result<(), RpcError>> {
+    async move {
+      #[allow(dead_code)]
+      #[derive(Debug, Deserialize)]
+      struct SendRawResponse {
+        status: String,
+        double_spend: bool,
+        fee_too_low: bool,
+        invalid_input: bool,
+        invalid_output: bool,
+        low_mixin: bool,
+        not_relayed: bool,
+        overspend: bool,
+        too_big: bool,
+        too_few_outputs: bool,
+        reason: String,
+      }
+
+      let res: SendRawResponse = self
+        .rpc_call(
+          "send_raw_transaction",
+          Some(json!({ "tx_as_hex": hex::encode(tx.serialize()), "do_sanity_checks": false })),
+        )
+        .await?;
+
+      if res.status != "OK" {
+        Err(RpcError::InvalidTransaction(tx.hash()))?;
+      }
+
+      Ok(())
+    }
+  }
+}
+
+impl<D: MoneroDaemon> ProvidesBlockchainMeta for D {
   fn get_latest_block_number(&self) -> impl Send + Future<Output = Result<usize, RpcError>> {
     async move {
       #[derive(Debug, Deserialize)]
@@ -291,6 +329,50 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
     }
   }
 
+  fn get_block_hash(
+    &self,
+    number: usize,
+  ) -> impl Send + Future<Output = Result<[u8; 32], RpcError>> {
+    async move {
+      #[derive(Debug, Deserialize)]
+      struct BlockHeaderResponse {
+        hash: String,
+      }
+      #[derive(Debug, Deserialize)]
+      struct BlockHeaderByHeightResponse {
+        block_header: BlockHeaderResponse,
+      }
+
+      let header: BlockHeaderByHeightResponse =
+        self.json_rpc_call("get_block_header_by_height", Some(json!({ "height": number }))).await?;
+      hash_hex(&header.block_header.hash)
+    }
+  }
+
+  fn get_hardfork_version(&self) -> impl Send + Future<Output = Result<u8, RpcError>> {
+    async move {
+      #[derive(Debug, Deserialize)]
+      struct HeaderResponse {
+        major_version: u8,
+      }
+
+      #[derive(Debug, Deserialize)]
+      struct LastHeaderResponse {
+        block_header: HeaderResponse,
+      }
+
+      Ok(
+        self
+          .json_rpc_call::<LastHeaderResponse>("get_last_block_header", None)
+          .await?
+          .block_header
+          .major_version,
+      )
+    }
+  }
+}
+
+impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
   fn get_block_by_number(
     &self,
     number: usize,
