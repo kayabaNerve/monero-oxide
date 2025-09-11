@@ -31,7 +31,6 @@ use monero_oxide::{
   block::Block,
   DEFAULT_LOCK_WINDOW,
 };
-use monero_address::Address;
 
 mod monero_daemon;
 pub use monero_daemon::*;
@@ -477,39 +476,6 @@ pub trait Rpc: MoneroDaemon + ProvidesTransactions + ProvidesBlockchain {
       }
 
       Ok(())
-    }
-  }
-
-  /// Generate blocks, with the specified address receiving the block reward.
-  ///
-  /// Returns the hashes of the generated blocks and the last block's number.
-  fn generate_blocks<const ADDR_BYTES: u128>(
-    &self,
-    address: &Address<ADDR_BYTES>,
-    block_count: usize,
-  ) -> impl Send + Future<Output = Result<(Vec<[u8; 32]>, usize), RpcError>> {
-    async move {
-      #[derive(Debug, Deserialize)]
-      struct BlocksResponse {
-        blocks: Vec<String>,
-        height: usize,
-      }
-
-      let res = self
-        .json_rpc_call::<BlocksResponse>(
-          "generateblocks",
-          Some(json!({
-            "wallet_address": address.to_string(),
-            "amount_of_blocks": block_count
-          })),
-        )
-        .await?;
-
-      let mut blocks = Vec::with_capacity(res.blocks.len());
-      for block in res.blocks {
-        blocks.push(hash_hex(&block)?);
-      }
-      Ok((blocks, res.height))
     }
   }
 

@@ -8,6 +8,7 @@ use monero_oxide::{
   transaction::{Input, Pruned, Transaction},
   block::Block,
 };
+use monero_address::Address;
 
 use crate::{
   RpcError, PrunedTransactionWithPrunableHash, ProvidesUnvalidatedTransactions,
@@ -100,6 +101,39 @@ pub trait MoneroDaemon: Sync + Clone {
     params: Vec<u8>,
   ) -> impl Send + Future<Output = Result<Vec<u8>, RpcError>> {
     async move { self.post(route, params).await }
+  }
+
+  /// Generate blocks, with the specified address receiving the block reward.
+  ///
+  /// Returns the hashes of the generated blocks and the last block's number.
+  fn generate_blocks<const ADDR_BYTES: u128>(
+    &self,
+    address: &Address<ADDR_BYTES>,
+    block_count: usize,
+  ) -> impl Send + Future<Output = Result<(Vec<[u8; 32]>, usize), RpcError>> {
+    async move {
+      #[derive(Debug, Deserialize)]
+      struct BlocksResponse {
+        blocks: Vec<String>,
+        height: usize,
+      }
+
+      let res = self
+        .json_rpc_call::<BlocksResponse>(
+          "generateblocks",
+          Some(json!({
+            "wallet_address": address.to_string(),
+            "amount_of_blocks": block_count
+          })),
+        )
+        .await?;
+
+      let mut blocks = Vec::with_capacity(res.blocks.len());
+      for block in res.blocks {
+        blocks.push(hash_hex(&block)?);
+      }
+      Ok((blocks, res.height))
+    }
   }
 }
 
