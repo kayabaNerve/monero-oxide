@@ -26,24 +26,23 @@ use monero_address::Address;
 use crate::*;
 
 fn rpc_hex(value: &str) -> Result<Vec<u8>, SourceError> {
-  hex::decode(value)
-    .map_err(|_| SourceError::InvalidSource(format!("expected hex wasn't hex: {value}")))
+  hex::decode(value).map_err(|_| SourceError::InvalidSource("expected hex wasn't hex".to_string()))
 }
 
 fn hash_hex(hash: &str) -> Result<[u8; 32], SourceError> {
   rpc_hex(hash)?
     .try_into()
-    .map_err(|_| SourceError::InvalidSource(format!("hash wasn't 32-bytes: {hash}")))
+    .map_err(|_| SourceError::InvalidSource("hash wasn't 32-bytes".to_string()))
 }
 
 fn rpc_point(point: &str) -> Result<EdwardsPoint, SourceError> {
   CompressedPoint(
     rpc_hex(point)?
       .try_into()
-      .map_err(|_| SourceError::InvalidSource(format!("invalid point: {point}")))?,
+      .map_err(|_| SourceError::InvalidSource("invalid point".to_string()))?,
   )
   .decompress()
-  .ok_or_else(|| SourceError::InvalidSource(format!("invalid point: {point}")))
+  .ok_or_else(|| SourceError::InvalidSource("invalid point".to_string()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,9 +96,8 @@ pub trait MoneroDaemon: Sync + Clone {
         .await?;
       let res_str = std_shims::str::from_utf8(&res)
         .map_err(|_| SourceError::InvalidSource("response wasn't utf-8".to_string()))?;
-      serde_json::from_str(res_str).map_err(|_| {
-        SourceError::InvalidSource(format!("response wasn't the expected json: {res_str}"))
-      })
+      serde_json::from_str(res_str)
+        .map_err(|_| SourceError::InvalidSource("response wasn't the expected json".to_string()))
     }
   }
 
@@ -245,8 +243,8 @@ mod provides_transaction {
             let mut buf = buf.as_slice();
             let tx = Transaction::read(&mut buf).map_err(|_| {
               SourceError::InvalidSource(format!(
-                "node yielded transaction allegedly with hash {} which was invalid",
-                res.tx_hash,
+                "node yielded transaction allegedly with hash {:?} which was invalid",
+                rpc_hex(&res.tx_hash).ok().map(hex::encode),
               ))
             })?;
             if !buf.is_empty() {
@@ -305,8 +303,8 @@ mod provides_transaction {
             let mut buf = buf.as_slice();
             let tx = Transaction::<Pruned>::read(&mut buf).map_err(|_| {
               SourceError::InvalidSource(
-                format!("node yielded transaction allegedly with hash {} which was invalid",
-                res.tx_hash,
+                format!("node yielded transaction allegedly with hash {:?} which was invalid",
+                rpc_hex(&res.tx_hash).ok().map(hex::encode),
             ))
             })?;
             if !buf.is_empty() {
@@ -506,9 +504,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
                 // claim this to be a complete deserialization function
                 // To ensure it works for this specific use case, it's best to ensure it's limited
                 // to this specific use case (ensuring we have less variables to deal with)
-                _ => {
-                  Err(io::Error::other(format!("unrecognized field in get_o_indexes: {name:?}")))?
-                }
+                _ => Err(io::Error::other("unrecognized field in get_o_indexes".to_string()))?,
               };
               if (expected_type != kind) || (expected_array_flag != has_array_flag) {
                 let fmt_array_bool = |array_bool| if array_bool { "array" } else { "not array" };
@@ -660,7 +656,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
                 block_number: output.height,
                 unlocked: output.unlocked,
                 key: CompressedPoint(rpc_hex(&output.key)?.try_into().map_err(|_| {
-                  SourceError::InvalidSource(format!("output key wasn't 32 bytes: {}", output.key))
+                  SourceError::InvalidSource("output key wasn't 32 bytes".to_string())
                 })?),
                 commitment: rpc_point(&output.mask)?,
                 transaction: hash_hex(&output.txid)?,
