@@ -28,7 +28,7 @@ async fn add_inputs(
         &mut OsRng,
         rpc,
         ring_len(rct_type),
-        rpc.get_latest_block_number().await.unwrap(),
+        rpc.latest_block_number().await.unwrap(),
         output,
       )
       .await
@@ -118,7 +118,7 @@ test!(
         rct_type,
         outgoing_view,
         Change::new(change_view.clone(), None),
-        rpc.get_fee_rate(FeePriority::Unimportant, u64::MAX).await.unwrap(),
+        rpc.fee_rate(FeePriority::Unimportant, u64::MAX).await.unwrap(),
       );
       add_inputs(rct_type, &rpc, vec![outputs.first().unwrap().clone()], &mut builder).await;
 
@@ -310,7 +310,7 @@ test!(
         rct_type,
         outgoing_view,
         Change::fingerprintable(None),
-        rpc.get_fee_rate(FeePriority::Unimportant, u64::MAX).await.unwrap(),
+        rpc.fee_rate(FeePriority::Unimportant, u64::MAX).await.unwrap(),
       );
       add_inputs(rct_type, &rpc, vec![outputs.first().unwrap().clone()], &mut builder).await;
       builder.add_payment(addr, 10000);
@@ -366,7 +366,7 @@ test!(
         rct_type,
         outgoing_view,
         Change::new(change_view.clone(), Some(SubaddressIndex::new(0, 1).unwrap())),
-        rpc.get_fee_rate(FeePriority::Unimportant, u64::MAX).await.unwrap(),
+        rpc.fee_rate(FeePriority::Unimportant, u64::MAX).await.unwrap(),
       );
       add_inputs(rct_type, &rpc, vec![outputs.first().unwrap().clone()], &mut builder).await;
 

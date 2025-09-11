@@ -28,7 +28,7 @@ pub trait ProvidesUnvalidatedDecoys: ProvidesBlockchainMeta {
   /// the range starts before RingCT outputs were created on-chain.
   ///
   /// No validation of the distribution is performed.
-  fn get_ringct_output_distribution(
+  fn ringct_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,
   ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>>;
@@ -37,7 +37,7 @@ pub trait ProvidesUnvalidatedDecoys: ProvidesBlockchainMeta {
   ///
   /// No validation of the outputs is performed other than confirming the correct amount is
   /// returned.
-  fn get_unlocked_ringct_outputs(
+  fn unlocked_ringct_outputs(
     &self,
     indexes: &[u64],
     evaluate_unlocked: EvaluateUnlocked,
@@ -54,13 +54,13 @@ pub trait ProvidesDecoys: ProvidesBlockchainMeta {
   /// the range starts before RingCT outputs were created on-chain.
   ///
   /// The distribution is checked to monotonically increase.
-  fn get_ringct_output_distribution(
+  fn ringct_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,
   ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>>;
 
   /// Get the specified RingCT outputs, but only return them if they're unlocked.
-  fn get_unlocked_ringct_outputs(
+  fn unlocked_ringct_outputs(
     &self,
     indexes: &[u64],
     evaluate_unlocked: EvaluateUnlocked,
@@ -68,13 +68,13 @@ pub trait ProvidesDecoys: ProvidesBlockchainMeta {
 }
 
 impl<P: ProvidesUnvalidatedDecoys> ProvidesDecoys for P {
-  fn get_ringct_output_distribution(
+  fn ringct_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,
   ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>> {
     async move {
       let distribution =
-        <P as ProvidesUnvalidatedDecoys>::get_ringct_output_distribution(self, range).await?;
+        <P as ProvidesUnvalidatedDecoys>::ringct_output_distribution(self, range).await?;
 
       let mut monotonic = 0;
       for d in &distribution {
@@ -90,22 +90,19 @@ impl<P: ProvidesUnvalidatedDecoys> ProvidesDecoys for P {
     }
   }
 
-  fn get_unlocked_ringct_outputs(
+  fn unlocked_ringct_outputs(
     &self,
     indexes: &[u64],
     evaluate_unlocked: EvaluateUnlocked,
   ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, RpcError>> {
     async move {
-      let outputs = <P as ProvidesUnvalidatedDecoys>::get_unlocked_ringct_outputs(
-        self,
-        indexes,
-        evaluate_unlocked,
-      )
-      .await?;
+      let outputs =
+        <P as ProvidesUnvalidatedDecoys>::unlocked_ringct_outputs(self, indexes, evaluate_unlocked)
+          .await?;
       if outputs.len() != indexes.len() {
         Err(RpcError::InternalError(format!(
           "`{}` returned {} outputs, expected {}",
-          "ProvidesUnvalidatedDecoys::get_unlocked_ringct_outputs",
+          "ProvidesUnvalidatedDecoys::unlocked_ringct_outputs",
           outputs.len(),
           indexes.len(),
         )))?;

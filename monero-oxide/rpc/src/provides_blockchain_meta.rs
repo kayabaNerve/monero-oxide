@@ -8,5 +8,5 @@ pub trait ProvidesBlockchainMeta: Sync {
   ///
   /// The number of a block is its index on the blockchain, so the genesis block would have
   /// `number = 0`.
-  fn get_latest_block_number(&self) -> impl Send + Future<Output = Result<usize, RpcError>>;
+  fn latest_block_number(&self) -> impl Send + Future<Output = Result<usize, RpcError>>;
 }

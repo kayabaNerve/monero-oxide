@@ -122,7 +122,7 @@ pub trait ProvidesUnvalidatedFeeRates: Sync {
   /// This may be manipulated to unsafe levels and MUST be sanity checked.
   ///
   /// This MUST NOT be expected to be deterministic in any way.
-  fn get_fee_rate(
+  fn fee_rate(
     &self,
     priority: FeePriority,
   ) -> impl Send + Future<Output = Result<FeeRate, RpcError>>;
@@ -133,7 +133,7 @@ pub trait ProvidesFeeRates: Sync {
   /// Get the recommended fee rate.
   ///
   /// This MUST NOT be expected to be deterministic in any way.
-  fn get_fee_rate(
+  fn fee_rate(
     &self,
     priority: FeePriority,
     max_per_weight: u64,
@@ -141,13 +141,13 @@ pub trait ProvidesFeeRates: Sync {
 }
 
 impl<P: ProvidesUnvalidatedFeeRates> ProvidesFeeRates for P {
-  fn get_fee_rate(
+  fn fee_rate(
     &self,
     priority: FeePriority,
     max_per_weight: u64,
   ) -> impl Send + Future<Output = Result<FeeRate, RpcError>> {
     async move {
-      let fee_rate = <P as ProvidesUnvalidatedFeeRates>::get_fee_rate(self, priority).await?;
+      let fee_rate = <P as ProvidesUnvalidatedFeeRates>::fee_rate(self, priority).await?;
       if fee_rate.per_weight > max_per_weight {
         Err(RpcError::InvalidFee)?;
       }

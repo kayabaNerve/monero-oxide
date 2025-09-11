@@ -166,7 +166,7 @@ pub trait MoneroDaemon: Sync + Clone {
 }
 
 impl<D: MoneroDaemon> ProvidesBlockchainMeta for D {
-  fn get_latest_block_number(&self) -> impl Send + Future<Output = Result<usize, RpcError>> {
+  fn latest_block_number(&self) -> impl Send + Future<Output = Result<usize, RpcError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct HeightResponse {
@@ -205,7 +205,7 @@ mod provides_transaction {
   }
 
   impl<D: MoneroDaemon> ProvidesUnvalidatedTransactions for D {
-    fn get_transactions(
+    fn transactions(
       &self,
       hashes: &[[u8; 32]],
     ) -> impl Send + Future<Output = Result<Vec<Transaction>, RpcError>> {
@@ -270,7 +270,7 @@ mod provides_transaction {
       }
     }
 
-    fn get_pruned_transactions(
+    fn pruned_transactions(
       &self,
       hashes: &[[u8; 32]],
     ) -> impl Send + Future<Output = Result<Vec<PrunedTransactionWithPrunableHash>, RpcError>> {
@@ -364,10 +364,7 @@ impl<D: MoneroDaemon> PublishTransaction for D {
 }
 
 impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
-  fn get_block_by_number(
-    &self,
-    number: usize,
-  ) -> impl Send + Future<Output = Result<Block, RpcError>> {
+  fn block_by_number(&self, number: usize) -> impl Send + Future<Output = Result<Block, RpcError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct BlockResponse {
@@ -382,7 +379,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
     }
   }
 
-  fn get_block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, RpcError>> {
+  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, RpcError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct BlockResponse {
@@ -397,10 +394,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
     }
   }
 
-  fn get_block_hash(
-    &self,
-    number: usize,
-  ) -> impl Send + Future<Output = Result<[u8; 32], RpcError>> {
+  fn block_hash(&self, number: usize) -> impl Send + Future<Output = Result<[u8; 32], RpcError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct BlockHeaderResponse {
@@ -419,7 +413,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
 }
 
 impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
-  fn get_output_indexes(
+  fn output_indexes(
     &self,
     hash: [u8; 32],
   ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>> {
@@ -608,7 +602,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
     }
   }
 
-  fn get_ringct_outputs(
+  fn ringct_outputs(
     &self,
     indexes: &[u64],
   ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, RpcError>> {
@@ -678,7 +672,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
 }
 
 impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
-  fn get_ringct_output_distribution(
+  fn ringct_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,
   ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>> {
@@ -708,7 +702,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
         Bound::Excluded(to) => to
           .checked_sub(1)
           .ok_or_else(|| RpcError::InternalError("range's to wasn't representable".to_string()))?,
-        Bound::Unbounded => self.get_latest_block_number().await?,
+        Bound::Unbounded => self.latest_block_number().await?,
       };
       if from > to {
         Err(RpcError::InternalError(format!(
@@ -781,18 +775,18 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
     }
   }
 
-  fn get_unlocked_ringct_outputs(
+  fn unlocked_ringct_outputs(
     &self,
     indexes: &[u64],
     evaluate_unlocked: EvaluateUnlocked,
   ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, RpcError>> {
     async move {
-      let outs = self.get_ringct_outputs(indexes).await?;
+      let outs = self.ringct_outputs(indexes).await?;
 
       // Only need to fetch transactions if we're doing a deterministic check on the timelock
       let txs =
         if matches!(evaluate_unlocked, EvaluateUnlocked::FingerprintableDeterministic { .. }) {
-          self.get_transactions(&outs.iter().map(|out| out.transaction).collect::<Vec<_>>()).await?
+          self.transactions(&outs.iter().map(|out| out.transaction).collect::<Vec<_>>()).await?
         } else {
           vec![]
         };
@@ -850,7 +844,7 @@ mod provides_fee_rates {
   const GRACE_BLOCKS_FOR_FEE_ESTIMATE: u64 = 10;
 
   impl<D: MoneroDaemon> ProvidesUnvalidatedFeeRates for D {
-    fn get_fee_rate(
+    fn fee_rate(
       &self,
       priority: FeePriority,
     ) -> impl Send + Future<Output = Result<FeeRate, RpcError>> {

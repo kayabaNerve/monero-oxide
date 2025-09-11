@@ -102,7 +102,7 @@ async fn from_wallet_rpc_to_self(spec: AddressSpec) {
     .unwrap();
   let tx_hash = hex::decode(tx.tx_hash).unwrap().try_into().unwrap();
 
-  let fee_rate = daemon_rpc.get_fee_rate(FeePriority::Unimportant, u64::MAX).await.unwrap();
+  let fee_rate = daemon_rpc.fee_rate(FeePriority::Unimportant, u64::MAX).await.unwrap();
 
   // unlock it
   let block = runner::mine_until_unlocked(&daemon_rpc, &wallet_rpc_addr, tx_hash).await;
@@ -118,7 +118,7 @@ async fn from_wallet_rpc_to_self(spec: AddressSpec) {
   let output = scanner.scan(block).unwrap().not_additionally_locked().swap_remove(0);
   assert_eq!(output.transaction(), tx_hash);
 
-  runner::check_weight_and_fee(&daemon_rpc.get_transaction(tx_hash).await.unwrap(), fee_rate);
+  runner::check_weight_and_fee(&daemon_rpc.transaction(tx_hash).await.unwrap(), fee_rate);
 
   match spec {
     AddressSpec::Subaddress(index) => {

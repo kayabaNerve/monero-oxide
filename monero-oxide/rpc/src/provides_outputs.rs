@@ -29,7 +29,7 @@ pub trait ProvidesUnvalidatedOutputs {
   /// Get the indexes for this transaction's outputs on the blockchain.
   ///
   /// No validation is performed.
-  fn get_output_indexes(
+  fn output_indexes(
     &self,
     hash: [u8; 32],
   ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>>;
@@ -37,7 +37,7 @@ pub trait ProvidesUnvalidatedOutputs {
   /// Get the specified outputs from the RingCT (zero-amount) pool.
   ///
   /// No validation is performed.
-  fn get_ringct_outputs(
+  fn ringct_outputs(
     &self,
     indexes: &[u64],
   ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, RpcError>>;
@@ -49,7 +49,7 @@ pub trait ProvidesOutputs {
   ///
   /// No validation is performed.
   // We could check the outputs are contiguous if this was bound to only V2 transactions.
-  fn get_output_indexes(
+  fn output_indexes(
     &self,
     hash: [u8; 32],
   ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>>;
@@ -57,27 +57,27 @@ pub trait ProvidesOutputs {
   /// Get the specified outputs from the RingCT (zero-amount) pool.
   ///
   /// No validation is performed.
-  fn get_ringct_outputs(
+  fn ringct_outputs(
     &self,
     indexes: &[u64],
   ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, RpcError>>;
 }
 
 impl<P: ProvidesUnvalidatedOutputs> ProvidesOutputs for P {
-  fn get_output_indexes(
+  fn output_indexes(
     &self,
     hash: [u8; 32],
   ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>> {
-    <P as ProvidesUnvalidatedOutputs>::get_output_indexes(self, hash)
+    <P as ProvidesUnvalidatedOutputs>::output_indexes(self, hash)
   }
 
   /// Get the specified outputs from the RingCT (zero-amount) pool.
   ///
   /// No validation is performed.
-  fn get_ringct_outputs(
+  fn ringct_outputs(
     &self,
     indexes: &[u64],
   ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, RpcError>> {
-    <P as ProvidesUnvalidatedOutputs>::get_ringct_outputs(self, indexes)
+    <P as ProvidesUnvalidatedOutputs>::ringct_outputs(self, indexes)
   }
 }

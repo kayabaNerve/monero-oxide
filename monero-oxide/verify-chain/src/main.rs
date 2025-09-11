@@ -22,7 +22,7 @@ use tokio::task::JoinHandle;
 
 async fn check_block(rpc: impl MoneroDaemon, block_i: usize) {
   let hash = loop {
-    match rpc.get_block_hash(block_i).await {
+    match rpc.block_hash(block_i).await {
       Ok(hash) => break hash,
       Err(RpcError::ConnectionError(e)) => {
         println!("get_block_hash ConnectionError: {e}");
@@ -59,7 +59,7 @@ async fn check_block(rpc: impl MoneroDaemon, block_i: usize) {
   if !block.transactions.is_empty() {
     // Test getting pruned transactions
     loop {
-      match rpc.get_pruned_transactions(&block.transactions).await {
+      match rpc.pruned_transactions(&block.transactions).await {
         Ok(_) => break,
         Err(RpcError::ConnectionError(e)) => {
           println!("get_pruned_transactions ConnectionError: {e}");
@@ -70,7 +70,7 @@ async fn check_block(rpc: impl MoneroDaemon, block_i: usize) {
     }
 
     let txs = loop {
-      match rpc.get_transactions(&block.transactions).await {
+      match rpc.transactions(&block.transactions).await {
         Ok(txs) => break txs,
         Err(RpcError::ConnectionError(e)) => {
           println!("get_transactions ConnectionError: {e}");
@@ -259,7 +259,7 @@ async fn main() {
   let mut latest_block_number = 0;
   loop {
     let new_latest_block_number =
-      main_rpc.get_latest_block_number().await.expect("couldn't call get_latest_block_number");
+      main_rpc.latest_block_number().await.expect("couldn't call get_latest_block_number");
     if new_latest_block_number == latest_block_number {
       break;
     }

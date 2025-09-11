@@ -15,7 +15,7 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
   /// No validation is applied to the received blocks other than that they deserialize and have the
   /// expected length.
   // This accepts a `RangeInclusive`, not a `impl RangeBounds`, to ensure the range is finite
-  fn get_contiguous_blocks(
+  fn contiguous_blocks(
     &self,
     range: RangeInclusive<usize>,
   ) -> impl Send + Future<Output = Result<Vec<Block>, RpcError>> {
@@ -24,7 +24,7 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
       // In order to maintain correctness, we have to attempt to service this request though
       let mut blocks = Vec::with_capacity(range.end().wrapping_sub(*range.start()));
       for number in range {
-        blocks.push(self.get_block_by_number(number).await?);
+        blocks.push(self.block_by_number(number).await?);
       }
       Ok(blocks)
     }
@@ -34,14 +34,14 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
   ///
   /// No validation is applied to the received blocks other than that they deserialize and have the
   /// expected length.
-  fn get_blocks(
+  fn blocks(
     &self,
     hashes: &[[u8; 32]],
   ) -> impl Send + Future<Output = Result<Vec<Block>, RpcError>> {
     async move {
       let mut blocks = Vec::with_capacity(hashes.len());
       for hash in hashes {
-        blocks.push(self.get_block(*hash).await?);
+        blocks.push(self.block(*hash).await?);
       }
       Ok(blocks)
     }
@@ -55,13 +55,13 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
   /// Get a block by its hash.
   ///
   /// No validation is applied to the received block other than that it deserializes.
-  fn get_block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, RpcError>> {
+  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, RpcError>> {
     async move {
-      let mut blocks = self.get_blocks(&[hash]).await?;
+      let mut blocks = self.blocks(&[hash]).await?;
       if blocks.len() != 1 {
         Err(RpcError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
-          "ProvidesUnvalidatedBlockchain::get_blocks",
+          "ProvidesUnvalidatedBlockchain::blocks",
           blocks.len(),
           1,
         )))?;
@@ -76,16 +76,13 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
   /// `number = 0`.
   ///
   /// No validation is applied to the received blocks other than that it deserializes.
-  fn get_block_by_number(
-    &self,
-    number: usize,
-  ) -> impl Send + Future<Output = Result<Block, RpcError>> {
+  fn block_by_number(&self, number: usize) -> impl Send + Future<Output = Result<Block, RpcError>> {
     async move {
-      let mut blocks = self.get_contiguous_blocks(number ..= number).await?;
+      let mut blocks = self.contiguous_blocks(number ..= number).await?;
       if blocks.len() != 1 {
         Err(RpcError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
-          "ProvidesUnvalidatedBlockchain::get_contiguous_blocks",
+          "ProvidesUnvalidatedBlockchain::contiguous_blocks",
           blocks.len(),
           1,
         )))?;
@@ -98,10 +95,7 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
   ///
   /// The number of a block is its index on the blockchain, so the genesis block would have
   /// `number = 0`.
-  fn get_block_hash(
-    &self,
-    number: usize,
-  ) -> impl Send + Future<Output = Result<[u8; 32], RpcError>>;
+  fn block_hash(&self, number: usize) -> impl Send + Future<Output = Result<[u8; 32], RpcError>>;
 }
 
 /// Provides blocks which have been sanity-checked.
@@ -110,7 +104,7 @@ pub trait ProvidesBlockchain: ProvidesBlockchainMeta {
   ///
   /// The blocks will be validated to build upon each other, as expected, and have the expected
   /// numbers.
-  fn get_contiguous_blocks(
+  fn contiguous_blocks(
     &self,
     range: RangeInclusive<usize>,
   ) -> impl Send + Future<Output = Result<Vec<Block>, RpcError>>;
@@ -118,7 +112,7 @@ pub trait ProvidesBlockchain: ProvidesBlockchainMeta {
   /// Get a list of blocks by their hashes.
   ///
   /// The blocks will be validated to be the requested blocks with well-formed numbers.
-  fn get_blocks(
+  fn blocks(
     &self,
     hashes: &[[u8; 32]],
   ) -> impl Send + Future<Output = Result<Vec<Block>, RpcError>>;
@@ -126,7 +120,7 @@ pub trait ProvidesBlockchain: ProvidesBlockchainMeta {
   /// Get a block by its hash.
   ///
   /// The block will be validated to be the requested block with a well-formed number.
-  fn get_block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, RpcError>>;
+  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, RpcError>>;
 
   /// Get a block by its number.
   ///
@@ -134,19 +128,13 @@ pub trait ProvidesBlockchain: ProvidesBlockchainMeta {
   /// `number = 0`.
   ///
   /// The block will be validated to be a block with the requested number.
-  fn get_block_by_number(
-    &self,
-    number: usize,
-  ) -> impl Send + Future<Output = Result<Block, RpcError>>;
+  fn block_by_number(&self, number: usize) -> impl Send + Future<Output = Result<Block, RpcError>>;
 
   /// Get the hash of a block by its number.
   ///
   /// The number of a block is its index on the blockchain, so the genesis block would have
   /// `number = 0`.
-  fn get_block_hash(
-    &self,
-    number: usize,
-  ) -> impl Send + Future<Output = Result<[u8; 32], RpcError>>;
+  fn block_hash(&self, number: usize) -> impl Send + Future<Output = Result<[u8; 32], RpcError>>;
 }
 
 pub(crate) fn sanity_check_contiguous_blocks<'a>(
@@ -232,18 +220,18 @@ pub(crate) fn sanity_check_block_by_number(number: usize, block: &Block) -> Resu
 }
 
 impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
-  fn get_contiguous_blocks(
+  fn contiguous_blocks(
     &self,
     range: RangeInclusive<usize>,
   ) -> impl Send + Future<Output = Result<Vec<Block>, RpcError>> {
     async move {
       let blocks =
-        <P as ProvidesUnvalidatedBlockchain>::get_contiguous_blocks(self, range.clone()).await?;
+        <P as ProvidesUnvalidatedBlockchain>::contiguous_blocks(self, range.clone()).await?;
       let expected_blocks = range.end().wrapping_sub(*range.start());
       if blocks.len() != expected_blocks {
         Err(RpcError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
-          "ProvidesUnvalidatedBlockchain::get_contiguous_blocks",
+          "ProvidesUnvalidatedBlockchain::contiguous_blocks",
           blocks.len(),
           expected_blocks,
         )))?;
@@ -253,16 +241,16 @@ impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
     }
   }
 
-  fn get_blocks(
+  fn blocks(
     &self,
     hashes: &[[u8; 32]],
   ) -> impl Send + Future<Output = Result<Vec<Block>, RpcError>> {
     async move {
-      let blocks = <P as ProvidesUnvalidatedBlockchain>::get_blocks(self, hashes).await?;
+      let blocks = <P as ProvidesUnvalidatedBlockchain>::blocks(self, hashes).await?;
       if blocks.len() != hashes.len() {
         Err(RpcError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
-          "ProvidesUnvalidatedBlockchain::get_blocks",
+          "ProvidesUnvalidatedBlockchain::blocks",
           blocks.len(),
           hashes.len(),
         )))?;
@@ -272,29 +260,23 @@ impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
     }
   }
 
-  fn get_block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, RpcError>> {
+  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, RpcError>> {
     async move {
-      let block = <P as ProvidesUnvalidatedBlockchain>::get_block(self, hash).await?;
+      let block = <P as ProvidesUnvalidatedBlockchain>::block(self, hash).await?;
       sanity_check_block_by_hash(&hash, &block)?;
       Ok(block)
     }
   }
 
-  fn get_block_by_number(
-    &self,
-    number: usize,
-  ) -> impl Send + Future<Output = Result<Block, RpcError>> {
+  fn block_by_number(&self, number: usize) -> impl Send + Future<Output = Result<Block, RpcError>> {
     async move {
-      let block = <P as ProvidesUnvalidatedBlockchain>::get_block_by_number(self, number).await?;
+      let block = <P as ProvidesUnvalidatedBlockchain>::block_by_number(self, number).await?;
       sanity_check_block_by_number(number, &block)?;
       Ok(block)
     }
   }
 
-  fn get_block_hash(
-    &self,
-    number: usize,
-  ) -> impl Send + Future<Output = Result<[u8; 32], RpcError>> {
-    <P as ProvidesUnvalidatedBlockchain>::get_block_hash(self, number)
+  fn block_hash(&self, number: usize) -> impl Send + Future<Output = Result<[u8; 32], RpcError>> {
+    <P as ProvidesUnvalidatedBlockchain>::block_hash(self, number)
   }
 }

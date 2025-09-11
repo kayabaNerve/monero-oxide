@@ -70,11 +70,11 @@ pub async fn mine_until_unlocked(
   tx_hash: [u8; 32],
 ) -> Block {
   // mine until tx is in a block
-  let mut height = rpc.get_latest_block_number().await.unwrap() + 1;
+  let mut height = rpc.latest_block_number().await.unwrap() + 1;
   let mut found = false;
   let mut block = None;
   while !found {
-    let inner_block = rpc.get_block_by_number(height - 1).await.unwrap();
+    let inner_block = rpc.block_by_number(height - 1).await.unwrap();
     found = match inner_block.transactions.iter().find(|&&x| x == tx_hash) {
       Some(_) => {
         block = Some(inner_block);
@@ -101,10 +101,10 @@ pub async fn get_miner_tx_output(rpc: &SimpleRequestRpc, view: &ViewPair) -> Wal
   let mut scanner = Scanner::new(view.clone());
 
   // Mine 60 blocks to unlock a miner TX
-  let start = rpc.get_latest_block_number().await.unwrap() + 1;
+  let start = rpc.latest_block_number().await.unwrap() + 1;
   rpc.generate_blocks(&view.legacy_address(Network::Mainnet), 60).await.unwrap();
 
-  let block = rpc.get_block_by_number(start).await.unwrap();
+  let block = rpc.block_by_number(start).await.unwrap();
   scanner
     .scan(rpc.expand_to_scannable_block(block).await.unwrap())
     .unwrap()
@@ -131,7 +131,7 @@ pub async fn rpc() -> SimpleRequestRpc {
   const BLOCKS_TO_MINE: usize = 110;
 
   // Only run once
-  if (rpc.get_latest_block_number().await.unwrap() + 1) > BLOCKS_TO_MINE {
+  if (rpc.latest_block_number().await.unwrap() + 1) > BLOCKS_TO_MINE {
     return rpc;
   }
 
@@ -247,8 +247,8 @@ macro_rules! test {
 
           let miner_tx = get_miner_tx_output(&rpc, &view).await;
 
-          let rct_type = match rpc.get_block_by_number(
-            rpc.get_latest_block_number().await.unwrap()
+          let rct_type = match rpc.block_by_number(
+            rpc.latest_block_number().await.unwrap()
           ).await.unwrap().header.hardfork_version {
             14 => RctType::ClsagBulletproof,
             15 | 16 => RctType::ClsagBulletproofPlus,
@@ -265,7 +265,7 @@ macro_rules! test {
               ).unwrap(),
               None,
             ),
-            rpc.get_fee_rate(FeePriority::Unimportant, u64::MAX).await.unwrap(),
+            rpc.fee_rate(FeePriority::Unimportant, u64::MAX).await.unwrap(),
           );
 
           let sign = |tx: SignableTransaction| {
@@ -309,7 +309,7 @@ macro_rules! test {
               &mut OsRng,
               &rpc,
               ring_len(rct_type),
-              rpc.get_latest_block_number().await.unwrap(),
+              rpc.latest_block_number().await.unwrap(),
               miner_tx,
             ).await.unwrap();
             builder.add_input(input);
@@ -321,7 +321,7 @@ macro_rules! test {
             let block =
               mine_until_unlocked(&rpc, &random_address().2, signed.hash()).await;
             let block = rpc.expand_to_scannable_block(block).await.unwrap();
-            let tx = rpc.get_transaction(signed.hash()).await.unwrap();
+            let tx = rpc.transaction(signed.hash()).await.unwrap();
             check_weight_and_fee(&tx, fee_rate);
             let scanner = Scanner::new(view.clone());
             ($first_checks)(rpc.clone(), block, tx, scanner, state).await
@@ -343,7 +343,7 @@ macro_rules! test {
             let block =
               mine_until_unlocked(&rpc, &random_address().2, signed.hash()).await;
             let block = rpc.expand_to_scannable_block(block).await.unwrap();
-            let tx = rpc.get_transaction(signed.hash()).await.unwrap();
+            let tx = rpc.transaction(signed.hash()).await.unwrap();
             if stringify!($name) != "spend_one_input_to_two_outputs_no_change" {
               // Skip weight and fee check for the above test because when there is no change,
               // the change is added to the fee

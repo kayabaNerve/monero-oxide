@@ -33,14 +33,14 @@ async fn select_n(
   if block_number <= DEFAULT_LOCK_WINDOW {
     Err(RpcError::InternalError("not enough blocks to select decoys".to_string()))?;
   }
-  if block_number > rpc.get_latest_block_number().await? {
+  if block_number > rpc.latest_block_number().await? {
     Err(RpcError::InternalError(
       "decoys being requested from blocks this node doesn't have".to_string(),
     ))?;
   }
 
   // Get the distribution
-  let distribution = rpc.get_ringct_output_distribution(..= block_number).await?;
+  let distribution = rpc.ringct_output_distribution(..= block_number).await?;
   if distribution.len() < DEFAULT_LOCK_WINDOW {
     Err(RpcError::InternalError("not enough blocks to select decoys".to_string()))?;
   }
@@ -162,7 +162,7 @@ async fn select_n(
     };
 
     for (i, output) in rpc
-      .get_unlocked_ringct_outputs(
+      .unlocked_ringct_outputs(
         &candidates,
         if fingerprintable_deterministic {
           EvaluateUnlocked::FingerprintableDeterministic { block_number }

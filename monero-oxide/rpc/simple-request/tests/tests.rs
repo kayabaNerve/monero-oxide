@@ -23,19 +23,19 @@ async fn test_rpc() {
 
   {
     // Test get_latest_block_number
-    let block_number = rpc.get_latest_block_number().await.unwrap();
+    let block_number = rpc.latest_block_number().await.unwrap();
     // The height should be the amount of blocks on chain
     // The number of a block should be its zero-indexed position
     // Accordingly, there should be no block whose number is the height
     let height = block_number + 1;
-    assert!(rpc.get_block_by_number(height).await.is_err());
+    assert!(rpc.block_by_number(height).await.is_err());
     // There should be a block just prior
-    let block = rpc.get_block_by_number(block_number).await.unwrap();
+    let block = rpc.block_by_number(block_number).await.unwrap();
 
     // Also test the block RPC routes are consistent
     assert_eq!(block.number().unwrap(), block_number);
-    assert_eq!(rpc.get_block(block.hash()).await.unwrap(), block);
-    assert_eq!(rpc.get_block_hash(block_number).await.unwrap(), block.hash());
+    assert_eq!(rpc.block(block.hash()).await.unwrap(), block);
+    assert_eq!(rpc.block_hash(block_number).await.unwrap(), block.hash());
   }
 
   // Test generate_blocks
@@ -47,12 +47,12 @@ async fn test_rpc() {
       )
       .await
       .unwrap();
-    let latest_block_number = rpc.get_latest_block_number().await.unwrap();
+    let latest_block_number = rpc.latest_block_number().await.unwrap();
     assert_eq!(number, latest_block_number);
 
     let mut actual_blocks = Vec::with_capacity(amount_of_blocks);
     for i in (latest_block_number - amount_of_blocks + 1) ..= latest_block_number {
-      actual_blocks.push(rpc.get_block_by_number(i).await.unwrap().hash());
+      actual_blocks.push(rpc.block_by_number(i).await.unwrap().hash());
     }
     assert_eq!(blocks, actual_blocks);
   }
@@ -77,34 +77,34 @@ async fn test_decoy_rpc() {
   // Test get_ringct_output_distribution
   // Our documentation for our Rust fn defines it as taking two block numbers
   {
-    let distribution_len = rpc.get_latest_block_number().await.unwrap() + 1;
+    let distribution_len = rpc.latest_block_number().await.unwrap() + 1;
 
-    rpc.get_ringct_output_distribution(0 ..= distribution_len).await.unwrap_err();
+    rpc.ringct_output_distribution(0 ..= distribution_len).await.unwrap_err();
     assert_eq!(
-      rpc.get_ringct_output_distribution(0 .. distribution_len).await.unwrap().len(),
+      rpc.ringct_output_distribution(0 .. distribution_len).await.unwrap().len(),
       distribution_len
     );
     assert_eq!(
-      rpc.get_ringct_output_distribution(.. distribution_len).await.unwrap().len(),
+      rpc.ringct_output_distribution(.. distribution_len).await.unwrap().len(),
       distribution_len
     );
 
     assert_eq!(
-      rpc.get_ringct_output_distribution(.. (distribution_len - 1)).await.unwrap().len(),
+      rpc.ringct_output_distribution(.. (distribution_len - 1)).await.unwrap().len(),
       distribution_len - 1
     );
     assert_eq!(
-      rpc.get_ringct_output_distribution(1 .. distribution_len).await.unwrap().len(),
+      rpc.ringct_output_distribution(1 .. distribution_len).await.unwrap().len(),
       distribution_len - 1
     );
 
-    assert_eq!(rpc.get_ringct_output_distribution(0 ..= 0).await.unwrap().len(), 1);
-    assert_eq!(rpc.get_ringct_output_distribution(0 ..= 1).await.unwrap().len(), 2);
-    assert_eq!(rpc.get_ringct_output_distribution(1 ..= 1).await.unwrap().len(), 1);
+    assert_eq!(rpc.ringct_output_distribution(0 ..= 0).await.unwrap().len(), 1);
+    assert_eq!(rpc.ringct_output_distribution(0 ..= 1).await.unwrap().len(), 2);
+    assert_eq!(rpc.ringct_output_distribution(1 ..= 1).await.unwrap().len(), 1);
 
-    rpc.get_ringct_output_distribution(0 .. 0).await.unwrap_err();
+    rpc.ringct_output_distribution(0 .. 0).await.unwrap_err();
     #[allow(clippy::reversed_empty_ranges)]
-    rpc.get_ringct_output_distribution(1 .. 0).await.unwrap_err();
+    rpc.ringct_output_distribution(1 .. 0).await.unwrap_err();
   }
 
   drop(guard);
@@ -122,7 +122,7 @@ async fn test_zero_out_tx_o_indexes() {
 
   assert_eq!(
     rpc
-      .get_output_indexes(
+      .output_indexes(
         hex::decode("17ce4c8feeb82a6d6adaa8a89724b32bf4456f6909c7f84c8ce3ee9ebba19163")
           .unwrap()
           .try_into()
