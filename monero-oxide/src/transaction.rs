@@ -668,7 +668,9 @@ impl Transaction<NotPruned> {
 impl Transaction<Pruned> {
   /// Return the hash of the pruned transaction.
   ///
-  /// This requires the transaction be version 2 and the hash of the pruned data be provided.
+  /// This requires the transaction be version 2 and the hash of the pruned data be provided. If
+  /// the proofs are `RctType::Null`, `prunable_hash` MUST equal `[0; 32]` for the result to be
+  /// correct.
   pub fn hash_with_prunable_hash(&self, prunable_hash: [u8; 32]) -> Option<[u8; 32]> {
     match self {
       Transaction::V1 { .. } => None?,

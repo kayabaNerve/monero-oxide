@@ -15,10 +15,24 @@ impl PrunedTransactionWithPrunableHash {
   /// Create a new `PrunedTransactionWithPrunableHash`.
   ///
   /// This expects `(version != 1) == (prunable_hash = Some(_))` and returns `None` otherwise.
-  pub fn new(transaction: Transaction<Pruned>, prunable_hash: Option<[u8; 32]>) -> Option<Self> {
-    let expects_prunable_hash = matches!(transaction, Transaction::V2 { .. });
-    if expects_prunable_hash != prunable_hash.is_some() {
-      None?;
+  pub fn new(
+    transaction: Transaction<Pruned>,
+    mut prunable_hash: Option<[u8; 32]>,
+  ) -> Option<Self> {
+    match &transaction {
+      Transaction::V1 { .. } => {
+        if prunable_hash.is_some() {
+          None?
+        }
+      }
+      Transaction::V2 { proofs, .. } => {
+        if prunable_hash.is_none() {
+          None?;
+        }
+        if proofs.is_none() {
+          prunable_hash = Some([0; 32]);
+        }
+      }
     }
     Some(Self { transaction, prunable_hash })
   }
