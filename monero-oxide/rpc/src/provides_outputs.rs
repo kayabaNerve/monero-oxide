@@ -1,5 +1,5 @@
 use core::future::Future;
-use alloc::vec::Vec;
+use alloc::{format, vec::Vec};
 
 use curve25519_dalek::EdwardsPoint;
 use monero_oxide::io::CompressedPoint;

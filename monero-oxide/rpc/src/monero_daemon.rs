@@ -4,7 +4,7 @@ use core::{
   future::Future,
 };
 use alloc::{
-  format,
+  format, vec,
   vec::Vec,
   string::{String, ToString},
 };
