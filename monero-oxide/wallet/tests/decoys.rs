@@ -45,7 +45,7 @@ test!(
 
       let height = rpc.get_latest_block_number().await.unwrap() + 1;
 
-      let most_recent_o_index = rpc.get_o_indexes(tx.hash()).await.unwrap().pop().unwrap();
+      let most_recent_o_index = rpc.get_output_indexes(tx.hash()).await.unwrap().pop().unwrap();
 
       // Make sure output from tx1 is in the block in which it unlocks
       let out_tx1 = rpc.get_outs(&[most_recent_o_index]).await.unwrap().swap_remove(0);
@@ -122,7 +122,7 @@ test!(
 
       let height = rpc.get_latest_block_number().await.unwrap() + 1;
 
-      let most_recent_o_index = rpc.get_o_indexes(tx.hash()).await.unwrap().pop().unwrap();
+      let most_recent_o_index = rpc.get_output_indexes(tx.hash()).await.unwrap().pop().unwrap();
 
       // Make sure output from tx1 is in the block in which it unlocks
       let out_tx1 = rpc.get_outs(&[most_recent_o_index]).await.unwrap().swap_remove(0);

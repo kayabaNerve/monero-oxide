@@ -126,7 +126,7 @@ async fn test_zero_out_tx_o_indexes() {
 
   assert_eq!(
     rpc
-      .get_o_indexes(
+      .get_output_indexes(
         hex::decode("17ce4c8feeb82a6d6adaa8a89724b32bf4456f6909c7f84c8ce3ee9ebba19163")
           .unwrap()
           .try_into()

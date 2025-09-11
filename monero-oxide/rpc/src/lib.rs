@@ -15,9 +15,7 @@ use alloc::{
   vec::Vec,
   string::{String, ToString},
 };
-use std_shims::io;
-
-use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
+use curve25519_dalek::edwards::EdwardsPoint;
 
 use serde::Deserialize;
 use serde_json::json;
@@ -28,9 +26,6 @@ use monero_oxide::{
   block::Block,
   DEFAULT_LOCK_WINDOW,
 };
-
-mod provides_fee_rates;
-pub use provides_fee_rates::*;
 
 mod monero_daemon;
 pub use monero_daemon::*;
@@ -43,6 +38,12 @@ pub use provides_blockchain_meta::*;
 
 mod provides_blockchain;
 pub use provides_blockchain::*;
+
+mod provides_outputs;
+pub use provides_outputs::*;
+
+mod provides_fee_rates;
+pub use provides_fee_rates::*;
 
 /// An error from the RPC.
 #[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
@@ -99,9 +100,9 @@ pub struct OutputInformation {
   pub unlocked: bool,
   /// The output's key.
   ///
-  /// This is a CompressedEdwardsY, not an EdwardsPoint, as it may be invalid. CompressedEdwardsY
+  /// This is a CompressedPoint, not an EdwardsPoint, as it may be invalid. CompressedPoint
   /// only asserts validity on decompression and allows representing compressed types.
-  pub key: CompressedEdwardsY,
+  pub key: CompressedPoint,
   /// The output's commitment.
   pub commitment: EdwardsPoint,
   /// The transaction which created this output.
@@ -188,11 +189,12 @@ pub trait Rpc:
           continue;
         }
 
-        let index = *self.get_o_indexes(*hash).await?.first().ok_or_else(|| {
-          RpcError::InvalidNode(
-            "requested output indexes for a TX with outputs and got none".to_string(),
-          )
-        })?;
+        let index =
+          *ProvidesOutputs::get_output_indexes(self, *hash).await?.first().ok_or_else(|| {
+            RpcError::InvalidNode(
+              "requested output indexes for a TX with outputs and got none".to_string(),
+            )
+          })?;
         output_index_for_first_ringct_output = Some(index);
         break;
       }
@@ -217,194 +219,6 @@ pub trait Rpc:
     number: usize,
   ) -> impl Send + Future<Output = Result<ScannableBlock, RpcError>> {
     async move { self.get_scannable_block(self.get_block_by_number(number).await?).await }
-  }
-
-  /// Get the output indexes of the specified transaction.
-  fn get_o_indexes(
-    &self,
-    hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>> {
-    async move {
-      // Given the immaturity of Rust epee libraries, this is a homegrown one which is only
-      // validated to work against this specific function
-
-      // Header for EPEE, an 8-byte magic and a version
-      const EPEE_HEADER: &[u8] = b"\x01\x11\x01\x01\x01\x01\x02\x01\x01";
-
-      // Read an EPEE VarInt, distinct from the VarInts used throughout the rest of the protocol
-      fn read_epee_vi<R: io::Read>(reader: &mut R) -> io::Result<u64> {
-        let vi_start = read_byte(reader)?;
-        let len = match vi_start & 0b11 {
-          0 => 1,
-          1 => 2,
-          2 => 4,
-          3 => 8,
-          _ => unreachable!(),
-        };
-        let mut vi = u64::from(vi_start >> 2);
-        for i in 1 .. len {
-          vi |= u64::from(read_byte(reader)?) << (((i - 1) * 8) + 6);
-        }
-        Ok(vi)
-      }
-
-      let mut request = EPEE_HEADER.to_vec();
-      // Number of fields (shifted over 2 bits as the 2 LSBs are reserved for metadata)
-      request.push(1 << 2);
-      // Length of field name
-      request.push(4);
-      // Field name
-      request.extend(b"txid");
-      // Type of field
-      request.push(10);
-      // Length of string, since this byte array is technically a string
-      request.push(32 << 2);
-      // The "string"
-      request.extend(hash);
-
-      let indexes_buf = self.bin_call("get_o_indexes.bin", request).await?;
-      let mut indexes = indexes_buf.as_slice();
-
-      (|| {
-        let mut res = None;
-        let mut has_status = false;
-
-        if read_bytes::<_, { EPEE_HEADER.len() }>(&mut indexes)? != EPEE_HEADER {
-          Err(io::Error::other("invalid header"))?;
-        }
-
-        let read_object = |reader: &mut &[u8]| -> io::Result<Vec<u64>> {
-          // Read the amount of fields
-          let fields = read_byte(reader)? >> 2;
-
-          for _ in 0 .. fields {
-            // Read the length of the field's name
-            let name_len = read_byte(reader)?;
-            // Read the name of the field
-            let name = read_raw_vec(read_byte, name_len.into(), reader)?;
-
-            let type_with_array_flag = read_byte(reader)?;
-            // The type of this field, without the potentially set array flag
-            let kind = type_with_array_flag & (!0x80);
-            let has_array_flag = type_with_array_flag != kind;
-
-            // Read this many instances of the field
-            let iters = if has_array_flag { read_epee_vi(reader)? } else { 1 };
-
-            // Check the field type
-            {
-              #[allow(clippy::match_same_arms)]
-              let (expected_type, expected_array_flag) = match name.as_slice() {
-                b"o_indexes" => (5, true),
-                b"status" => (10, false),
-                b"untrusted" => (11, false),
-                b"credits" => (5, false),
-                b"top_hash" => (10, false),
-                // On-purposely prints name as a byte vector to prevent printing arbitrary strings
-                // This is a self-describing format so we don't have to error here, yet we don't
-                // claim this to be a complete deserialization function
-                // To ensure it works for this specific use case, it's best to ensure it's limited
-                // to this specific use case (ensuring we have less variables to deal with)
-                _ => {
-                  Err(io::Error::other(format!("unrecognized field in get_o_indexes: {name:?}")))?
-                }
-              };
-              if (expected_type != kind) || (expected_array_flag != has_array_flag) {
-                let fmt_array_bool = |array_bool| if array_bool { "array" } else { "not array" };
-                Err(io::Error::other(format!(
-                  "field {name:?} was {kind} ({}), expected {expected_type} ({})",
-                  fmt_array_bool(has_array_flag),
-                  fmt_array_bool(expected_array_flag)
-                )))?;
-              }
-            }
-
-            let read_field_as_bytes = match kind {
-              /*
-              // i64
-              1 => |reader: &mut &[u8]| read_raw_vec(read_byte, 8, reader),
-              // i32
-              2 => |reader: &mut &[u8]| read_raw_vec(read_byte, 4, reader),
-              // i16
-              3 => |reader: &mut &[u8]| read_raw_vec(read_byte, 2, reader),
-              // i8
-              4 => |reader: &mut &[u8]| read_raw_vec(read_byte, 1, reader),
-              */
-              // u64
-              5 => |reader: &mut &[u8]| read_raw_vec(read_byte, 8, reader),
-              /*
-              // u32
-              6 => |reader: &mut &[u8]| read_raw_vec(read_byte, 4, reader),
-              // u16
-              7 => |reader: &mut &[u8]| read_raw_vec(read_byte, 2, reader),
-              // u8
-              8 => |reader: &mut &[u8]| read_raw_vec(read_byte, 1, reader),
-              // double
-              9 => |reader: &mut &[u8]| read_raw_vec(read_byte, 8, reader),
-              */
-              // string, or any collection of bytes
-              10 => |reader: &mut &[u8]| {
-                let len = read_epee_vi(reader)?;
-                read_raw_vec(
-                  read_byte,
-                  len.try_into().map_err(|_| io::Error::other("u64 length exceeded usize"))?,
-                  reader,
-                )
-              },
-              // bool
-              11 => |reader: &mut &[u8]| read_raw_vec(read_byte, 1, reader),
-              /*
-              // object, errors here as it shouldn't be used on this call
-              12 => {
-                |_: &mut &[u8]| Err(io::Error::other("node used object in reply to get_o_indexes"))
-              }
-              // array, so far unused
-              13 => |_: &mut &[u8]| Err(io::Error::other("node used the unused array type")),
-              */
-              _ => |_: &mut &[u8]| Err(io::Error::other("node used an invalid type")),
-            };
-
-            let mut bytes_res = vec![];
-            for _ in 0 .. iters {
-              bytes_res.push(read_field_as_bytes(reader)?);
-            }
-
-            let mut actual_res = Vec::with_capacity(bytes_res.len());
-            match name.as_slice() {
-              b"o_indexes" => {
-                for o_index in bytes_res {
-                  actual_res.push(read_u64(&mut o_index.as_slice())?);
-                }
-                res = Some(actual_res);
-              }
-              b"status" => {
-                if bytes_res
-                  .first()
-                  .ok_or_else(|| io::Error::other("status was a 0-length array"))?
-                  .as_slice() !=
-                  b"OK"
-                {
-                  Err(io::Error::other("response wasn't OK"))?;
-                }
-                has_status = true;
-              }
-              b"untrusted" | b"credits" | b"top_hash" => continue,
-              _ => Err(io::Error::other("unrecognized field in get_o_indexes"))?,
-            }
-          }
-
-          if !has_status {
-            Err(io::Error::other("response didn't contain a status"))?;
-          }
-
-          // If the Vec was empty, it would've been omitted, hence the unwrap_or
-          Ok(res.unwrap_or(vec![]))
-        };
-
-        read_object(&mut indexes)
-      })()
-      .map_err(|e| RpcError::InvalidNode(format!("invalid binary response: {e:?}")))
-    }
   }
 }
 
@@ -638,7 +452,7 @@ impl<R: MoneroDaemon + ProvidesTransactions + ProvidesBlockchainMeta> DecoyRpc f
               Ok(OutputInformation {
                 height: output.height,
                 unlocked: output.unlocked,
-                key: CompressedEdwardsY(
+                key: CompressedPoint(
                   rpc_hex(&output.key)?
                     .try_into()
                     .map_err(|_| RpcError::InvalidNode("output key wasn't 32 bytes".to_string()))?,
@@ -710,7 +524,7 @@ impl<R: MoneroDaemon + ProvidesTransactions + ProvidesBlockchainMeta> DecoyRpc f
 pub mod prelude {
   pub use crate::{
     ScannableBlock, RpcError, MoneroDaemon, ProvidesTransactions, PublishTransaction,
-    ProvidesBlockchainMeta, ProvidesBlockchain, FeePriority, FeeRate, ProvidesFeeRates, Rpc,
-    DecoyRpc,
+    ProvidesBlockchainMeta, ProvidesBlockchain, ProvidesOutputs, FeePriority, FeeRate,
+    ProvidesFeeRates, Rpc, DecoyRpc,
   };
 }
