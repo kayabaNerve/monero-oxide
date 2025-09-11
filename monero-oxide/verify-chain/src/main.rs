@@ -24,8 +24,8 @@ async fn check_block(rpc: impl MoneroDaemon, block_i: usize) {
   let hash = loop {
     match rpc.block_hash(block_i).await {
       Ok(hash) => break hash,
-      Err(RpcError::ConnectionError(e)) => {
-        println!("get_block_hash ConnectionError: {e}");
+      Err(SourceError::SourceError(e)) => {
+        println!("get_block_hash SourceError: {e}");
         continue;
       }
       Err(e) => panic!("couldn't get block {block_i}'s hash: {e:?}"),
@@ -40,8 +40,8 @@ async fn check_block(rpc: impl MoneroDaemon, block_i: usize) {
   let res: BlockResponse = loop {
     match rpc.json_rpc_call("get_block", Some(json!({ "hash": hex::encode(hash) }))).await {
       Ok(res) => break res,
-      Err(RpcError::ConnectionError(e)) => {
-        println!("get_block ConnectionError: {e}");
+      Err(SourceError::SourceError(e)) => {
+        println!("get_block SourceError: {e}");
         continue;
       }
       Err(e) => panic!("couldn't get block {block_i} via block.hash(): {e:?}"),
@@ -61,8 +61,8 @@ async fn check_block(rpc: impl MoneroDaemon, block_i: usize) {
     loop {
       match rpc.pruned_transactions(&block.transactions).await {
         Ok(_) => break,
-        Err(RpcError::ConnectionError(e)) => {
-          println!("get_pruned_transactions ConnectionError: {e}");
+        Err(TransactionsError::SourceError(SourceError::SourceError(e))) => {
+          println!("get_pruned_transactions SourceError: {e}");
           continue;
         }
         Err(e) => panic!("couldn't call get_pruned_transactions: {e:?}"),
@@ -72,8 +72,8 @@ async fn check_block(rpc: impl MoneroDaemon, block_i: usize) {
     let txs = loop {
       match rpc.transactions(&block.transactions).await {
         Ok(txs) => break txs,
-        Err(RpcError::ConnectionError(e)) => {
-          println!("get_transactions ConnectionError: {e}");
+        Err(TransactionsError::SourceError(SourceError::SourceError(e))) => {
+          println!("get_transactions SourceError: {e}");
           continue;
         }
         Err(e) => panic!("couldn't call get_transactions: {e:?}"),
@@ -160,8 +160,8 @@ async fn check_block(rpc: impl MoneroDaemon, block_i: usize) {
                       .await
                     {
                       Ok(outs) => break outs,
-                      Err(RpcError::ConnectionError(e)) => {
-                        println!("get_outs ConnectionError: {e}");
+                      Err(SourceError::SourceError(e)) => {
+                        println!("get_outs SourceError: {e}");
                         continue;
                       }
                       Err(e) => panic!("couldn't connect to RPC to get outs: {e:?}"),

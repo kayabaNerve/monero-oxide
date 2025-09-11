@@ -23,29 +23,27 @@ use monero_oxide::{
 };
 use monero_address::Address;
 
-use crate::{
-  RpcError, ProvidesBlockchainMeta, PrunedTransactionWithPrunableHash,
-  ProvidesUnvalidatedTransactions, PublishTransaction, ProvidesUnvalidatedBlockchain,
-  RingCtOutputInformation, ProvidesUnvalidatedOutputs, EvaluateUnlocked, ProvidesUnvalidatedDecoys,
-  FeePriority, FeeRate, ProvidesUnvalidatedFeeRates,
-};
+use crate::*;
 
-fn rpc_hex(value: &str) -> Result<Vec<u8>, RpcError> {
-  hex::decode(value).map_err(|_| RpcError::InvalidNode("expected hex wasn't hex".to_string()))
+fn rpc_hex(value: &str) -> Result<Vec<u8>, SourceError> {
+  hex::decode(value)
+    .map_err(|_| SourceError::InvalidSource(format!("expected hex wasn't hex: {value}")))
 }
 
-fn hash_hex(hash: &str) -> Result<[u8; 32], RpcError> {
-  rpc_hex(hash)?.try_into().map_err(|_| RpcError::InvalidNode("hash wasn't 32-bytes".to_string()))
+fn hash_hex(hash: &str) -> Result<[u8; 32], SourceError> {
+  rpc_hex(hash)?
+    .try_into()
+    .map_err(|_| SourceError::InvalidSource(format!("hash wasn't 32-bytes: {hash}")))
 }
 
-fn rpc_point(point: &str) -> Result<EdwardsPoint, RpcError> {
+fn rpc_point(point: &str) -> Result<EdwardsPoint, SourceError> {
   CompressedPoint(
     rpc_hex(point)?
       .try_into()
-      .map_err(|_| RpcError::InvalidNode(format!("invalid point: {point}")))?,
+      .map_err(|_| SourceError::InvalidSource(format!("invalid point: {point}")))?,
   )
   .decompress()
-  .ok_or_else(|| RpcError::InvalidNode(format!("invalid point: {point}")))
+  .ok_or_else(|| SourceError::InvalidSource(format!("invalid point: {point}")))
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,7 +67,7 @@ pub trait MoneroDaemon: Sync + Clone {
     &self,
     route: &str,
     body: Vec<u8>,
-  ) -> impl Send + Future<Output = Result<Vec<u8>, RpcError>>;
+  ) -> impl Send + Future<Output = Result<Vec<u8>, SourceError>>;
 
   /// Perform a RPC call to the specified route with the provided parameters.
   ///
@@ -79,7 +77,7 @@ pub trait MoneroDaemon: Sync + Clone {
     &self,
     route: &str,
     params: Option<Params>,
-  ) -> impl Send + Future<Output = Result<Response, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Response, SourceError>> {
     async move {
       let res = self
         .post(
@@ -87,7 +85,7 @@ pub trait MoneroDaemon: Sync + Clone {
           if let Some(params) = params.as_ref() {
             serde_json::to_string(params)
               .map_err(|e| {
-                RpcError::InternalError(format!(
+                SourceError::InternalError(format!(
                   "couldn't convert parameters ({params:?}) to JSON: {e:?}"
                 ))
               })?
@@ -98,9 +96,10 @@ pub trait MoneroDaemon: Sync + Clone {
         )
         .await?;
       let res_str = std_shims::str::from_utf8(&res)
-        .map_err(|_| RpcError::InvalidNode("response wasn't utf-8".to_string()))?;
-      serde_json::from_str(res_str)
-        .map_err(|_| RpcError::InvalidNode(format!("response wasn't the expected json: {res_str}")))
+        .map_err(|_| SourceError::InvalidSource("response wasn't utf-8".to_string()))?;
+      serde_json::from_str(res_str).map_err(|_| {
+        SourceError::InvalidSource(format!("response wasn't the expected json: {res_str}"))
+      })
     }
   }
 
@@ -109,7 +108,7 @@ pub trait MoneroDaemon: Sync + Clone {
     &self,
     method: &str,
     params: Option<Value>,
-  ) -> impl Send + Future<Output = Result<Response, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Response, SourceError>> {
     async move {
       let mut req = json!({ "method": method });
       if let Some(params) = params {
@@ -127,7 +126,7 @@ pub trait MoneroDaemon: Sync + Clone {
     &self,
     route: &str,
     params: Vec<u8>,
-  ) -> impl Send + Future<Output = Result<Vec<u8>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<u8>, SourceError>> {
     async move { self.post(route, params).await }
   }
 
@@ -138,7 +137,7 @@ pub trait MoneroDaemon: Sync + Clone {
     &self,
     address: &Address<ADDR_BYTES>,
     block_count: usize,
-  ) -> impl Send + Future<Output = Result<(Vec<[u8; 32]>, usize), RpcError>> {
+  ) -> impl Send + Future<Output = Result<(Vec<[u8; 32]>, usize), SourceError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct BlocksResponse {
@@ -166,7 +165,7 @@ pub trait MoneroDaemon: Sync + Clone {
 }
 
 impl<D: MoneroDaemon> ProvidesBlockchainMeta for D {
-  fn latest_block_number(&self) -> impl Send + Future<Output = Result<usize, RpcError>> {
+  fn latest_block_number(&self) -> impl Send + Future<Output = Result<usize, SourceError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct HeightResponse {
@@ -174,7 +173,7 @@ impl<D: MoneroDaemon> ProvidesBlockchainMeta for D {
       }
       let res = self.rpc_call::<Option<()>, HeightResponse>("get_height", None).await?.height;
       res.checked_sub(1).ok_or_else(|| {
-        RpcError::InvalidNode(
+        SourceError::InvalidSource(
           "node claimed the blockchain didn't even have the genesis block".to_string(),
         )
       })
@@ -204,11 +203,12 @@ mod provides_transaction {
     txs: Vec<TransactionResponse>,
   }
 
+  #[rustfmt::skip]
   impl<D: MoneroDaemon> ProvidesUnvalidatedTransactions for D {
     fn transactions(
       &self,
       hashes: &[[u8; 32]],
-    ) -> impl Send + Future<Output = Result<Vec<Transaction>, RpcError>> {
+    ) -> impl Send + Future<Output = Result<Vec<Transaction>, TransactionsError>> {
       async move {
         let mut hashes_hex = hashes.iter().map(hex::encode).collect::<Vec<_>>();
         let mut all_txs = Vec::with_capacity(hashes.len());
@@ -225,12 +225,10 @@ mod provides_transaction {
             .await?;
 
           if !txs.missed_tx.is_empty() {
-            Err(RpcError::TransactionsNotFound(
-              txs.missed_tx.iter().map(|hash| hash_hex(hash)).collect::<Result<_, _>>()?,
-            ))?;
+            Err(TransactionsError::TransactionNotFound)?;
           }
           if txs.txs.len() != this_count {
-            Err(RpcError::InvalidNode(
+            Err(SourceError::InvalidSource(
               "not missing any transactions yet didn't return all transactions".to_string(),
             ))?;
           }
@@ -245,12 +243,14 @@ mod provides_transaction {
             let buf =
               rpc_hex(if !res.as_hex.is_empty() { &res.as_hex } else { &res.pruned_as_hex })?;
             let mut buf = buf.as_slice();
-            let tx = Transaction::read(&mut buf).map_err(|_| match hash_hex(&res.tx_hash) {
-              Ok(hash) => RpcError::InvalidTransaction(hash),
-              Err(err) => err,
+            let tx = Transaction::read(&mut buf).map_err(|_| {
+              SourceError::InvalidSource(format!(
+                "node yielded transaction allegedly with hash {} which was invalid",
+                res.tx_hash,
+              ))
             })?;
             if !buf.is_empty() {
-              Err(RpcError::InvalidNode("transaction had extra bytes after it".to_string()))?;
+              Err(SourceError::InvalidSource("transaction had extra bytes after it".to_string()))?;
             }
 
             // We check this to ensure we didn't read a pruned transaction when we meant to read an
@@ -260,7 +260,7 @@ mod provides_transaction {
             if res.as_hex.is_empty() {
               match tx.prefix().inputs.first() {
                 Some(Input::Gen { .. }) => (),
-                _ => Err(RpcError::PrunedTransaction)?,
+                _ => Err(TransactionsError::PrunedTransaction)?,
               }
             }
 
@@ -273,7 +273,8 @@ mod provides_transaction {
     fn pruned_transactions(
       &self,
       hashes: &[[u8; 32]],
-    ) -> impl Send + Future<Output = Result<Vec<PrunedTransactionWithPrunableHash>, RpcError>> {
+    ) -> impl Send + Future<Output = Result<Vec<PrunedTransactionWithPrunableHash>, TransactionsError>>
+    {
       async move {
         let mut hashes_hex = hashes.iter().map(hex::encode).collect::<Vec<_>>();
         let mut all_txs = Vec::with_capacity(hashes.len());
@@ -291,9 +292,7 @@ mod provides_transaction {
             .await?;
 
           if !txs.missed_tx.is_empty() {
-            Err(RpcError::TransactionsNotFound(
-              txs.missed_tx.iter().map(|hash| hash_hex(hash)).collect::<Result<_, _>>()?,
-            ))?;
+            Err(TransactionsError::TransactionNotFound)?;
           }
 
           all_txs.extend(txs.txs);
@@ -304,13 +303,14 @@ mod provides_transaction {
           .map(|res| {
             let buf = rpc_hex(&res.pruned_as_hex)?;
             let mut buf = buf.as_slice();
-            let tx =
-              Transaction::<Pruned>::read(&mut buf).map_err(|_| match hash_hex(&res.tx_hash) {
-                Ok(hash) => RpcError::InvalidTransaction(hash),
-                Err(err) => err,
-              })?;
+            let tx = Transaction::<Pruned>::read(&mut buf).map_err(|_| {
+              SourceError::InvalidSource(
+                format!("node yielded transaction allegedly with hash {} which was invalid",
+                res.tx_hash,
+            ))
+            })?;
             if !buf.is_empty() {
-              Err(RpcError::InvalidNode(
+              Err(SourceError::InvalidSource(
                 "pruned transaction had extra bytes after it".to_string(),
               ))?;
             }
@@ -329,7 +329,7 @@ impl<D: MoneroDaemon> PublishTransaction for D {
   fn publish_transaction(
     &self,
     tx: &Transaction,
-  ) -> impl Send + Future<Output = Result<(), RpcError>> {
+  ) -> impl Send + Future<Output = Result<(), PublishTransactionError>> {
     async move {
       #[allow(dead_code)]
       #[derive(Debug, Deserialize)]
@@ -355,7 +355,7 @@ impl<D: MoneroDaemon> PublishTransaction for D {
         .await?;
 
       if res.status != "OK" {
-        Err(RpcError::InvalidTransaction(tx.hash()))?;
+        Err(PublishTransactionError::TransactionRejected(res.reason))?;
       }
 
       Ok(())
@@ -364,7 +364,10 @@ impl<D: MoneroDaemon> PublishTransaction for D {
 }
 
 impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
-  fn block_by_number(&self, number: usize) -> impl Send + Future<Output = Result<Block, RpcError>> {
+  fn block_by_number(
+    &self,
+    number: usize,
+  ) -> impl Send + Future<Output = Result<Block, SourceError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct BlockResponse {
@@ -375,11 +378,11 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
         self.json_rpc_call("get_block", Some(json!({ "height": number }))).await?;
 
       Block::read(&mut rpc_hex(&res.blob)?.as_slice())
-        .map_err(|_| RpcError::InvalidNode("invalid block".to_string()))
+        .map_err(|_| SourceError::InvalidSource("invalid block".to_string()))
     }
   }
 
-  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, RpcError>> {
+  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, SourceError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct BlockResponse {
@@ -390,11 +393,14 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
         self.json_rpc_call("get_block", Some(json!({ "hash": hex::encode(hash) }))).await?;
 
       Block::read(&mut rpc_hex(&res.blob)?.as_slice())
-        .map_err(|_| RpcError::InvalidNode("invalid block".to_string()))
+        .map_err(|_| SourceError::InvalidSource("invalid block".to_string()))
     }
   }
 
-  fn block_hash(&self, number: usize) -> impl Send + Future<Output = Result<[u8; 32], RpcError>> {
+  fn block_hash(
+    &self,
+    number: usize,
+  ) -> impl Send + Future<Output = Result<[u8; 32], SourceError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct BlockHeaderResponse {
@@ -416,7 +422,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
   fn output_indexes(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>> {
     async move {
       // Given the immaturity of Rust epee libraries, this is a homegrown one which is only
       // validated to work against this specific function
@@ -598,14 +604,14 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
 
         read_object(&mut indexes)
       })()
-      .map_err(|e| RpcError::InvalidNode(format!("invalid binary response: {e:?}")))
+      .map_err(|e| SourceError::InvalidSource(format!("invalid binary response: {e:?}")))
     }
   }
 
   fn ringct_outputs(
     &self,
     indexes: &[u64],
-  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, SourceError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct OutputResponse {
@@ -642,7 +648,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
           .await?;
 
         if rpc_res.status != "OK" {
-          Err(RpcError::InvalidNode("bad response to get_outs".to_string()))?;
+          Err(SourceError::InvalidSource("bad response to get_outs".to_string()))?;
         }
 
         res.extend(
@@ -653,16 +659,14 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
               Ok(RingCtOutputInformation {
                 block_number: output.height,
                 unlocked: output.unlocked,
-                key: CompressedPoint(
-                  rpc_hex(&output.key)?
-                    .try_into()
-                    .map_err(|_| RpcError::InvalidNode("output key wasn't 32 bytes".to_string()))?,
-                ),
+                key: CompressedPoint(rpc_hex(&output.key)?.try_into().map_err(|_| {
+                  SourceError::InvalidSource(format!("output key wasn't 32 bytes: {}", output.key))
+                })?),
                 commitment: rpc_point(&output.mask)?,
                 transaction: hash_hex(&output.txid)?,
               })
             })
-            .collect::<Result<Vec<_>, RpcError>>()?,
+            .collect::<Result<Vec<_>, SourceError>>()?,
         );
       }
 
@@ -675,7 +679,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
   fn ringct_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>> {
     async move {
       #[derive(Default, Debug, Deserialize)]
       struct Distribution {
@@ -693,19 +697,19 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
       let from = match range.start_bound() {
         Bound::Included(from) => *from,
         Bound::Excluded(from) => from.checked_add(1).ok_or_else(|| {
-          RpcError::InternalError("range's from wasn't representable".to_string())
+          SourceError::InternalError("range's from wasn't representable".to_string())
         })?,
         Bound::Unbounded => 0,
       };
       let to = match range.end_bound() {
         Bound::Included(to) => *to,
-        Bound::Excluded(to) => to
-          .checked_sub(1)
-          .ok_or_else(|| RpcError::InternalError("range's to wasn't representable".to_string()))?,
+        Bound::Excluded(to) => to.checked_sub(1).ok_or_else(|| {
+          SourceError::InternalError("range's to wasn't representable".to_string())
+        })?,
         Bound::Unbounded => self.latest_block_number().await?,
       };
       if from > to {
-        Err(RpcError::InternalError(format!(
+        Err(SourceError::InternalError(format!(
           "malformed range: inclusive start {from}, inclusive end {to}"
         )))?;
       }
@@ -726,7 +730,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
         .await?;
 
       if distributions.status != "OK" {
-        Err(RpcError::ConnectionError(
+        Err(SourceError::SourceError(
           "node couldn't service this request for the output distribution".to_string(),
         ))?;
       }
@@ -738,13 +742,13 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
       // Unfortunately, we can't validate without a binary search to find the RingCT activation
       // block and an iterative search from there, so we solely sanity check it
       if start_height < from {
-        Err(RpcError::InvalidNode(format!(
+        Err(SourceError::InvalidSource(format!(
           "requested distribution from {from} and got from {start_height}"
         )))?;
       }
       // It shouldn't be after `to` though
       if start_height > to {
-        Err(RpcError::InvalidNode(format!(
+        Err(SourceError::InvalidSource(format!(
           "requested distribution to {to} and got from {start_height}"
         )))?;
       }
@@ -753,12 +757,12 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
         2
       } else {
         (to - start_height).checked_add(1).ok_or_else(|| {
-          RpcError::InternalError("expected length of distribution exceeded usize".to_string())
+          SourceError::InternalError("expected length of distribution exceeded usize".to_string())
         })?
       };
       // Yet this is actually a height
       if expected_len != distribution.len() {
-        Err(RpcError::InvalidNode(format!(
+        Err(SourceError::InvalidSource(format!(
           "distribution length ({}) wasn't of the requested length ({})",
           distribution.len(),
           expected_len
@@ -779,14 +783,18 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
     &self,
     indexes: &[u64],
     evaluate_unlocked: EvaluateUnlocked,
-  ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, TransactionsError>> {
     async move {
-      let outs = self.ringct_outputs(indexes).await?;
+      let outs = <Self as ProvidesOutputs>::ringct_outputs(self, indexes).await?;
 
       // Only need to fetch transactions if we're doing a deterministic check on the timelock
       let txs =
         if matches!(evaluate_unlocked, EvaluateUnlocked::FingerprintableDeterministic { .. }) {
-          self.transactions(&outs.iter().map(|out| out.transaction).collect::<Vec<_>>()).await?
+          <Self as ProvidesTransactions>::pruned_transactions(
+            self,
+            &outs.iter().map(|out| out.transaction).collect::<Vec<_>>(),
+          )
+          .await?
         } else {
           vec![]
         };
@@ -847,7 +855,7 @@ mod provides_fee_rates {
     fn fee_rate(
       &self,
       priority: FeePriority,
-    ) -> impl Send + Future<Output = Result<FeeRate, RpcError>> {
+    ) -> impl Send + Future<Output = Result<FeeRate, FeeError>> {
       async move {
         #[derive(Debug, Deserialize)]
         struct FeeResponse {
@@ -865,7 +873,7 @@ mod provides_fee_rates {
           .await?;
 
         if res.status != "OK" {
-          Err(RpcError::InvalidFee)?;
+          Err(FeeError::InvalidFee)?;
         }
 
         if let Some(fees) = res.fees {
@@ -876,12 +884,12 @@ mod provides_fee_rates {
           } else {
             priority.to_u32().saturating_sub(1)
           })
-          .map_err(|_| RpcError::InvalidPriority)?;
+          .map_err(|_| FeeError::InvalidFeePriority)?;
 
           if priority_idx >= fees.len() {
-            Err(RpcError::InvalidPriority)
+            Err(FeeError::InvalidFeePriority)?
           } else {
-            FeeRate::new(fees[priority_idx], res.quantization_mask)
+            FeeRate::new(fees[priority_idx], res.quantization_mask).ok_or(FeeError::InvalidFee)
           }
         } else {
           // https://github.com/monero-project/monero/blob/94e67bf96bbc010241f29ada6abc89f49a81759c/
@@ -890,14 +898,16 @@ mod provides_fee_rates {
           //   src/wallet/wallet2.cpp#L7660-L7661
           let priority_idx =
             usize::try_from(if priority.to_u32() == 0 { 1 } else { priority.to_u32() - 1 })
-              .map_err(|_| RpcError::InvalidPriority)?;
+              .map_err(|_| FeeError::InvalidFeePriority)?;
           const MULTIPLIERS: [u64; 4] = [1, 5, 25, 1000];
-          let fee_multiplier = *MULTIPLIERS.get(priority_idx).ok_or(RpcError::InvalidPriority)?;
+          let fee_multiplier =
+            *MULTIPLIERS.get(priority_idx).ok_or(FeeError::InvalidFeePriority)?;
 
           FeeRate::new(
-            res.fee.checked_mul(fee_multiplier).ok_or(RpcError::InvalidFee)?,
+            res.fee.checked_mul(fee_multiplier).ok_or(FeeError::InvalidFee)?,
             res.quantization_mask,
           )
+          .ok_or(FeeError::InvalidFee)
         }
       }
     }

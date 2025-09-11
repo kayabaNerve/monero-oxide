@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use curve25519_dalek::EdwardsPoint;
 use monero_oxide::io::CompressedPoint;
 
-use crate::RpcError;
+use crate::SourceError;
 
 /// The response to an query for the information of a RingCT output.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -32,7 +32,7 @@ pub trait ProvidesUnvalidatedOutputs {
   fn output_indexes(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>>;
+  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>>;
 
   /// Get the specified outputs from the RingCT (zero-amount) pool.
   ///
@@ -40,7 +40,7 @@ pub trait ProvidesUnvalidatedOutputs {
   fn ringct_outputs(
     &self,
     indexes: &[u64],
-  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, RpcError>>;
+  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, SourceError>>;
 }
 
 /// Provides information about outputs.
@@ -52,7 +52,7 @@ pub trait ProvidesOutputs {
   fn output_indexes(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>>;
+  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>>;
 
   /// Get the specified outputs from the RingCT (zero-amount) pool.
   ///
@@ -60,14 +60,14 @@ pub trait ProvidesOutputs {
   fn ringct_outputs(
     &self,
     indexes: &[u64],
-  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, RpcError>>;
+  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, SourceError>>;
 }
 
 impl<P: ProvidesUnvalidatedOutputs> ProvidesOutputs for P {
   fn output_indexes(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>> {
     <P as ProvidesUnvalidatedOutputs>::output_indexes(self, hash)
   }
 
@@ -77,7 +77,7 @@ impl<P: ProvidesUnvalidatedOutputs> ProvidesOutputs for P {
   fn ringct_outputs(
     &self,
     indexes: &[u64],
-  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, SourceError>> {
     <P as ProvidesUnvalidatedOutputs>::ringct_outputs(self, indexes)
   }
 }

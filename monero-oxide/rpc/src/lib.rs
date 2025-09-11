@@ -6,7 +6,7 @@
 use core::fmt::Debug;
 
 extern crate alloc;
-use alloc::{vec::Vec, string::String};
+use alloc::string::String;
 
 mod provides_blockchain_meta;
 pub use provides_blockchain_meta::*;
@@ -32,43 +32,26 @@ pub use provides_fee_rates::*;
 mod monero_daemon;
 pub use monero_daemon::*;
 
-/// An error from the RPC.
+/// An error from the source.
 #[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
-pub enum RpcError {
+pub enum SourceError {
   /// An internal error.
   #[error("internal error ({0})")]
   InternalError(String),
-  /// A connection error with the node.
-  #[error("connection error ({0})")]
-  ConnectionError(String),
-  /// The node is invalid per the expected protocol.
+  /// An error with the source.
+  #[error("source error ({0})")]
+  SourceError(String),
+  /// The source is invalid per the expected protocol and should be disconnected from.
   #[error("invalid node ({0})")]
-  InvalidNode(String),
-  /// Requested transactions weren't found.
-  #[error("transactions not found")]
-  TransactionsNotFound(Vec<[u8; 32]>),
-  /// The transaction was pruned.
-  ///
-  /// Pruned transactions are not supported at this time.
-  #[error("pruned transaction")]
-  PrunedTransaction,
-  /// A transaction (sent or received) was invalid.
-  #[error("invalid transaction ({0:?})")]
-  InvalidTransaction([u8; 32]),
-  /// The returned fee was unusable.
-  #[error("unexpected fee response")]
-  InvalidFee,
-  /// The priority intended for use wasn't usable.
-  #[error("invalid priority")]
-  InvalidPriority,
+  InvalidSource(String),
 }
 
 /// A prelude of recommend imports to glob import.
 pub mod prelude {
   pub use crate::{
-    RpcError, MoneroDaemon, ProvidesBlockchainMeta, ProvidesTransactions, PublishTransaction,
-    ProvidesBlockchain, ProvidesOutputs, ScannableBlock, ExpandToScannableBlock,
-    ProvidesScannableBlocks, EvaluateUnlocked, ProvidesDecoys, FeePriority, FeeRate,
-    ProvidesFeeRates,
+    SourceError, MoneroDaemon, ProvidesBlockchainMeta, TransactionsError, ProvidesTransactions,
+    PublishTransactionError, PublishTransaction, ProvidesBlockchain, ProvidesOutputs,
+    ScannableBlock, ExpandToScannableBlock, ProvidesScannableBlocks, EvaluateUnlocked,
+    ProvidesDecoys, FeePriority, FeeRate, FeeError, ProvidesFeeRates,
   };
 }

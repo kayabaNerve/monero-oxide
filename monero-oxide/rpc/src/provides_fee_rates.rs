@@ -6,7 +6,7 @@ use zeroize::Zeroize;
 
 use monero_oxide::io::read_u64;
 
-use crate::RpcError;
+use crate::SourceError;
 
 /// The priority for the fee.
 ///
@@ -56,11 +56,13 @@ pub struct FeeRate {
 
 impl FeeRate {
   /// Construct a new fee rate.
-  pub fn new(per_weight: u64, mask: u64) -> Result<FeeRate, RpcError> {
+  ///
+  /// Returns `None` if the fee rate is invalid.
+  pub fn new(per_weight: u64, mask: u64) -> Option<FeeRate> {
     if (per_weight == 0) || (mask == 0) {
-      Err(RpcError::InvalidFee)?;
+      None?;
     }
-    Ok(FeeRate { per_weight, mask })
+    Some(FeeRate { per_weight, mask })
   }
 
   /// Write the FeeRate.
@@ -89,7 +91,7 @@ impl FeeRate {
   pub fn read(r: &mut impl io::Read) -> io::Result<FeeRate> {
     let per_weight = read_u64(r)?;
     let mask = read_u64(r)?;
-    FeeRate::new(per_weight, mask).map_err(io::Error::other)
+    FeeRate::new(per_weight, mask).ok_or_else(|| io::Error::other("fee rate was invalid"))
   }
 
   /// Calculate the fee to use from the weight.
@@ -115,6 +117,26 @@ impl FeeRate {
   }
 }
 
+/// An error from the source.
+#[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
+pub enum FeeError {
+  /// Error with the source.
+  #[error("source error ({0})")]
+  SourceError(SourceError),
+  /// The fee was invalid.
+  #[error("invalid fee")]
+  InvalidFee,
+  /// The fee priority was invalid.
+  #[error("invalid fee priority")]
+  InvalidFeePriority,
+}
+
+impl From<SourceError> for FeeError {
+  fn from(err: SourceError) -> Self {
+    Self::SourceError(err)
+  }
+}
+
 /// An interface which provides unvalidated fee rates.
 pub trait ProvidesUnvalidatedFeeRates: Sync {
   /// Get the recommended fee rate.
@@ -125,7 +147,7 @@ pub trait ProvidesUnvalidatedFeeRates: Sync {
   fn fee_rate(
     &self,
     priority: FeePriority,
-  ) -> impl Send + Future<Output = Result<FeeRate, RpcError>>;
+  ) -> impl Send + Future<Output = Result<FeeRate, FeeError>>;
 }
 
 /// An interface which provides fee rates.
@@ -137,7 +159,7 @@ pub trait ProvidesFeeRates: Sync {
     &self,
     priority: FeePriority,
     max_per_weight: u64,
-  ) -> impl Send + Future<Output = Result<FeeRate, RpcError>>;
+  ) -> impl Send + Future<Output = Result<FeeRate, FeeError>>;
 }
 
 impl<P: ProvidesUnvalidatedFeeRates> ProvidesFeeRates for P {
@@ -145,11 +167,11 @@ impl<P: ProvidesUnvalidatedFeeRates> ProvidesFeeRates for P {
     &self,
     priority: FeePriority,
     max_per_weight: u64,
-  ) -> impl Send + Future<Output = Result<FeeRate, RpcError>> {
+  ) -> impl Send + Future<Output = Result<FeeRate, FeeError>> {
     async move {
       let fee_rate = <P as ProvidesUnvalidatedFeeRates>::fee_rate(self, priority).await?;
       if fee_rate.per_weight > max_per_weight {
-        Err(RpcError::InvalidFee)?;
+        Err(FeeError::InvalidFee)?;
       }
       Ok(fee_rate)
     }

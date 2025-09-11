@@ -6,7 +6,7 @@ use monero_oxide::{
   block::Block,
 };
 
-use crate::{RpcError, ProvidesTransactions, ProvidesOutputs};
+use crate::{SourceError, TransactionsError, ProvidesTransactions, ProvidesOutputs};
 
 /// A block which is able to be scanned.
 // TODO: Should these fields be private so we can check their integrity within a constructor?
@@ -28,7 +28,7 @@ pub trait ExpandToScannableBlock: ProvidesTransactions + ProvidesOutputs {
   fn expand_to_scannable_block(
     &self,
     block: Block,
-  ) -> impl Send + Future<Output = Result<ScannableBlock, RpcError>> {
+  ) -> impl Send + Future<Output = Result<ScannableBlock, TransactionsError>> {
     async move {
       let transactions = self.pruned_transactions(&block.transactions).await?;
 
@@ -84,7 +84,7 @@ pub trait ExpandToScannableBlock: ProvidesTransactions + ProvidesOutputs {
 
         let index =
           *ProvidesOutputs::output_indexes(self, *hash).await?.first().ok_or_else(|| {
-            RpcError::InvalidNode(
+            SourceError::InvalidSource(
               "requested output indexes for a TX with outputs and got none".to_string(),
             )
           })?;
@@ -112,7 +112,7 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
   fn contiguous_scannable_blocks(
     &self,
     range: RangeInclusive<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, SourceError>> {
     async move {
       // If a caller requests an exorbitant amount of blocks, this may trigger an OOM kill
       // In order to maintain correctness, we have to attempt to service this request though
@@ -131,7 +131,7 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
   fn scannable_blocks(
     &self,
     hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, SourceError>> {
     async move {
       let mut blocks = Vec::with_capacity(hashes.len());
       for hash in hashes {
@@ -147,11 +147,11 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
   fn scannable_block(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<ScannableBlock, RpcError>> {
+  ) -> impl Send + Future<Output = Result<ScannableBlock, SourceError>> {
     async move {
       let mut blocks = self.scannable_blocks(&[hash]).await?;
       if blocks.len() != 1 {
-        Err(RpcError::InternalError(format!(
+        Err(SourceError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
           "ProvidesUnvalidatedScannableBlocks::scannable_blocks",
           blocks.len(),
@@ -168,11 +168,11 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
   fn scannable_block_by_number(
     &self,
     number: usize,
-  ) -> impl Send + Future<Output = Result<ScannableBlock, RpcError>> {
+  ) -> impl Send + Future<Output = Result<ScannableBlock, SourceError>> {
     async move {
       let mut blocks = self.contiguous_scannable_blocks(number ..= number).await?;
       if blocks.len() != 1 {
-        Err(RpcError::InternalError(format!(
+        Err(SourceError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
           "ProvidesUnvalidatedScannableBlocks::contiguous_scannable_blocks",
           blocks.len(),
@@ -194,7 +194,7 @@ pub trait ProvidesScannableBlocks: Sync {
   fn contiguous_scannable_blocks(
     &self,
     range: RangeInclusive<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, RpcError>>;
+  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, SourceError>>;
 
   /// Get a list of `ScannableBlock`s by their hashes.
   ///
@@ -203,7 +203,7 @@ pub trait ProvidesScannableBlocks: Sync {
   fn scannable_blocks(
     &self,
     hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, RpcError>>;
+  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, SourceError>>;
 
   /// Get a `ScannableBlock` by its hash.
   ///
@@ -212,7 +212,7 @@ pub trait ProvidesScannableBlocks: Sync {
   fn scannable_block(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<ScannableBlock, RpcError>>;
+  ) -> impl Send + Future<Output = Result<ScannableBlock, SourceError>>;
 
   /// Get a `ScannableBlock` by its number.
   ///
@@ -224,21 +224,21 @@ pub trait ProvidesScannableBlocks: Sync {
   fn scannable_block_by_number(
     &self,
     number: usize,
-  ) -> impl Send + Future<Output = Result<ScannableBlock, RpcError>>;
+  ) -> impl Send + Future<Output = Result<ScannableBlock, SourceError>>;
 }
 
 impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
   fn contiguous_scannable_blocks(
     &self,
     range: RangeInclusive<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, SourceError>> {
     async move {
       let blocks =
         <P as ProvidesUnvalidatedScannableBlocks>::contiguous_scannable_blocks(self, range.clone())
           .await?;
       let expected_blocks = range.end().wrapping_sub(*range.start());
       if blocks.len() != expected_blocks {
-        Err(RpcError::InternalError(format!(
+        Err(SourceError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
           "ProvidesUnvalidatedScannableBlocks::contiguous_scannable_blocks",
           blocks.len(),
@@ -252,7 +252,7 @@ impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
 
       for block in &blocks {
         if block.block.transactions.len() != block.transactions.len() {
-          Err(RpcError::InvalidNode(format!(
+          Err(SourceError::InvalidSource(format!(
             "scannable block had {} transactions yet only received {}",
             block.block.transactions.len(),
             block.transactions.len()
@@ -267,12 +267,12 @@ impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
   fn scannable_blocks(
     &self,
     hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, SourceError>> {
     async move {
       let blocks =
         <P as ProvidesUnvalidatedScannableBlocks>::scannable_blocks(self, hashes).await?;
       if blocks.len() != hashes.len() {
-        Err(RpcError::InternalError(format!(
+        Err(SourceError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
           "ProvidesUnvalidatedScannableBlocks::scannable_blocks",
           blocks.len(),
@@ -286,7 +286,7 @@ impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
 
       for block in &blocks {
         if block.block.transactions.len() != block.transactions.len() {
-          Err(RpcError::InvalidNode(format!(
+          Err(SourceError::InvalidSource(format!(
             "scannable block had {} transactions yet only received {}",
             block.block.transactions.len(),
             block.transactions.len()
@@ -301,13 +301,13 @@ impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
   fn scannable_block(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<ScannableBlock, RpcError>> {
+  ) -> impl Send + Future<Output = Result<ScannableBlock, SourceError>> {
     async move {
       let block = <P as ProvidesUnvalidatedScannableBlocks>::scannable_block(self, hash).await?;
       crate::provides_blockchain::sanity_check_block_by_hash(&hash, &block.block)?;
 
       if block.block.transactions.len() != block.transactions.len() {
-        Err(RpcError::InvalidNode(format!(
+        Err(SourceError::InvalidSource(format!(
           "scannable block had {} transactions yet only received {}",
           block.block.transactions.len(),
           block.transactions.len()
@@ -321,14 +321,14 @@ impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
   fn scannable_block_by_number(
     &self,
     number: usize,
-  ) -> impl Send + Future<Output = Result<ScannableBlock, RpcError>> {
+  ) -> impl Send + Future<Output = Result<ScannableBlock, SourceError>> {
     async move {
       let block =
         <P as ProvidesUnvalidatedScannableBlocks>::scannable_block_by_number(self, number).await?;
       crate::provides_blockchain::sanity_check_block_by_number(number, &block.block)?;
 
       if block.block.transactions.len() != block.transactions.len() {
-        Err(RpcError::InvalidNode(format!(
+        Err(SourceError::InvalidSource(format!(
           "scannable block had {} transactions yet only received {}",
           block.block.transactions.len(),
           block.transactions.len()

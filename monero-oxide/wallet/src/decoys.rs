@@ -12,7 +12,7 @@ use curve25519_dalek::{Scalar, EdwardsPoint};
 use crate::{
   DEFAULT_LOCK_WINDOW, COINBASE_LOCK_WINDOW, BLOCK_TIME,
   primitives::{Commitment, Decoys},
-  rpc::{RpcError, EvaluateUnlocked, ProvidesDecoys},
+  rpc::{SourceError, TransactionsError, EvaluateUnlocked, ProvidesDecoys},
   output::OutputData,
   WalletOutput,
 };
@@ -29,12 +29,12 @@ async fn select_n(
   output_being_spent: &WalletOutput,
   ring_len: u8,
   fingerprintable_deterministic: bool,
-) -> Result<Vec<(u64, [EdwardsPoint; 2])>, RpcError> {
+) -> Result<Vec<(u64, [EdwardsPoint; 2])>, TransactionsError> {
   if block_number <= DEFAULT_LOCK_WINDOW {
-    Err(RpcError::InternalError("not enough blocks to select decoys".to_string()))?;
+    Err(SourceError::InternalError("not enough blocks to select decoys".to_string()))?;
   }
   if block_number > rpc.latest_block_number().await? {
-    Err(RpcError::InternalError(
+    Err(SourceError::InternalError(
       "decoys being requested from blocks this node doesn't have".to_string(),
     ))?;
   }
@@ -42,7 +42,7 @@ async fn select_n(
   // Get the distribution
   let distribution = rpc.ringct_output_distribution(..= block_number).await?;
   if distribution.len() < DEFAULT_LOCK_WINDOW {
-    Err(RpcError::InternalError("not enough blocks to select decoys".to_string()))?;
+    Err(SourceError::InternalError("not enough blocks to select decoys".to_string()))?;
   }
   let highest_output_exclusive_bound = distribution[distribution.len() - DEFAULT_LOCK_WINDOW];
   // This assumes that each miner TX had one output (as sane) and checks we have sufficient
@@ -52,7 +52,7 @@ async fn select_n(
     u64::try_from(COINBASE_LOCK_WINDOW).expect("coinbase lock window exceeds 2^{64}"),
   ) < u64::from(ring_len)
   {
-    Err(RpcError::InternalError("not enough decoy candidates".to_string()))?;
+    Err(SourceError::InternalError("not enough decoy candidates".to_string()))?;
   }
 
   // Determine the outputs per second
@@ -97,7 +97,7 @@ async fn select_n(
             .expect("amount of ignored decoys exceeds 2^{64}")) <
           u64::from(ring_len))
       {
-        Err(RpcError::InternalError("hit decoy selection round limit".to_string()))?;
+        Err(SourceError::InternalError("hit decoy selection round limit".to_string()))?;
       }
     }
 
@@ -128,7 +128,7 @@ async fn select_n(
         let i = distribution.partition_point(|s| *s < (highest_output_exclusive_bound - 1 - o));
         let prev = i.saturating_sub(1);
         let n = distribution[i].checked_sub(distribution[prev]).ok_or_else(|| {
-          RpcError::InternalError("RPC returned non-monotonic distribution".to_string())
+          SourceError::InternalError("RPC returned non-monotonic distribution".to_string())
         })?;
         if n != 0 {
           // Select an output from within this block
@@ -214,9 +214,9 @@ async fn select_decoys<R: RngCore + CryptoRng>(
   block_number: usize,
   input: &WalletOutput,
   fingerprintable_deterministic: bool,
-) -> Result<Decoys, RpcError> {
+) -> Result<Decoys, TransactionsError> {
   if ring_len == 0 {
-    Err(RpcError::InternalError("requesting a ring of length 0".to_string()))?;
+    Err(SourceError::InternalError("requesting a ring of length 0".to_string()))?;
   }
 
   // Select all decoys for this transaction, assuming we generate a sane transaction
@@ -291,7 +291,7 @@ impl OutputWithDecoys {
     ring_len: u8,
     block_number: usize,
     output: WalletOutput,
-  ) -> Result<OutputWithDecoys, RpcError> {
+  ) -> Result<OutputWithDecoys, TransactionsError> {
     let decoys = select_decoys(rng, rpc, ring_len, block_number, &output, false).await?;
     Ok(OutputWithDecoys { output: output.data.clone(), decoys })
   }
@@ -316,7 +316,7 @@ impl OutputWithDecoys {
     ring_len: u8,
     block_number: usize,
     output: WalletOutput,
-  ) -> Result<OutputWithDecoys, RpcError> {
+  ) -> Result<OutputWithDecoys, TransactionsError> {
     let decoys = select_decoys(rng, rpc, ring_len, block_number, &output, true).await?;
     Ok(OutputWithDecoys { output: output.data.clone(), decoys })
   }

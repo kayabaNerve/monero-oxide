@@ -3,7 +3,7 @@ use alloc::{format, vec::Vec};
 
 use monero_oxide::transaction::{Pruned, Transaction};
 
-use crate::RpcError;
+use crate::SourceError;
 
 /// A pruned transaction with the hash of its pruned data, if `version != 1`.
 pub struct PrunedTransactionWithPrunableHash {
@@ -45,11 +45,32 @@ impl PrunedTransactionWithPrunableHash {
   }
 }
 
+/// An error when fetching transactions.
+#[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
+pub enum TransactionsError {
+  /// Error with the source.
+  #[error("source error ({0})")]
+  SourceError(SourceError),
+  /// A transaction wasn't found.
+  #[error("transaction wasn't found")]
+  TransactionNotFound,
+  /// A transaction expected to not be pruned was pruned.
+  #[error("transaction was unexpectedly pruned")]
+  PrunedTransaction,
+}
+
+impl From<SourceError> for TransactionsError {
+  fn from(err: SourceError) -> Self {
+    Self::SourceError(err)
+  }
+}
+
 /// Provides unvalidated transactions from an untrusted source.
 ///
 /// This provides all its methods yet (`get_transactions` || `get_transaction`) &&
 /// (`get_pruned_transactions` || `get_pruned_transaction`) MUST be overriden, ideally the batch
 /// methods.
+#[rustfmt::skip]
 pub trait ProvidesUnvalidatedTransactions: Sync {
   /// Get transactions.
   ///
@@ -57,7 +78,7 @@ pub trait ProvidesUnvalidatedTransactions: Sync {
   fn transactions(
     &self,
     hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<Transaction>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<Transaction>, TransactionsError>> {
     async move {
       if hashes.is_empty() {
         return Ok(vec![]);
@@ -77,7 +98,8 @@ pub trait ProvidesUnvalidatedTransactions: Sync {
   fn pruned_transactions(
     &self,
     hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<PrunedTransactionWithPrunableHash>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<PrunedTransactionWithPrunableHash>, TransactionsError>>
+  {
     async move {
       if hashes.is_empty() {
         return Ok(vec![]);
@@ -95,11 +117,11 @@ pub trait ProvidesUnvalidatedTransactions: Sync {
   fn transaction(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Transaction, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Transaction, TransactionsError>> {
     async move {
       let mut txs = self.transactions(&[hash]).await?;
       if txs.len() != 1 {
-        Err(RpcError::InternalError(format!(
+        Err(SourceError::InternalError(format!(
           "`{}` returned {} transactions, expected {}",
           "ProvidesUnvalidatedTransactions::transactions",
           txs.len(),
@@ -114,11 +136,11 @@ pub trait ProvidesUnvalidatedTransactions: Sync {
   fn pruned_transaction(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<PrunedTransactionWithPrunableHash, RpcError>> {
+  ) -> impl Send + Future<Output = Result<PrunedTransactionWithPrunableHash, TransactionsError>> {
     async move {
       let mut txs = self.pruned_transactions(&[hash]).await?;
       if txs.len() != 1 {
-        Err(RpcError::InternalError(format!(
+        Err(SourceError::InternalError(format!(
           "`{}` returned {} transactions, expected {}",
           "ProvidesUnvalidatedTransactions::pruned_transactions",
           txs.len(),
@@ -139,7 +161,7 @@ pub trait ProvidesTransactions: Sync {
   fn transactions(
     &self,
     hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<Transaction>, RpcError>>;
+  ) -> impl Send + Future<Output = Result<Vec<Transaction>, TransactionsError>>;
 
   /// Get pruned transactions.
   ///
@@ -148,7 +170,7 @@ pub trait ProvidesTransactions: Sync {
   fn pruned_transactions(
     &self,
     hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<Transaction<Pruned>>, RpcError>>;
+  ) -> impl Send + Future<Output = Result<Vec<Transaction<Pruned>>, TransactionsError>>;
 
   /// Get a transaction.
   ///
@@ -156,7 +178,7 @@ pub trait ProvidesTransactions: Sync {
   fn transaction(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Transaction, RpcError>>;
+  ) -> impl Send + Future<Output = Result<Transaction, TransactionsError>>;
 
   /// Get a pruned transaction.
   ///
@@ -165,18 +187,18 @@ pub trait ProvidesTransactions: Sync {
   fn pruned_transaction(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Transaction<Pruned>, RpcError>>;
+  ) -> impl Send + Future<Output = Result<Transaction<Pruned>, TransactionsError>>;
 }
 
 impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
   fn transactions(
     &self,
     hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<Transaction>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<Transaction>, TransactionsError>> {
     async move {
       let txs = <P as ProvidesUnvalidatedTransactions>::transactions(self, hashes).await?;
       if txs.len() != hashes.len() {
-        Err(RpcError::InternalError(format!(
+        Err(SourceError::InternalError(format!(
           "`{}` returned {} transactions, expected {}",
           "ProvidesUnvalidatedTransactions::transactions",
           txs.len(),
@@ -187,7 +209,7 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
       for (tx, expected_hash) in txs.iter().zip(hashes) {
         let hash = tx.hash();
         if &hash != expected_hash {
-          Err(RpcError::InvalidNode(format!(
+          Err(SourceError::InvalidSource(format!(
             "source returned TX {} when {} was requested",
             hex::encode(hash),
             hex::encode(expected_hash)
@@ -201,12 +223,12 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
   fn pruned_transactions(
     &self,
     hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<Transaction<Pruned>>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<Transaction<Pruned>>, TransactionsError>> {
     async move {
       let unvalidated =
         <P as ProvidesUnvalidatedTransactions>::pruned_transactions(self, hashes).await?;
       if unvalidated.len() != hashes.len() {
-        Err(RpcError::InternalError(format!(
+        Err(SourceError::InternalError(format!(
           "`{}` returned {} transactions, expected {}",
           "ProvidesUnvalidatedTransactions::pruned_transactions",
           unvalidated.len(),
@@ -218,7 +240,7 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
       for (tx, expected_hash) in unvalidated.into_iter().zip(hashes) {
         match tx.verify_as_possible(*expected_hash) {
           Ok(tx) => txs.push(tx),
-          Err(hash) => Err(RpcError::InvalidNode(format!(
+          Err(hash) => Err(SourceError::InvalidSource(format!(
             "source returned TX {} when {} was requested",
             hex::encode(hash),
             hex::encode(expected_hash)
@@ -232,12 +254,12 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
   fn transaction(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Transaction, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Transaction, TransactionsError>> {
     async move {
       let tx = <P as ProvidesUnvalidatedTransactions>::transaction(self, hash).await?;
       let actual_hash = tx.hash();
       if actual_hash != hash {
-        Err(RpcError::InvalidNode(format!(
+        Err(SourceError::InvalidSource(format!(
           "source returned TX {} when {} was requested",
           hex::encode(actual_hash),
           hex::encode(hash)
@@ -250,14 +272,14 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
   fn pruned_transaction(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Transaction<Pruned>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Transaction<Pruned>, TransactionsError>> {
     async move {
       let unvalidated =
         <P as ProvidesUnvalidatedTransactions>::pruned_transaction(self, hash).await?;
 
       match unvalidated.verify_as_possible(hash) {
         Ok(tx) => Ok(tx),
-        Err(actual_hash) => Err(RpcError::InvalidNode(format!(
+        Err(actual_hash) => Err(SourceError::InvalidSource(format!(
           "source returned TX {} when {} was requested",
           hex::encode(actual_hash),
           hex::encode(hash)
@@ -267,11 +289,28 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
   }
 }
 
+/// An error from the source.
+#[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
+pub enum PublishTransactionError {
+  /// Error with the source.
+  #[error("source error ({0})")]
+  SourceError(SourceError),
+  /// The transaction was rejected.
+  #[error("transaction was rejected ({0})")]
+  TransactionRejected(String),
+}
+
+impl From<SourceError> for PublishTransactionError {
+  fn from(err: SourceError) -> Self {
+    Self::SourceError(err)
+  }
+}
+
 /// An interface eligible to publish transactions over.
 pub trait PublishTransaction: Sync {
   /// Publish a transaction.
   fn publish_transaction(
     &self,
     transaction: &Transaction,
-  ) -> impl Send + Future<Output = Result<(), RpcError>>;
+  ) -> impl Send + Future<Output = Result<(), PublishTransactionError>>;
 }

@@ -3,7 +3,7 @@ use alloc::{format, vec::Vec, string::ToString};
 
 use curve25519_dalek::EdwardsPoint;
 
-use crate::{RpcError, ProvidesBlockchainMeta};
+use crate::{SourceError, TransactionsError, ProvidesBlockchainMeta};
 
 /// How to evaluate if an output is unlocked.
 pub enum EvaluateUnlocked {
@@ -31,7 +31,7 @@ pub trait ProvidesUnvalidatedDecoys: ProvidesBlockchainMeta {
   fn ringct_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>>;
+  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>>;
 
   /// Get the specified RingCT outputs, but only return them if they're unlocked.
   ///
@@ -41,7 +41,7 @@ pub trait ProvidesUnvalidatedDecoys: ProvidesBlockchainMeta {
     &self,
     indexes: &[u64],
     evaluate_unlocked: EvaluateUnlocked,
-  ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, RpcError>>;
+  ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, TransactionsError>>;
 }
 
 /// Provides the necessary data to select decoys.
@@ -57,21 +57,21 @@ pub trait ProvidesDecoys: ProvidesBlockchainMeta {
   fn ringct_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>>;
+  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>>;
 
   /// Get the specified RingCT outputs, but only return them if they're unlocked.
   fn unlocked_ringct_outputs(
     &self,
     indexes: &[u64],
     evaluate_unlocked: EvaluateUnlocked,
-  ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, RpcError>>;
+  ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, TransactionsError>>;
 }
 
 impl<P: ProvidesUnvalidatedDecoys> ProvidesDecoys for P {
   fn ringct_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>> {
     async move {
       let distribution =
         <P as ProvidesUnvalidatedDecoys>::ringct_output_distribution(self, range).await?;
@@ -79,7 +79,7 @@ impl<P: ProvidesUnvalidatedDecoys> ProvidesDecoys for P {
       let mut monotonic = 0;
       for d in &distribution {
         if *d < monotonic {
-          Err(RpcError::InvalidNode(
+          Err(SourceError::InvalidSource(
             "received output distribution didn't increase monotonically".to_string(),
           ))?;
         }
@@ -94,13 +94,13 @@ impl<P: ProvidesUnvalidatedDecoys> ProvidesDecoys for P {
     &self,
     indexes: &[u64],
     evaluate_unlocked: EvaluateUnlocked,
-  ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, RpcError>> {
+  ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, TransactionsError>> {
     async move {
       let outputs =
         <P as ProvidesUnvalidatedDecoys>::unlocked_ringct_outputs(self, indexes, evaluate_unlocked)
           .await?;
       if outputs.len() != indexes.len() {
-        Err(RpcError::InternalError(format!(
+        Err(SourceError::InternalError(format!(
           "`{}` returned {} outputs, expected {}",
           "ProvidesUnvalidatedDecoys::unlocked_ringct_outputs",
           outputs.len(),
