@@ -1,6 +1,8 @@
 use core::future::Future;
 use alloc::vec::Vec;
+
 use monero_oxide::transaction::{Pruned, Transaction};
+
 use crate::RpcError;
 
 /// A pruned transaction with the hash of its pruned data, if `version != 1`.
@@ -43,14 +45,15 @@ impl PrunedTransactionWithPrunableHash {
   }
 }
 
-/// Provides unvalidated transactions from an untrusted RPC.
+/// Provides unvalidated transactions from an untrusted source.
 ///
-/// This provides all four methods yet either `get_transactions` and `get_pruned_transactions` or
-/// `get_transaction` and `get_pruned_transaction` MUST be overriden, ideally the former.
+/// This provides all its methods yet (`get_transactions` || `get_transaction`) &&
+/// (`get_pruned_transactions` || `get_pruned_transaction`) MUST be overriden, ideally the batch
+/// methods.
 pub trait ProvidesUnvalidatedTransactions: Sync {
-  /// Get the specified transactions.
+  /// Get transactions.
   ///
-  /// This returns all of the requested deserialized transactions.
+  /// This returns the correct amount of transactions, deserialized, without further validation.
   fn get_transactions(
     &self,
     hashes: &[[u8; 32]],
@@ -68,7 +71,9 @@ pub trait ProvidesUnvalidatedTransactions: Sync {
     }
   }
 
-  /// Get the specified transactions in their pruned format.
+  /// Get pruned transactions.
+  ///
+  /// This returns the correct amount of transactions, deserialized, without further validation.
   fn get_pruned_transactions(
     &self,
     hashes: &[[u8; 32]],
@@ -86,26 +91,48 @@ pub trait ProvidesUnvalidatedTransactions: Sync {
     }
   }
 
-  /// Get the specified transaction.
+  /// Get a transaction.
   fn get_transaction(
     &self,
     hash: [u8; 32],
   ) -> impl Send + Future<Output = Result<Transaction, RpcError>> {
-    async move { self.get_transactions(&[hash]).await.map(|mut txs| txs.swap_remove(0)) }
+    async move {
+      let mut txs = self.get_transactions(&[hash]).await?;
+      if txs.len() != 1 {
+        Err(RpcError::InternalError(format!(
+          "`{}` returned {} transactions, expected {}",
+          "ProvidesUnvalidatedTransactions::get_transactions",
+          txs.len(),
+          1,
+        )))?;
+      }
+      Ok(txs.pop().unwrap())
+    }
   }
 
-  /// Get the specified transaction in its pruned format.
+  /// Get a pruned transaction.
   fn get_pruned_transaction(
     &self,
     hash: [u8; 32],
   ) -> impl Send + Future<Output = Result<PrunedTransactionWithPrunableHash, RpcError>> {
-    async move { self.get_pruned_transactions(&[hash]).await.map(|mut txs| txs.swap_remove(0)) }
+    async move {
+      let mut txs = self.get_pruned_transactions(&[hash]).await?;
+      if txs.len() != 1 {
+        Err(RpcError::InternalError(format!(
+          "`{}` returned {} transactions, expected {}",
+          "ProvidesUnvalidatedTransactions::get_pruned_transactions",
+          txs.len(),
+          1,
+        )))?;
+      }
+      Ok(txs.pop().unwrap())
+    }
   }
 }
 
 /// Provides transactions which have been sanity-checked.
 pub trait ProvidesTransactions: Sync {
-  /// Get the specified transactions.
+  /// Get transactions.
   ///
   /// This returns all of the requested deserialized transactions, ensuring they're the requested
   /// transactions.
@@ -114,7 +141,7 @@ pub trait ProvidesTransactions: Sync {
     hashes: &[[u8; 32]],
   ) -> impl Send + Future<Output = Result<Vec<Transaction>, RpcError>>;
 
-  /// Get the specified transactions in their pruned format.
+  /// Get pruned transactions.
   ///
   /// This returns all of the requested deserialized transactions, ensuring they're the requested
   /// transactions if `version != 1`.
@@ -123,7 +150,7 @@ pub trait ProvidesTransactions: Sync {
     hashes: &[[u8; 32]],
   ) -> impl Send + Future<Output = Result<Vec<Transaction<Pruned>>, RpcError>>;
 
-  /// Get the specified transaction.
+  /// Get a transaction.
   ///
   /// This returns the requested transaction, ensuring it is the requested transaction.
   fn get_transaction(
@@ -131,7 +158,7 @@ pub trait ProvidesTransactions: Sync {
     hash: [u8; 32],
   ) -> impl Send + Future<Output = Result<Transaction, RpcError>>;
 
-  /// Get the specified transaction in its pruned format.
+  /// Get a pruned transaction.
   ///
   /// This returns the requested transaction, ensuring it is the requested transaction if
   /// `version != 1`.
@@ -150,17 +177,18 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
       let txs = <P as ProvidesUnvalidatedTransactions>::get_transactions(self, hashes).await?;
       if txs.len() != hashes.len() {
         Err(RpcError::InternalError(format!(
-        "`ProvidesUnvalidatedTransactions::get_transactions` returned {} transactions, expected {}",
-        txs.len(),
-        hashes.len(),
-      )))?;
+          "`{}` returned {} transactions, expected {}",
+          "ProvidesUnvalidatedTransactions::get_transactions",
+          txs.len(),
+          hashes.len(),
+        )))?;
       }
 
       for (tx, expected_hash) in txs.iter().zip(hashes) {
         let hash = tx.hash();
         if &hash != expected_hash {
           Err(RpcError::InvalidNode(format!(
-            "RPC returned TX {} when {} was requested",
+            "source returned TX {} when {} was requested",
             hex::encode(hash),
             hex::encode(expected_hash)
           )))?;
@@ -191,7 +219,7 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
         match tx.verify_as_possible(*expected_hash) {
           Ok(tx) => txs.push(tx),
           Err(hash) => Err(RpcError::InvalidNode(format!(
-            "RPC returned TX {} when {} was requested",
+            "source returned TX {} when {} was requested",
             hex::encode(hash),
             hex::encode(expected_hash)
           )))?,
@@ -210,7 +238,7 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
       let actual_hash = tx.hash();
       if actual_hash != hash {
         Err(RpcError::InvalidNode(format!(
-          "RPC returned TX {} when {} was requested",
+          "source returned TX {} when {} was requested",
           hex::encode(actual_hash),
           hex::encode(hash)
         )))?;
@@ -230,7 +258,7 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
       match unvalidated.verify_as_possible(hash) {
         Ok(tx) => Ok(tx),
         Err(actual_hash) => Err(RpcError::InvalidNode(format!(
-          "RPC returned TX {} when {} was requested",
+          "source returned TX {} when {} was requested",
           hex::encode(actual_hash),
           hex::encode(hash)
         )))?,

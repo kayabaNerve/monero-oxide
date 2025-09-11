@@ -28,7 +28,7 @@ async fn add_inputs(
         &mut OsRng,
         rpc,
         ring_len(rct_type),
-        rpc.get_height().await.unwrap(),
+        rpc.get_latest_block_number().await.unwrap() + 1,
         output,
       )
       .await

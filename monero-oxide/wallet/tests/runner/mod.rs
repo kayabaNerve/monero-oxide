@@ -70,7 +70,7 @@ pub async fn mine_until_unlocked(
   tx_hash: [u8; 32],
 ) -> Block {
   // mine until tx is in a block
-  let mut height = rpc.get_height().await.unwrap();
+  let mut height = rpc.get_latest_block_number().await.unwrap() + 1;
   let mut found = false;
   let mut block = None;
   while !found {
@@ -101,7 +101,7 @@ pub async fn get_miner_tx_output(rpc: &SimpleRequestRpc, view: &ViewPair) -> Wal
   let mut scanner = Scanner::new(view.clone());
 
   // Mine 60 blocks to unlock a miner TX
-  let start = rpc.get_height().await.unwrap();
+  let start = rpc.get_latest_block_number().await.unwrap() + 1;
   rpc.generate_blocks(&view.legacy_address(Network::Mainnet), 60).await.unwrap();
 
   let block = rpc.get_block_by_number(start).await.unwrap();
@@ -131,7 +131,7 @@ pub async fn rpc() -> SimpleRequestRpc {
   const BLOCKS_TO_MINE: usize = 110;
 
   // Only run once
-  if rpc.get_height().await.unwrap() > BLOCKS_TO_MINE {
+  if (rpc.get_latest_block_number().await.unwrap() + 1) > BLOCKS_TO_MINE {
     return rpc;
   }
 
@@ -307,7 +307,7 @@ macro_rules! test {
               &mut OsRng,
               &rpc,
               ring_len(rct_type),
-              rpc.get_height().await.unwrap(),
+              rpc.get_latest_block_number().await.unwrap() + 1,
               miner_tx,
             ).await.unwrap();
             builder.add_input(input);

@@ -22,13 +22,13 @@ async fn test_rpc() {
   let rpc = SimpleRequestRpc::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
 
   {
-    // Test get_height
-    let height = rpc.get_height().await.unwrap();
+    // Test get_latest_block_number
+    let block_number = rpc.get_latest_block_number().await.unwrap();
     // The height should be the amount of blocks on chain
     // The number of a block should be its zero-indexed position
     // Accordingly, there should be no block whose number is the height
+    let height = block_number + 1;
     assert!(rpc.get_block_by_number(height).await.is_err());
-    let block_number = height - 1;
     // There should be a block just prior
     let block = rpc.get_block_by_number(block_number).await.unwrap();
 
@@ -50,11 +50,11 @@ async fn test_rpc() {
       )
       .await
       .unwrap();
-    let height = rpc.get_height().await.unwrap();
-    assert_eq!(number, height - 1);
+    let latest_block_number = rpc.get_latest_block_number().await.unwrap();
+    assert_eq!(number, latest_block_number);
 
     let mut actual_blocks = Vec::with_capacity(amount_of_blocks);
-    for i in (height - amount_of_blocks) .. height {
+    for i in (latest_block_number - amount_of_blocks + 1) ..= latest_block_number {
       actual_blocks.push(rpc.get_block_by_number(i).await.unwrap().hash());
     }
     assert_eq!(blocks, actual_blocks);
@@ -65,7 +65,7 @@ async fn test_rpc() {
 
 #[tokio::test]
 async fn test_decoy_rpc() {
-  use monero_rpc::{Rpc, DecoyRpc};
+  use monero_rpc::prelude::*;
 
   let guard = SEQUENTIAL.lock().await;
 
@@ -81,7 +81,7 @@ async fn test_decoy_rpc() {
   // Our documentation for our Rust fn defines it as taking two block numbers
   {
     let distribution_len = rpc.get_output_distribution_end_height().await.unwrap();
-    assert_eq!(distribution_len, rpc.get_height().await.unwrap());
+    assert_eq!(distribution_len, rpc.get_latest_block_number().await.unwrap() + 1);
 
     rpc.get_output_distribution(0 ..= distribution_len).await.unwrap_err();
     assert_eq!(

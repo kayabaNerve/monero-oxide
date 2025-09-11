@@ -256,15 +256,16 @@ async fn main() {
 
   let mut rpc_i = 0;
   let mut handles: Vec<JoinHandle<()>> = vec![];
-  let mut height = 0;
+  let mut latest_block_number = 0;
   loop {
-    let new_height = main_rpc.get_height().await.expect("couldn't call get_height");
-    if new_height == height {
+    let new_latest_block_number =
+      main_rpc.get_latest_block_number().await.expect("couldn't call get_latest_block_number");
+    if new_latest_block_number == latest_block_number {
       break;
     }
-    height = new_height;
+    latest_block_number = new_latest_block_number;
 
-    while block_i < height {
+    while block_i <= latest_block_number {
       if handles.len() >= async_parallelism {
         // Guarantee one handle is complete
         handles.swap_remove(0).await.unwrap();

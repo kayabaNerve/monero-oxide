@@ -1,5 +1,5 @@
 use monero_simple_request_rpc::SimpleRequestRpc;
-use monero_wallet::{DEFAULT_LOCK_WINDOW, transaction::Transaction, rpc::DecoyRpc, WalletOutput};
+use monero_wallet::{DEFAULT_LOCK_WINDOW, transaction::Transaction, WalletOutput};
 
 mod runner;
 
@@ -27,7 +27,7 @@ test!(
         &mut OsRng,
         &rpc,
         ring_len(rct_type),
-        rpc.get_height().await.unwrap(),
+        rpc.get_latest_block_number().await.unwrap() + 1,
         output_tx0.clone(),
       )
       .await
@@ -43,7 +43,7 @@ test!(
 
       let rpc: SimpleRequestRpc = rpc;
 
-      let height = rpc.get_height().await.unwrap();
+      let height = rpc.get_latest_block_number().await.unwrap() + 1;
 
       let most_recent_o_index = rpc.get_o_indexes(tx.hash()).await.unwrap().pop().unwrap();
 
@@ -75,7 +75,7 @@ test!(
       }
 
       assert!(selected_fresh_decoy);
-      assert_eq!(height, rpc.get_height().await.unwrap());
+      assert_eq!(height, rpc.get_latest_block_number().await.unwrap() + 1);
     },
   ),
 );
@@ -104,7 +104,7 @@ test!(
         &mut OsRng,
         &rpc,
         ring_len(rct_type),
-        rpc.get_height().await.unwrap(),
+        rpc.get_latest_block_number().await.unwrap() + 1,
         output_tx0.clone(),
       )
       .await
@@ -120,7 +120,7 @@ test!(
 
       let rpc: SimpleRequestRpc = rpc;
 
-      let height = rpc.get_height().await.unwrap();
+      let height = rpc.get_latest_block_number().await.unwrap() + 1;
 
       let most_recent_o_index = rpc.get_o_indexes(tx.hash()).await.unwrap().pop().unwrap();
 
@@ -152,7 +152,7 @@ test!(
       }
 
       assert!(selected_fresh_decoy);
-      assert_eq!(height, rpc.get_height().await.unwrap());
+      assert_eq!(height, rpc.get_latest_block_number().await.unwrap() + 1);
     },
   ),
 );
