@@ -15,10 +15,7 @@ use alloc::{
   vec::Vec,
   string::{String, ToString},
 };
-
 use std_shims::io;
-
-use zeroize::Zeroize;
 
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 
@@ -32,6 +29,9 @@ use monero_oxide::{
   DEFAULT_LOCK_WINDOW,
 };
 
+mod provides_fee_rates;
+pub use provides_fee_rates::*;
+
 mod monero_daemon;
 pub use monero_daemon::*;
 
@@ -43,11 +43,6 @@ pub use provides_blockchain_meta::*;
 
 mod provides_blockchain;
 pub use provides_blockchain::*;
-
-// Number of blocks the fee estimate will be valid for
-// https://github.com/monero-project/monero/blob/94e67bf96bbc010241f29ada6abc89f49a81759c
-//   /src/wallet/wallet2.cpp#L121
-const GRACE_BLOCKS_FOR_FEE_ESTIMATE: u64 = 10;
 
 /// An error from the RPC.
 #[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
@@ -93,113 +88,6 @@ pub struct ScannableBlock {
   pub output_index_for_first_ringct_output: Option<u64>,
 }
 
-/// A struct containing a fee rate.
-///
-/// The fee rate is defined as a per-weight cost, along with a mask for rounding purposes.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Zeroize)]
-pub struct FeeRate {
-  /// The fee per-weight of the transaction.
-  per_weight: u64,
-  /// The mask to round with.
-  mask: u64,
-}
-
-impl FeeRate {
-  /// Construct a new fee rate.
-  pub fn new(per_weight: u64, mask: u64) -> Result<FeeRate, RpcError> {
-    if (per_weight == 0) || (mask == 0) {
-      Err(RpcError::InvalidFee)?;
-    }
-    Ok(FeeRate { per_weight, mask })
-  }
-
-  /// Write the FeeRate.
-  ///
-  /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
-  /// defined serialization.
-  pub fn write(&self, w: &mut impl io::Write) -> io::Result<()> {
-    w.write_all(&self.per_weight.to_le_bytes())?;
-    w.write_all(&self.mask.to_le_bytes())
-  }
-
-  /// Serialize the FeeRate to a `Vec<u8>`.
-  ///
-  /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
-  /// defined serialization.
-  pub fn serialize(&self) -> Vec<u8> {
-    let mut res = Vec::with_capacity(16);
-    self.write(&mut res).expect("write failed but <Vec as io::Write> doesn't fail");
-    res
-  }
-
-  /// Read a FeeRate.
-  ///
-  /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
-  /// defined serialization.
-  pub fn read(r: &mut impl io::Read) -> io::Result<FeeRate> {
-    let per_weight = read_u64(r)?;
-    let mask = read_u64(r)?;
-    FeeRate::new(per_weight, mask).map_err(io::Error::other)
-  }
-
-  /// Calculate the fee to use from the weight.
-  ///
-  /// This function may panic upon overflow.
-  pub fn calculate_fee_from_weight(&self, weight: usize) -> u64 {
-    let fee =
-      self.per_weight * u64::try_from(weight).expect("couldn't convert weight (usize) to u64");
-    let fee = fee.div_ceil(self.mask) * self.mask;
-    debug_assert_eq!(
-      Some(weight),
-      self.calculate_weight_from_fee(fee),
-      "Miscalculated weight from fee"
-    );
-    fee
-  }
-
-  /// Calculate the weight from the fee.
-  ///
-  /// Returns `None` if the weight would not fit within a `usize`.
-  pub fn calculate_weight_from_fee(&self, fee: u64) -> Option<usize> {
-    usize::try_from(fee / self.per_weight).ok()
-  }
-}
-
-/// The priority for the fee.
-///
-/// Higher-priority transactions will be included in blocks earlier.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[allow(non_camel_case_types)]
-pub enum FeePriority {
-  /// The `Unimportant` priority, as defined by Monero.
-  Unimportant,
-  /// The `Normal` priority, as defined by Monero.
-  Normal,
-  /// The `Elevated` priority, as defined by Monero.
-  Elevated,
-  /// The `Priority` priority, as defined by Monero.
-  Priority,
-  /// A custom priority.
-  Custom {
-    /// The numeric representation of the priority, as used within the RPC.
-    priority: u32,
-  },
-}
-
-/// https://github.com/monero-project/monero/blob/ac02af92867590ca80b2779a7bbeafa99ff94dcb/
-///   src/simplewallet/simplewallet.cpp#L161
-impl FeePriority {
-  pub(crate) fn fee_priority(&self) -> u32 {
-    match self {
-      FeePriority::Unimportant => 1,
-      FeePriority::Normal => 2,
-      FeePriority::Elevated => 3,
-      FeePriority::Priority => 4,
-      FeePriority::Custom { priority, .. } => *priority,
-    }
-  }
-}
-
 /// The response to an query for the information of a RingCT output.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct OutputInformation {
@@ -239,7 +127,9 @@ fn rpc_point(point: &str) -> Result<EdwardsPoint, RpcError> {
 }
 
 /// TODO: docstring
-pub trait Rpc: MoneroDaemon + ProvidesTransactions + ProvidesBlockchain {
+pub trait Rpc:
+  MoneroDaemon + ProvidesTransactions + PublishTransaction + ProvidesBlockchain + ProvidesFeeRates
+{
   /// Get a block's scannable form.
   fn get_scannable_block(
     &self,
@@ -327,73 +217,6 @@ pub trait Rpc: MoneroDaemon + ProvidesTransactions + ProvidesBlockchain {
     number: usize,
   ) -> impl Send + Future<Output = Result<ScannableBlock, RpcError>> {
     async move { self.get_scannable_block(self.get_block_by_number(number).await?).await }
-  }
-
-  /// Get the currently estimated fee rate from the node.
-  ///
-  /// This may be manipulated to unsafe levels and MUST be sanity checked.
-  ///
-  /// This MUST NOT be expected to be deterministic in any way.
-  fn get_fee_rate(
-    &self,
-    priority: FeePriority,
-  ) -> impl Send + Future<Output = Result<FeeRate, RpcError>> {
-    async move {
-      #[derive(Debug, Deserialize)]
-      struct FeeResponse {
-        status: String,
-        fees: Option<Vec<u64>>,
-        fee: u64,
-        quantization_mask: u64,
-      }
-
-      let res: FeeResponse = self
-        .json_rpc_call(
-          "get_fee_estimate",
-          Some(json!({ "grace_blocks": GRACE_BLOCKS_FOR_FEE_ESTIMATE })),
-        )
-        .await?;
-
-      if res.status != "OK" {
-        Err(RpcError::InvalidFee)?;
-      }
-
-      if let Some(fees) = res.fees {
-        // https://github.com/monero-project/monero/blob/94e67bf96bbc010241f29ada6abc89f49a81759c/
-        // src/wallet/wallet2.cpp#L7615-L7620
-        let priority_idx = usize::try_from(if priority.fee_priority() >= 4 {
-          3
-        } else {
-          priority.fee_priority().saturating_sub(1)
-        })
-        .map_err(|_| RpcError::InvalidPriority)?;
-
-        if priority_idx >= fees.len() {
-          Err(RpcError::InvalidPriority)
-        } else {
-          FeeRate::new(fees[priority_idx], res.quantization_mask)
-        }
-      } else {
-        // https://github.com/monero-project/monero/blob/94e67bf96bbc010241f29ada6abc89f49a81759c/
-        //   src/wallet/wallet2.cpp#L7569-L7584
-        // https://github.com/monero-project/monero/blob/94e67bf96bbc010241f29ada6abc89f49a81759c/
-        //   src/wallet/wallet2.cpp#L7660-L7661
-        let priority_idx = usize::try_from(if priority.fee_priority() == 0 {
-          1
-        } else {
-          priority.fee_priority() - 1
-        })
-        .map_err(|_| RpcError::InvalidPriority)?;
-        let multipliers = [1, 5, 25, 1000];
-        if priority_idx >= multipliers.len() {
-          // though not an RPC error, it seems sensible to treat as such
-          Err(RpcError::InvalidPriority)?;
-        }
-        let fee_multiplier = multipliers[priority_idx];
-
-        FeeRate::new(res.fee * fee_multiplier, res.quantization_mask)
-      }
-    }
   }
 
   /// Get the output indexes of the specified transaction.
@@ -886,7 +709,8 @@ impl<R: MoneroDaemon + ProvidesTransactions + ProvidesBlockchainMeta> DecoyRpc f
 /// A prelude of recommend imports to glob import.
 pub mod prelude {
   pub use crate::{
-    FeePriority, FeeRate, ScannableBlock, RpcError, MoneroDaemon, ProvidesTransactions,
-    PublishTransaction, ProvidesBlockchainMeta, ProvidesBlockchain, Rpc, DecoyRpc,
+    ScannableBlock, RpcError, MoneroDaemon, ProvidesTransactions, PublishTransaction,
+    ProvidesBlockchainMeta, ProvidesBlockchain, FeePriority, FeeRate, ProvidesFeeRates, Rpc,
+    DecoyRpc,
   };
 }

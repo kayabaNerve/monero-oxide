@@ -263,7 +263,7 @@ macro_rules! test {
               ).unwrap(),
               None,
             ),
-            rpc.get_fee_rate(FeePriority::Unimportant).await.unwrap(),
+            rpc.get_fee_rate(FeePriority::Unimportant, u64::MAX).await.unwrap(),
           );
 
           let sign = |tx: SignableTransaction| {

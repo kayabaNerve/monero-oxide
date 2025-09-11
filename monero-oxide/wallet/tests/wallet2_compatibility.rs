@@ -102,7 +102,7 @@ async fn from_wallet_rpc_to_self(spec: AddressSpec) {
     .unwrap();
   let tx_hash = hex::decode(tx.tx_hash).unwrap().try_into().unwrap();
 
-  let fee_rate = daemon_rpc.get_fee_rate(FeePriority::Unimportant).await.unwrap();
+  let fee_rate = daemon_rpc.get_fee_rate(FeePriority::Unimportant, u64::MAX).await.unwrap();
 
   // unlock it
   let block = runner::mine_until_unlocked(&daemon_rpc, &wallet_rpc_addr, tx_hash).await;

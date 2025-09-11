@@ -12,13 +12,9 @@ use monero_address::Address;
 
 use crate::{
   RpcError, PrunedTransactionWithPrunableHash, ProvidesUnvalidatedTransactions, PublishTransaction,
-  ProvidesBlockchainMeta, ProvidesUnvalidatedBlockchain, Rpc, rpc_hex, hash_hex,
+  ProvidesBlockchainMeta, ProvidesUnvalidatedBlockchain, FeePriority, FeeRate,
+  ProvidesUnvalidatedFeeRates, Rpc, rpc_hex, hash_hex,
 };
-
-// Monero errors if more than 100 is requested unless using a non-restricted RPC
-// https://github.com/monero-project/monero/blob/cc73fe71162d564ffda8e549b79a350bca53c454
-//   /src/rpc/core_rpc_server.cpp#L75
-const TXS_PER_REQUEST: usize = 100;
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcResponse<T> {
@@ -139,6 +135,11 @@ pub trait MoneroDaemon: Sync + Clone {
 
 mod provides_transaction {
   use super::*;
+
+  // Monero errors if more than 100 is requested unless using a non-restricted RPC
+  // https://github.com/monero-project/monero/blob/cc73fe71162d564ffda8e549b79a350bca53c454
+  //   /src/rpc/core_rpc_server.cpp#L75
+  const TXS_PER_REQUEST: usize = 100;
 
   #[derive(Debug, Deserialize)]
   struct TransactionResponse {
@@ -403,6 +404,75 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
 
       Block::read(&mut rpc_hex(&res.blob)?.as_slice())
         .map_err(|_| RpcError::InvalidNode("invalid block".to_string()))
+    }
+  }
+}
+
+mod provides_fee_rates {
+  use super::*;
+
+  // Number of blocks the fee estimate will be valid for
+  // https://github.com/monero-project/monero/blob/94e67bf96bbc010241f29ada6abc89f49a81759c
+  //   /src/wallet/wallet2.cpp#L121
+  const GRACE_BLOCKS_FOR_FEE_ESTIMATE: u64 = 10;
+
+  impl<D: MoneroDaemon> ProvidesUnvalidatedFeeRates for D {
+    fn get_fee_rate(
+      &self,
+      priority: FeePriority,
+    ) -> impl Send + Future<Output = Result<FeeRate, RpcError>> {
+      async move {
+        #[derive(Debug, Deserialize)]
+        struct FeeResponse {
+          status: String,
+          fees: Option<Vec<u64>>,
+          fee: u64,
+          quantization_mask: u64,
+        }
+
+        let res: FeeResponse = self
+          .json_rpc_call(
+            "get_fee_estimate",
+            Some(json!({ "grace_blocks": GRACE_BLOCKS_FOR_FEE_ESTIMATE })),
+          )
+          .await?;
+
+        if res.status != "OK" {
+          Err(RpcError::InvalidFee)?;
+        }
+
+        if let Some(fees) = res.fees {
+          // https://github.com/monero-project/monero/blob/94e67bf96bbc010241f29ada6abc89f49a81759c/
+          // src/wallet/wallet2.cpp#L7615-L7620
+          let priority_idx = usize::try_from(if priority.to_u32() >= 4 {
+            3
+          } else {
+            priority.to_u32().saturating_sub(1)
+          })
+          .map_err(|_| RpcError::InvalidPriority)?;
+
+          if priority_idx >= fees.len() {
+            Err(RpcError::InvalidPriority)
+          } else {
+            FeeRate::new(fees[priority_idx], res.quantization_mask)
+          }
+        } else {
+          // https://github.com/monero-project/monero/blob/94e67bf96bbc010241f29ada6abc89f49a81759c/
+          //   src/wallet/wallet2.cpp#L7569-L7584
+          // https://github.com/monero-project/monero/blob/94e67bf96bbc010241f29ada6abc89f49a81759c/
+          //   src/wallet/wallet2.cpp#L7660-L7661
+          let priority_idx =
+            usize::try_from(if priority.to_u32() == 0 { 1 } else { priority.to_u32() - 1 })
+              .map_err(|_| RpcError::InvalidPriority)?;
+          const MULTIPLIERS: [u64; 4] = [1, 5, 25, 1000];
+          let fee_multiplier = *MULTIPLIERS.get(priority_idx).ok_or(RpcError::InvalidPriority)?;
+
+          FeeRate::new(
+            res.fee.checked_mul(fee_multiplier).ok_or(RpcError::InvalidFee)?,
+            res.quantization_mask,
+          )
+        }
+      }
     }
   }
 }
