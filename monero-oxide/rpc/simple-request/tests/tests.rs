@@ -36,9 +36,6 @@ async fn test_rpc() {
     assert_eq!(block.number().unwrap(), block_number);
     assert_eq!(rpc.get_block(block.hash()).await.unwrap(), block);
     assert_eq!(rpc.get_block_hash(block_number).await.unwrap(), block.hash());
-
-    // And finally the hardfork version route
-    assert_eq!(rpc.get_hardfork_version().await.unwrap(), block.header.hardfork_version);
   }
 
   // Test generate_blocks
@@ -80,8 +77,7 @@ async fn test_decoy_rpc() {
   // Test get_output_distribution
   // Our documentation for our Rust fn defines it as taking two block numbers
   {
-    let distribution_len = rpc.get_output_distribution_end_height().await.unwrap();
-    assert_eq!(distribution_len, rpc.get_latest_block_number().await.unwrap() + 1);
+    let distribution_len = rpc.get_latest_block_number().await.unwrap() + 1;
 
     rpc.get_output_distribution(0 ..= distribution_len).await.unwrap_err();
     assert_eq!(

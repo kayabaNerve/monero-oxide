@@ -7,7 +7,7 @@ use crate::{RpcError, ProvidesBlockchainMeta};
 
 /// Provides the blockchain from an untrusted source.
 ///
-/// This provides all its methods yet (`get_contiguous_blocks` || `get_block_by_number`) &&
+/// This provides some of its methods yet (`get_contiguous_blocks` || `get_block_by_number`) &&
 /// (`get_blocks` || `get_block`) MUST be overriden, ideally the batch methods.
 pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
   /// Get a contiguous range of blocks.
@@ -93,6 +93,15 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
       Ok(blocks.pop().unwrap())
     }
   }
+
+  /// Get the hash of a block by its number.
+  ///
+  /// The number of a block is its index on the blockchain, so the genesis block would have
+  /// `number = 0`.
+  fn get_block_hash(
+    &self,
+    number: usize,
+  ) -> impl Send + Future<Output = Result<[u8; 32], RpcError>>;
 }
 
 /// Provides blocks which have been sanity-checked.
@@ -129,6 +138,15 @@ pub trait ProvidesBlockchain: ProvidesBlockchainMeta {
     &self,
     number: usize,
   ) -> impl Send + Future<Output = Result<Block, RpcError>>;
+
+  /// Get the hash of a block by its number.
+  ///
+  /// The number of a block is its index on the blockchain, so the genesis block would have
+  /// `number = 0`.
+  fn get_block_hash(
+    &self,
+    number: usize,
+  ) -> impl Send + Future<Output = Result<[u8; 32], RpcError>>;
 }
 
 pub(crate) fn sanity_check_contiguous_blocks<'a>(
@@ -271,5 +289,12 @@ impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
       sanity_check_block_by_number(number, &block)?;
       Ok(block)
     }
+  }
+
+  fn get_block_hash(
+    &self,
+    number: usize,
+  ) -> impl Send + Future<Output = Result<[u8; 32], RpcError>> {
+    <P as ProvidesUnvalidatedBlockchain>::get_block_hash(self, number)
   }
 }

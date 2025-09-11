@@ -117,15 +117,7 @@ fn rpc_point(point: &str) -> Result<EdwardsPoint, RpcError> {
 /// An implementation is provided for any satisfier of `Rpc`. It is not recommended to use an `Rpc`
 /// object to satisfy this. This should be satisfied by a local store of the output distribution,
 /// both for performance and to prevent potential attacks a remote node can perform.
-pub trait DecoyRpc: Sync {
-  /// Get the height the output distribution ends at.
-  ///
-  /// This is equivalent to the height of the blockchain it's for. This is intended to be cheaper
-  /// than fetching the entire output distribution.
-  fn get_output_distribution_end_height(
-    &self,
-  ) -> impl Send + Future<Output = Result<usize, RpcError>>;
-
+pub trait DecoyRpc: Sync + ProvidesBlockchainMeta {
   /// Get the RingCT (zero-amount) output distribution.
   ///
   /// `range` is in terms of block numbers. The result may be smaller than the requested range if
@@ -161,16 +153,6 @@ pub trait DecoyRpc: Sync {
 }
 
 impl<R: MoneroDaemon + ProvidesTransactions + ProvidesBlockchainMeta> DecoyRpc for R {
-  fn get_output_distribution_end_height(
-    &self,
-  ) -> impl Send + Future<Output = Result<usize, RpcError>> {
-    async move {
-      self.get_latest_block_number().await?.checked_add(1).ok_or_else(|| {
-        RpcError::InvalidNode("output distribution end's wasn't representable".to_string())
-      })
-    }
-  }
-
   fn get_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,

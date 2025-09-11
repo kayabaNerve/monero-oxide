@@ -247,7 +247,9 @@ macro_rules! test {
 
           let miner_tx = get_miner_tx_output(&rpc, &view).await;
 
-          let rct_type = match rpc.get_hardfork_version().await.unwrap() {
+          let rct_type = match rpc.get_block_by_number(
+            rpc.get_latest_block_number().await.unwrap()
+          ).await.unwrap().header.hardfork_version {
             14 => RctType::ClsagBulletproof,
             15 | 16 => RctType::ClsagBulletproofPlus,
             _ => panic!("unrecognized hardfork version"),

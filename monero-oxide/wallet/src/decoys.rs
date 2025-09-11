@@ -33,7 +33,7 @@ async fn select_n(
   if height < DEFAULT_LOCK_WINDOW {
     Err(RpcError::InternalError("not enough blocks to select decoys".to_string()))?;
   }
-  if height > rpc.get_output_distribution_end_height().await? {
+  if Some(height) > rpc.get_latest_block_number().await?.checked_add(1) {
     Err(RpcError::InternalError(
       "decoys being requested from blocks this node doesn't have".to_string(),
     ))?;

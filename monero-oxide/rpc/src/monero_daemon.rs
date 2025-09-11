@@ -334,48 +334,6 @@ impl<D: MoneroDaemon> ProvidesBlockchainMeta for D {
       })
     }
   }
-
-  fn get_block_hash(
-    &self,
-    number: usize,
-  ) -> impl Send + Future<Output = Result<[u8; 32], RpcError>> {
-    async move {
-      #[derive(Debug, Deserialize)]
-      struct BlockHeaderResponse {
-        hash: String,
-      }
-      #[derive(Debug, Deserialize)]
-      struct BlockHeaderByHeightResponse {
-        block_header: BlockHeaderResponse,
-      }
-
-      let header: BlockHeaderByHeightResponse =
-        self.json_rpc_call("get_block_header_by_height", Some(json!({ "height": number }))).await?;
-      hash_hex(&header.block_header.hash)
-    }
-  }
-
-  fn get_hardfork_version(&self) -> impl Send + Future<Output = Result<u8, RpcError>> {
-    async move {
-      #[derive(Debug, Deserialize)]
-      struct HeaderResponse {
-        major_version: u8,
-      }
-
-      #[derive(Debug, Deserialize)]
-      struct LastHeaderResponse {
-        block_header: HeaderResponse,
-      }
-
-      Ok(
-        self
-          .json_rpc_call::<LastHeaderResponse>("get_last_block_header", None)
-          .await?
-          .block_header
-          .major_version,
-      )
-    }
-  }
 }
 
 impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
@@ -409,6 +367,26 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
 
       Block::read(&mut rpc_hex(&res.blob)?.as_slice())
         .map_err(|_| RpcError::InvalidNode("invalid block".to_string()))
+    }
+  }
+
+  fn get_block_hash(
+    &self,
+    number: usize,
+  ) -> impl Send + Future<Output = Result<[u8; 32], RpcError>> {
+    async move {
+      #[derive(Debug, Deserialize)]
+      struct BlockHeaderResponse {
+        hash: String,
+      }
+      #[derive(Debug, Deserialize)]
+      struct BlockHeaderByHeightResponse {
+        block_header: BlockHeaderResponse,
+      }
+
+      let header: BlockHeaderByHeightResponse =
+        self.json_rpc_call("get_block_header_by_height", Some(json!({ "height": number }))).await?;
+      hash_hex(&header.block_header.hash)
     }
   }
 }
