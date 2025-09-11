@@ -25,7 +25,7 @@ pub struct RingCtOutputInformation {
 }
 
 /// Provides unvalidated information about outputs.
-pub trait ProvidesUnvalidatedOutputs {
+pub trait ProvidesUnvalidatedOutputs: Sync {
   /// Get the indexes for this transaction's outputs on the blockchain.
   ///
   /// No validation is performed.
@@ -36,7 +36,8 @@ pub trait ProvidesUnvalidatedOutputs {
 
   /// Get the specified outputs from the RingCT (zero-amount) pool.
   ///
-  /// No validation is performed.
+  /// No validation of the outputs is performed other than confirming the correct amount is
+  /// returned.
   fn ringct_outputs(
     &self,
     indexes: &[u64],
@@ -44,7 +45,7 @@ pub trait ProvidesUnvalidatedOutputs {
 }
 
 /// Provides information about outputs.
-pub trait ProvidesOutputs {
+pub trait ProvidesOutputs: Sync {
   /// Get the indexes for this transaction's outputs on the blockchain.
   ///
   /// No validation is performed.
@@ -56,7 +57,8 @@ pub trait ProvidesOutputs {
 
   /// Get the specified outputs from the RingCT (zero-amount) pool.
   ///
-  /// No validation is performed.
+  /// No validation of the outputs is performed other than confirming the correct amount is
+  /// returned.
   fn ringct_outputs(
     &self,
     indexes: &[u64],
@@ -73,11 +75,23 @@ impl<P: ProvidesUnvalidatedOutputs> ProvidesOutputs for P {
 
   /// Get the specified outputs from the RingCT (zero-amount) pool.
   ///
-  /// No validation is performed.
+  /// No validation of the outputs is performed other than confirming the correct amount is
+  /// returned.
   fn ringct_outputs(
     &self,
     indexes: &[u64],
   ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, SourceError>> {
-    <P as ProvidesUnvalidatedOutputs>::ringct_outputs(self, indexes)
+    async move {
+      let outputs = <P as ProvidesUnvalidatedOutputs>::ringct_outputs(self, indexes).await?;
+      if outputs.len() != indexes.len() {
+        Err(SourceError::InternalError(format!(
+          "`{}` returned {} outputs, expected {}",
+          "ProvidesUnvalidatedOutputs::ringct_outputs",
+          outputs.len(),
+          indexes.len(),
+        )))?;
+      }
+      Ok(outputs)
+    }
   }
 }

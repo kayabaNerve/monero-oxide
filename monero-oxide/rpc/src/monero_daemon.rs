@@ -703,6 +703,12 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
           Err(SourceError::InvalidSource("bad response to get_outs".to_string()))?;
         }
 
+        if rpc_res.outs.len() != indexes.len() {
+          Err(SourceError::InvalidSource(
+            "get_outs response omitted requested outputs".to_string(),
+          ))?;
+        }
+
         res.extend(
           rpc_res
             .outs

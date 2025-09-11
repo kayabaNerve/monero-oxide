@@ -180,7 +180,7 @@ async fn select_n(
           (Some(output_being_spent.commitment().calculate()) !=
             output.map(|[_key, commitment]| commitment))
         {
-          Err(RpcError::InvalidNode(
+          Err(SourceError::InvalidSource(
             "node presented different view of output we're trying to spend".to_string(),
           ))?;
         }
@@ -222,15 +222,8 @@ async fn select_decoys<R: RngCore + CryptoRng>(
   // Select all decoys for this transaction, assuming we generate a sane transaction
   // We should almost never naturally generate an insane transaction, hence why this doesn't
   // bother with an overage
-  let decoys = select_n(
-    rng,
-    rpc,
-    block_number,
-    input,
-    ring_len,
-    fingerprintable_deterministic,
-  )
-  .await?;
+  let decoys =
+    select_n(rng, rpc, block_number, input, ring_len, fingerprintable_deterministic).await?;
 
   // Form the complete ring
   let mut ring = decoys;
