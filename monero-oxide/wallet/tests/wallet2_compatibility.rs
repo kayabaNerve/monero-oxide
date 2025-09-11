@@ -34,6 +34,7 @@ async fn make_integrated_address(rpc: &SimpleRequestRpc, payment_id: [u8; 8]) ->
     .json_rpc_call::<IntegratedAddressResponse>(
       "make_integrated_address",
       Some(json!({ "payment_id": hex::encode(payment_id) })),
+      None,
     )
     .await
     .unwrap();
@@ -56,12 +57,15 @@ async fn initialize_rpcs() -> (SimpleRequestRpc, SimpleRequestRpc, MoneroAddress
     .json_rpc_call(
       "create_wallet",
       Some(json!({ "filename": hex::encode(wallet_id), "language": "English" })),
+      None,
     )
     .await
     .unwrap();
 
-  let address: AddressResponse =
-    wallet_rpc.json_rpc_call("get_address", Some(json!({ "account_index": 0 }))).await.unwrap();
+  let address: AddressResponse = wallet_rpc
+    .json_rpc_call("get_address", Some(json!({ "account_index": 0 })), None)
+    .await
+    .unwrap();
 
   // Fund the new wallet
   let address = MoneroAddress::from_str(Network::Mainnet, &address.address).unwrap();
@@ -85,7 +89,7 @@ async fn from_wallet_rpc_to_self(spec: AddressSpec) {
   };
 
   // refresh & make a tx
-  let _: EmptyResponse = wallet_rpc.json_rpc_call("refresh", None).await.unwrap();
+  let _: EmptyResponse = wallet_rpc.json_rpc_call("refresh", None, None).await.unwrap();
 
   #[derive(Debug, Deserialize)]
   struct TransferResponse {
@@ -97,6 +101,7 @@ async fn from_wallet_rpc_to_self(spec: AddressSpec) {
       Some(json!({
         "destinations": [{"address": addr.to_string(), "amount": 1_000_000_000_000u64 }],
       })),
+      None,
     )
     .await
     .unwrap();
@@ -185,9 +190,13 @@ test!(
     },
     |_, _, tx: Transaction, _, data: SimpleRequestRpc| async move {
       // confirm receipt
-      let _: EmptyResponse = data.json_rpc_call("refresh", None).await.unwrap();
+      let _: EmptyResponse = data.json_rpc_call("refresh", None, None).await.unwrap();
       let transfer: TransfersResponse = data
-        .json_rpc_call("get_transfer_by_txid", Some(json!({ "txid": hex::encode(tx.hash()) })))
+        .json_rpc_call(
+          "get_transfer_by_txid",
+          Some(json!({ "txid": hex::encode(tx.hash()) })),
+          None,
+        )
         .await
         .unwrap();
       assert_eq!(transfer.transfer.subaddr_index, Index { major: 0, minor: 0 });
@@ -210,7 +219,8 @@ test!(
         address: String,
         account_index: u32,
       }
-      let addr: AccountResponse = wallet_rpc.json_rpc_call("create_account", None).await.unwrap();
+      let addr: AccountResponse =
+        wallet_rpc.json_rpc_call("create_account", None, None).await.unwrap();
       assert!(addr.account_index != 0);
 
       builder
@@ -219,12 +229,13 @@ test!(
     },
     |_, _, tx: Transaction, _, data: (SimpleRequestRpc, u32)| async move {
       // confirm receipt
-      let _: EmptyResponse = data.0.json_rpc_call("refresh", None).await.unwrap();
+      let _: EmptyResponse = data.0.json_rpc_call("refresh", None, None).await.unwrap();
       let transfer: TransfersResponse = data
         .0
         .json_rpc_call(
           "get_transfer_by_txid",
           Some(json!({ "txid": hex::encode(tx.hash()), "account_index": data.1 })),
+          None,
         )
         .await
         .unwrap();
@@ -252,7 +263,7 @@ test!(
         address_index: u32,
       }
       let addrs: AddressesResponse = wallet_rpc
-        .json_rpc_call("create_address", Some(json!({ "account_index": 0, "count": 2 })))
+        .json_rpc_call("create_address", Some(json!({ "account_index": 0, "count": 2 })), None)
         .await
         .unwrap();
       assert!(addrs.address_index != 0);
@@ -266,12 +277,13 @@ test!(
     },
     |_, _, tx: Transaction, _, data: (SimpleRequestRpc, SimpleRequestRpc, u32)| async move {
       // confirm receipt
-      let _: EmptyResponse = data.0.json_rpc_call("refresh", None).await.unwrap();
+      let _: EmptyResponse = data.0.json_rpc_call("refresh", None, None).await.unwrap();
       let transfer: TransfersResponse = data
         .0
         .json_rpc_call(
           "get_transfer_by_txid",
           Some(json!({ "txid": hex::encode(tx.hash()), "account_index": 0 })),
+          None,
         )
         .await
         .unwrap();
@@ -310,10 +322,14 @@ test!(
     },
     |_, _, tx: Transaction, _, data: (SimpleRequestRpc, [u8; 8])| async move {
       // confirm receipt
-      let _: EmptyResponse = data.0.json_rpc_call("refresh", None).await.unwrap();
+      let _: EmptyResponse = data.0.json_rpc_call("refresh", None, None).await.unwrap();
       let transfer: TransfersResponse = data
         .0
-        .json_rpc_call("get_transfer_by_txid", Some(json!({ "txid": hex::encode(tx.hash()) })))
+        .json_rpc_call(
+          "get_transfer_by_txid",
+          Some(json!({ "txid": hex::encode(tx.hash()) })),
+          None,
+        )
         .await
         .unwrap();
       assert_eq!(transfer.transfer.subaddr_index, Index { major: 0, minor: 0 });
@@ -343,9 +359,13 @@ test!(
     },
     |_, _, tx: Transaction, _, data: SimpleRequestRpc| async move {
       // confirm receipt
-      let _: EmptyResponse = data.json_rpc_call("refresh", None).await.unwrap();
+      let _: EmptyResponse = data.json_rpc_call("refresh", None, None).await.unwrap();
       let transfer: TransfersResponse = data
-        .json_rpc_call("get_transfer_by_txid", Some(json!({ "txid": hex::encode(tx.hash()) })))
+        .json_rpc_call(
+          "get_transfer_by_txid",
+          Some(json!({ "txid": hex::encode(tx.hash()) })),
+          None,
+        )
         .await
         .unwrap();
       assert_eq!(transfer.transfer.subaddr_index, Index { major: 0, minor: 0 });

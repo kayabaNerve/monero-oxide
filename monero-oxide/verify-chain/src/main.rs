@@ -38,7 +38,7 @@ async fn check_block(rpc: impl MoneroDaemon, block_i: usize) {
     blob: String,
   }
   let res: BlockResponse = loop {
-    match rpc.json_rpc_call("get_block", Some(json!({ "hash": hex::encode(hash) }))).await {
+    match rpc.json_rpc_call("get_block", Some(json!({ "hash": hex::encode(hash) })), None).await {
       Ok(res) => break res,
       Err(SourceError::SourceError(e)) => {
         println!("get_block SourceError: {e}");
@@ -156,6 +156,7 @@ async fn check_block(rpc: impl MoneroDaemon, block_i: usize) {
                             "index": o
                           })).collect::<Vec<_>>()
                         })),
+                        None,
                       )
                       .await
                     {

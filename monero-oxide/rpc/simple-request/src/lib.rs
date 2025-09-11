@@ -128,7 +128,12 @@ impl SimpleRequestRpc {
 }
 
 impl SimpleRequestRpc {
-  async fn inner_post(&self, route: &str, body: Vec<u8>) -> Result<Vec<u8>, SourceError> {
+  async fn inner_post(
+    &self,
+    route: &str,
+    body: Vec<u8>,
+    response_size_limit: Option<usize>,
+  ) -> Result<Vec<u8>, SourceError> {
     let request_fn = |uri| {
       Request::post(uri)
         .body(body.clone().into())
@@ -209,6 +214,9 @@ impl SimpleRequestRpc {
             );
           }
 
+          let mut request = simple_request::Request::from(request);
+          request.set_response_size_limit(response_size_limit);
+
           let response = connection_lock
             .1
             .request(request)
@@ -272,9 +280,10 @@ impl MoneroDaemon for SimpleRequestRpc {
     &self,
     route: &str,
     body: Vec<u8>,
+    response_size_limit: Option<usize>,
   ) -> impl Send + Future<Output = Result<Vec<u8>, SourceError>> {
     async move {
-      tokio::time::timeout(self.request_timeout, self.inner_post(route, body))
+      tokio::time::timeout(self.request_timeout, self.inner_post(route, body, response_size_limit))
         .await
         .map_err(|e| SourceError::SourceError(format!("{e:?}")))?
     }

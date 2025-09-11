@@ -25,6 +25,10 @@ use monero_address::Address;
 
 use crate::*;
 
+const BASE_RESPONSE_SIZE: usize = u16::MAX as usize;
+const BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE: usize = 100;
+const BYTE_FACTOR_IN_BIN_RESPONSE_SIZE: usize = 4;
+
 fn rpc_hex(value: &str) -> Result<Vec<u8>, SourceError> {
   hex::decode(value).map_err(|_| SourceError::InvalidSource("expected hex wasn't hex".to_string()))
 }
@@ -66,6 +70,7 @@ pub trait MoneroDaemon: Sync + Clone {
     &self,
     route: &str,
     body: Vec<u8>,
+    response_size_limit: Option<usize>,
   ) -> impl Send + Future<Output = Result<Vec<u8>, SourceError>>;
 
   /// Perform a RPC call to the specified route with the provided parameters.
@@ -76,6 +81,7 @@ pub trait MoneroDaemon: Sync + Clone {
     &self,
     route: &str,
     params: Option<Params>,
+    response_size_limit: Option<usize>,
   ) -> impl Send + Future<Output = Result<Response, SourceError>> {
     async move {
       let res = self
@@ -92,6 +98,7 @@ pub trait MoneroDaemon: Sync + Clone {
           } else {
             vec![]
           },
+          response_size_limit,
         )
         .await?;
       let res_str = std_shims::str::from_utf8(&res)
@@ -106,6 +113,7 @@ pub trait MoneroDaemon: Sync + Clone {
     &self,
     method: &str,
     params: Option<Value>,
+    response_size_limit: Option<usize>,
   ) -> impl Send + Future<Output = Result<Response, SourceError>> {
     async move {
       let mut req = json!({ "method": method });
@@ -115,7 +123,12 @@ pub trait MoneroDaemon: Sync + Clone {
           .expect("accessing object as object failed?")
           .insert("params".into(), params);
       }
-      Ok(self.rpc_call::<_, JsonRpcResponse<Response>>("json_rpc", Some(req)).await?.result)
+      Ok(
+        self
+          .rpc_call::<_, JsonRpcResponse<Response>>("json_rpc", Some(req), response_size_limit)
+          .await?
+          .result,
+      )
     }
   }
 
@@ -124,8 +137,9 @@ pub trait MoneroDaemon: Sync + Clone {
     &self,
     route: &str,
     params: Vec<u8>,
+    response_size_limit: Option<usize>,
   ) -> impl Send + Future<Output = Result<Vec<u8>, SourceError>> {
-    async move { self.post(route, params).await }
+    async move { self.post(route, params, response_size_limit).await }
   }
 
   /// Generate blocks, with the specified address receiving the block reward.
@@ -148,8 +162,11 @@ pub trait MoneroDaemon: Sync + Clone {
           "generateblocks",
           Some(json!({
             "wallet_address": address.to_string(),
-            "amount_of_blocks": block_count
+            "amount_of_blocks": block_count,
           })),
+          Some(BASE_RESPONSE_SIZE.wrapping_add(
+            BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(block_count.wrapping_mul(32)),
+          )),
         )
         .await?;
 
@@ -169,7 +186,10 @@ impl<D: MoneroDaemon> ProvidesBlockchainMeta for D {
       struct HeightResponse {
         height: usize,
       }
-      let res = self.rpc_call::<Option<()>, HeightResponse>("get_height", None).await?.height;
+      let res = self
+        .rpc_call::<Option<()>, HeightResponse>("get_height", None, Some(BASE_RESPONSE_SIZE))
+        .await?
+        .height;
       res.checked_sub(1).ok_or_else(|| {
         SourceError::InvalidSource(
           "node claimed the blockchain didn't even have the genesis block".to_string(),
@@ -219,6 +239,7 @@ mod provides_transaction {
               Some(json!({
                 "txs_hashes": hashes_hex.drain(.. this_count).collect::<Vec<_>>(),
               })),
+              Some(BASE_RESPONSE_SIZE.wrapping_add(BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(this_count.wrapping_mul(300_000)))),
             )
             .await?;
 
@@ -286,6 +307,7 @@ mod provides_transaction {
                 "txs_hashes": hashes_hex.drain(.. this_count).collect::<Vec<_>>(),
                 "prune": true,
               })),
+              Some(BASE_RESPONSE_SIZE.wrapping_add(BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(this_count.wrapping_mul(300_000)))),
             )
             .await?;
 
@@ -349,6 +371,7 @@ impl<D: MoneroDaemon> PublishTransaction for D {
         .rpc_call(
           "send_raw_transaction",
           Some(json!({ "tx_as_hex": hex::encode(tx.serialize()), "do_sanity_checks": false })),
+          Some(BASE_RESPONSE_SIZE),
         )
         .await?;
 
@@ -372,8 +395,16 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
         blob: String,
       }
 
-      let res: BlockResponse =
-        self.json_rpc_call("get_block", Some(json!({ "height": number }))).await?;
+      let res: BlockResponse = self
+        .json_rpc_call(
+          "get_block",
+          Some(json!({ "height": number })),
+          Some(
+            BASE_RESPONSE_SIZE
+              .wrapping_add(BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(1_000_000)),
+          ),
+        )
+        .await?;
 
       Block::read(&mut rpc_hex(&res.blob)?.as_slice())
         .map_err(|_| SourceError::InvalidSource("invalid block".to_string()))
@@ -387,8 +418,16 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
         blob: String,
       }
 
-      let res: BlockResponse =
-        self.json_rpc_call("get_block", Some(json!({ "hash": hex::encode(hash) }))).await?;
+      let res: BlockResponse = self
+        .json_rpc_call(
+          "get_block",
+          Some(json!({ "hash": hex::encode(hash) })),
+          Some(
+            BASE_RESPONSE_SIZE
+              .wrapping_add(BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(1_000_000)),
+          ),
+        )
+        .await?;
 
       Block::read(&mut rpc_hex(&res.blob)?.as_slice())
         .map_err(|_| SourceError::InvalidSource("invalid block".to_string()))
@@ -409,8 +448,15 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
         block_header: BlockHeaderResponse,
       }
 
-      let header: BlockHeaderByHeightResponse =
-        self.json_rpc_call("get_block_header_by_height", Some(json!({ "height": number }))).await?;
+      let header: BlockHeaderByHeightResponse = self
+        .json_rpc_call(
+          "get_block_header_by_height",
+          Some(json!({ "height": number })),
+          Some(
+            BASE_RESPONSE_SIZE.wrapping_add(BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(256)),
+          ),
+        )
+        .await?;
       hash_hex(&header.block_header.hash)
     }
   }
@@ -461,7 +507,14 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
       // The "string"
       request.extend(hash);
 
-      let indexes_buf = self.bin_call("get_o_indexes.bin", request).await?;
+      // 8 bytes per index, 1024 indexes per transaction
+      let indexes_buf = self
+        .bin_call(
+          "get_o_indexes.bin",
+          request,
+          Some(BASE_RESPONSE_SIZE.wrapping_add(BYTE_FACTOR_IN_BIN_RESPONSE_SIZE * 1024 * 8)),
+        )
+        .await?;
       let mut indexes = indexes_buf.as_slice();
 
       (|| {
@@ -640,6 +693,9 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
                 "index": o
               })).collect::<Vec<_>>()
             })),
+            Some(BASE_RESPONSE_SIZE.wrapping_add(
+              BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(indexes.len().wrapping_mul(128)),
+            )),
           )
           .await?;
 
@@ -722,6 +778,9 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
             "from_height": from,
             "to_height": if zero_zero_case { 1 } else { to },
           })),
+          Some(BASE_RESPONSE_SIZE.wrapping_add(
+            BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(to.max(2).wrapping_mul(16)),
+          )),
         )
         .await?;
 
@@ -865,6 +924,7 @@ mod provides_fee_rates {
           .json_rpc_call(
             "get_fee_estimate",
             Some(json!({ "grace_blocks": GRACE_BLOCKS_FOR_FEE_ESTIMATE })),
+            Some(BASE_RESPONSE_SIZE),
           )
           .await?;
 
