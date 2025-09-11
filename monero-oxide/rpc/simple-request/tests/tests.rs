@@ -15,7 +15,7 @@ const ADDRESS: &str =
 
 #[tokio::test]
 async fn test_rpc() {
-  use monero_rpc::Rpc;
+  use monero_rpc::prelude::*;
 
   let guard = SEQUENTIAL.lock().await;
 

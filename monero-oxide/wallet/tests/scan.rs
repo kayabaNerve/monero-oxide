@@ -1,6 +1,6 @@
 use monero_simple_request_rpc::SimpleRequestRpc;
 use monero_wallet::{
-  transaction::Transaction, rpc::Rpc, address::SubaddressIndex, extra::PaymentId, GuaranteedScanner,
+  transaction::Transaction, address::SubaddressIndex, extra::PaymentId, GuaranteedScanner,
 };
 
 mod runner;

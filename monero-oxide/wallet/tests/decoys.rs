@@ -1,10 +1,5 @@
 use monero_simple_request_rpc::SimpleRequestRpc;
-use monero_wallet::{
-  DEFAULT_LOCK_WINDOW,
-  transaction::Transaction,
-  rpc::{Rpc, DecoyRpc},
-  WalletOutput,
-};
+use monero_wallet::{DEFAULT_LOCK_WINDOW, transaction::Transaction, rpc::DecoyRpc, WalletOutput};
 
 mod runner;
 

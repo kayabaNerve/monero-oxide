@@ -14,7 +14,7 @@ use simple_request::{
   Response, Client,
 };
 
-use monero_rpc::{RpcError, Rpc};
+use monero_rpc::{RpcError, MoneroDaemon};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -263,7 +263,7 @@ impl SimpleRequestRpc {
   }
 }
 
-impl Rpc for SimpleRequestRpc {
+impl MoneroDaemon for SimpleRequestRpc {
   fn post(
     &self,
     route: &str,

@@ -1,6 +1,6 @@
 use monero_oxide::transaction::Transaction;
 use monero_simple_request_rpc::SimpleRequestRpc;
-use monero_wallet::{rpc::Rpc, extra::MAX_ARBITRARY_DATA_SIZE, send::SendError};
+use monero_wallet::{extra::MAX_ARBITRARY_DATA_SIZE, send::SendError};
 
 mod runner;
 

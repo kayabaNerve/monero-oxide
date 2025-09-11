@@ -13,7 +13,7 @@ use monero_wallet::{
   ringct::RctType,
   transaction::Transaction,
   block::Block,
-  rpc::{Rpc, FeeRate},
+  rpc::prelude::*,
   address::{Network, AddressType, MoneroAddress},
   DEFAULT_LOCK_WINDOW, ViewPair, GuaranteedViewPair, WalletOutput, Scanner,
 };
@@ -202,7 +202,7 @@ macro_rules! test {
 
         use monero_wallet::{
           ringct::RctType,
-          rpc::FeePriority,
+          rpc::prelude::*,
           address::Network,
           ViewPair, Scanner, OutputWithDecoys,
           send::{Change, SignableTransaction, Eventuality},

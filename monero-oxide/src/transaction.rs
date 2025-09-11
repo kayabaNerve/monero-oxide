@@ -531,7 +531,7 @@ impl<P: PotentiallyPruned> Transaction<P> {
 
   // The hash of the transaction.
   #[allow(clippy::needless_pass_by_value)]
-  fn hash_with_prunable_hash(&self, prunable: PrunableHash<'_>) -> [u8; 32] {
+  fn hash_with_prunable_hash_internal(&self, prunable: PrunableHash<'_>) -> [u8; 32] {
     match self {
       Transaction::V1 { prefix, .. } => {
         let mut buf = Vec::with_capacity(512);
@@ -583,10 +583,10 @@ impl Transaction<NotPruned> {
   pub fn hash(&self) -> [u8; 32] {
     match self {
       Transaction::V1 { signatures, .. } => {
-        self.hash_with_prunable_hash(PrunableHash::V1(signatures))
+        self.hash_with_prunable_hash_internal(PrunableHash::V1(signatures))
       }
       Transaction::V2 { proofs, .. } => {
-        self.hash_with_prunable_hash(PrunableHash::V2(if let Some(proofs) = proofs {
+        self.hash_with_prunable_hash_internal(PrunableHash::V2(if let Some(proofs) = proofs {
           let mut buf = Vec::with_capacity(1024);
           proofs
             .prunable
@@ -609,9 +609,9 @@ impl Transaction<NotPruned> {
         if (prefix.inputs.len() == 1) && matches!(prefix.inputs[0], Input::Gen(_)) {
           None?;
         }
-        self.hash_with_prunable_hash(PrunableHash::V1(&[]))
+        self.hash_with_prunable_hash_internal(PrunableHash::V1(&[]))
       }
-      Transaction::V2 { proofs, .. } => self.hash_with_prunable_hash({
+      Transaction::V2 { proofs, .. } => self.hash_with_prunable_hash_internal({
         let Some(proofs) = proofs else { None? };
         let mut buf = Vec::with_capacity(1024);
         proofs
@@ -661,6 +661,20 @@ impl Transaction<NotPruned> {
           },
         )
         .0
+    }
+  }
+}
+
+impl Transaction<Pruned> {
+  /// Return the hash of the pruned transaction.
+  ///
+  /// This requires the transaction be version 2 and the hash of the pruned data be provided.
+  pub fn hash_with_prunable_hash(&self, prunable_hash: [u8; 32]) -> Option<[u8; 32]> {
+    match self {
+      Transaction::V1 { .. } => None?,
+      Transaction::V2 { .. } => {
+        Some(self.hash_with_prunable_hash_internal(PrunableHash::V2(prunable_hash)))
+      }
     }
   }
 }

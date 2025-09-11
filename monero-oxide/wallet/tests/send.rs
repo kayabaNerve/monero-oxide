@@ -4,12 +4,8 @@ use rand_core::OsRng;
 
 use monero_simple_request_rpc::SimpleRequestRpc;
 use monero_wallet::{
-  ringct::RctType,
-  transaction::Transaction,
-  rpc::{ScannableBlock, Rpc},
-  address::SubaddressIndex,
-  extra::Extra,
-  WalletOutput, OutputWithDecoys,
+  ringct::RctType, transaction::Transaction, rpc::prelude::*, address::SubaddressIndex,
+  extra::Extra, WalletOutput, OutputWithDecoys,
 };
 
 mod runner;

@@ -8,13 +8,15 @@ use core::{
   fmt::Debug,
   ops::{Bound, RangeBounds},
 };
-use std_shims::{
-  alloc::format,
-  vec,
+
+extern crate alloc;
+use alloc::{
+  format, vec,
   vec::Vec,
-  io,
   string::{String, ToString},
 };
+
+use std_shims::io;
 
 use zeroize::Zeroize;
 
@@ -30,6 +32,9 @@ use monero_oxide::{
   DEFAULT_LOCK_WINDOW,
 };
 use monero_address::Address;
+
+mod provides_transactions;
+pub use provides_transactions::*;
 
 // Number of blocks the fee estimate will be valid for
 // https://github.com/monero-project/monero/blob/94e67bf96bbc010241f29ada6abc89f49a81759c
@@ -202,6 +207,7 @@ struct TransactionResponse {
   tx_hash: String,
   as_hex: String,
   pruned_as_hex: String,
+  prunable_hash: String,
 }
 #[derive(Debug, Deserialize)]
 struct TransactionsResponse {
@@ -256,7 +262,7 @@ fn rpc_point(point: &str) -> Result<EdwardsPoint, RpcError> {
 /// While no implementors are directly provided, [monero-simple-request-rpc](
 ///   https://github.com/monero-oxide/monero-oxide/tree/main/monero-oxide/rpc/simple-request
 /// ) is recommended.
-pub trait Rpc: Sync + Clone {
+pub trait MoneroDaemon: Sync + Clone {
   /// Perform a POST request to the specified route with the specified body.
   ///
   /// The implementor is left to handle anything such as authentication.
@@ -325,7 +331,10 @@ pub trait Rpc: Sync + Clone {
   ) -> impl Send + Future<Output = Result<Vec<u8>, RpcError>> {
     async move { self.post(route, params).await }
   }
+}
 
+/// TODO: docstring
+pub trait Rpc: MoneroDaemon + ProvidesTransactions {
   /// Get the active blockchain protocol version.
   ///
   /// This is specifically the major version within the most recent block header.
@@ -367,159 +376,6 @@ pub trait Rpc: Sync + Clone {
       }
       Ok(res)
     }
-  }
-
-  /// Get the specified transactions.
-  ///
-  /// The received transactions will be hashed in order to verify the correct transactions were
-  /// returned.
-  fn get_transactions(
-    &self,
-    hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<Transaction>, RpcError>> {
-    async move {
-      if hashes.is_empty() {
-        return Ok(vec![]);
-      }
-
-      let mut hashes_hex = hashes.iter().map(hex::encode).collect::<Vec<_>>();
-      let mut all_txs = Vec::with_capacity(hashes.len());
-      while !hashes_hex.is_empty() {
-        let this_count = TXS_PER_REQUEST.min(hashes_hex.len());
-
-        let txs: TransactionsResponse = self
-          .rpc_call(
-            "get_transactions",
-            Some(json!({
-              "txs_hashes": hashes_hex.drain(.. this_count).collect::<Vec<_>>(),
-            })),
-          )
-          .await?;
-
-        if !txs.missed_tx.is_empty() {
-          Err(RpcError::TransactionsNotFound(
-            txs.missed_tx.iter().map(|hash| hash_hex(hash)).collect::<Result<_, _>>()?,
-          ))?;
-        }
-        if txs.txs.len() != this_count {
-          Err(RpcError::InvalidNode(
-            "not missing any transactions yet didn't return all transactions".to_string(),
-          ))?;
-        }
-
-        all_txs.extend(txs.txs);
-      }
-
-      all_txs
-        .iter()
-        .enumerate()
-        .map(|(i, res)| {
-          // https://github.com/monero-project/monero/issues/8311
-          let buf = rpc_hex(if !res.as_hex.is_empty() { &res.as_hex } else { &res.pruned_as_hex })?;
-          let mut buf = buf.as_slice();
-          let tx = Transaction::read(&mut buf).map_err(|_| match hash_hex(&res.tx_hash) {
-            Ok(hash) => RpcError::InvalidTransaction(hash),
-            Err(err) => err,
-          })?;
-          if !buf.is_empty() {
-            Err(RpcError::InvalidNode("transaction had extra bytes after it".to_string()))?;
-          }
-
-          // We check this to ensure we didn't read a pruned transaction when we meant to read an
-          // actual transaction. That shouldn't be possible, as they have different serializations,
-          // yet it helps to ensure that if we applied the above exception (using the pruned data),
-          // it was for the right reason
-          if res.as_hex.is_empty() {
-            match tx.prefix().inputs.first() {
-              Some(Input::Gen { .. }) => (),
-              _ => Err(RpcError::PrunedTransaction)?,
-            }
-          }
-
-          // This does run a few keccak256 hashes, which is pointless if the node is trusted
-          // In exchange, this provides resilience against invalid/malicious nodes
-          if tx.hash() != hashes[i] {
-            Err(RpcError::InvalidNode(
-              "replied with transaction wasn't the requested transaction".to_string(),
-            ))?;
-          }
-
-          Ok(tx)
-        })
-        .collect()
-    }
-  }
-
-  /// Get the specified transactions in their pruned format.
-  fn get_pruned_transactions(
-    &self,
-    hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<Transaction<Pruned>>, RpcError>> {
-    async move {
-      if hashes.is_empty() {
-        return Ok(vec![]);
-      }
-
-      let mut hashes_hex = hashes.iter().map(hex::encode).collect::<Vec<_>>();
-      let mut all_txs = Vec::with_capacity(hashes.len());
-      while !hashes_hex.is_empty() {
-        let this_count = TXS_PER_REQUEST.min(hashes_hex.len());
-
-        let txs: TransactionsResponse = self
-          .rpc_call(
-            "get_transactions",
-            Some(json!({
-              "txs_hashes": hashes_hex.drain(.. this_count).collect::<Vec<_>>(),
-              "prune": true,
-            })),
-          )
-          .await?;
-
-        if !txs.missed_tx.is_empty() {
-          Err(RpcError::TransactionsNotFound(
-            txs.missed_tx.iter().map(|hash| hash_hex(hash)).collect::<Result<_, _>>()?,
-          ))?;
-        }
-
-        all_txs.extend(txs.txs);
-      }
-
-      all_txs
-        .iter()
-        .map(|res| {
-          let buf = rpc_hex(&res.pruned_as_hex)?;
-          let mut buf = buf.as_slice();
-          let tx =
-            Transaction::<Pruned>::read(&mut buf).map_err(|_| match hash_hex(&res.tx_hash) {
-              Ok(hash) => RpcError::InvalidTransaction(hash),
-              Err(err) => err,
-            })?;
-          if !buf.is_empty() {
-            Err(RpcError::InvalidNode("pruned transaction had extra bytes after it".to_string()))?;
-          }
-          Ok(tx)
-        })
-        .collect()
-    }
-  }
-
-  /// Get the specified transaction.
-  ///
-  /// The received transaction will be hashed in order to verify the correct transaction was
-  /// returned.
-  fn get_transaction(
-    &self,
-    tx: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Transaction, RpcError>> {
-    async move { self.get_transactions(&[tx]).await.map(|mut txs| txs.swap_remove(0)) }
-  }
-
-  /// Get the specified transaction in its pruned format.
-  fn get_pruned_transaction(
-    &self,
-    tx: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Transaction<Pruned>, RpcError>> {
-    async move { self.get_pruned_transactions(&[tx]).await.map(|mut txs| txs.swap_remove(0)) }
   }
 
   /// Get the hash of a block from the node.
@@ -1311,4 +1167,130 @@ impl<R: Rpc> DecoyRpc for R {
         .collect()
     }
   }
+}
+
+impl<D: MoneroDaemon> ProvidesUnvalidatedTransactions for D {
+  fn get_transactions(
+    &self,
+    hashes: &[[u8; 32]],
+  ) -> impl Send + Future<Output = Result<Vec<Transaction>, RpcError>> {
+    async move {
+      let mut hashes_hex = hashes.iter().map(hex::encode).collect::<Vec<_>>();
+      let mut all_txs = Vec::with_capacity(hashes.len());
+      while !hashes_hex.is_empty() {
+        let this_count = TXS_PER_REQUEST.min(hashes_hex.len());
+
+        let txs: TransactionsResponse = self
+          .rpc_call(
+            "get_transactions",
+            Some(json!({
+              "txs_hashes": hashes_hex.drain(.. this_count).collect::<Vec<_>>(),
+            })),
+          )
+          .await?;
+
+        if !txs.missed_tx.is_empty() {
+          Err(RpcError::TransactionsNotFound(
+            txs.missed_tx.iter().map(|hash| hash_hex(hash)).collect::<Result<_, _>>()?,
+          ))?;
+        }
+        if txs.txs.len() != this_count {
+          Err(RpcError::InvalidNode(
+            "not missing any transactions yet didn't return all transactions".to_string(),
+          ))?;
+        }
+
+        all_txs.extend(txs.txs);
+      }
+
+      all_txs
+        .iter()
+        .map(|res| {
+          // https://github.com/monero-project/monero/issues/8311
+          let buf = rpc_hex(if !res.as_hex.is_empty() { &res.as_hex } else { &res.pruned_as_hex })?;
+          let mut buf = buf.as_slice();
+          let tx = Transaction::read(&mut buf).map_err(|_| match hash_hex(&res.tx_hash) {
+            Ok(hash) => RpcError::InvalidTransaction(hash),
+            Err(err) => err,
+          })?;
+          if !buf.is_empty() {
+            Err(RpcError::InvalidNode("transaction had extra bytes after it".to_string()))?;
+          }
+
+          // We check this to ensure we didn't read a pruned transaction when we meant to read an
+          // actual transaction. That shouldn't be possible, as they have different serializations,
+          // yet it helps to ensure that if we applied the above exception (using the pruned data),
+          // it was for the right reason
+          if res.as_hex.is_empty() {
+            match tx.prefix().inputs.first() {
+              Some(Input::Gen { .. }) => (),
+              _ => Err(RpcError::PrunedTransaction)?,
+            }
+          }
+
+          Ok(tx)
+        })
+        .collect()
+    }
+  }
+
+  fn get_pruned_transactions(
+    &self,
+    hashes: &[[u8; 32]],
+  ) -> impl Send + Future<Output = Result<Vec<PrunedTransactionWithPrunableHash>, RpcError>> {
+    async move {
+      let mut hashes_hex = hashes.iter().map(hex::encode).collect::<Vec<_>>();
+      let mut all_txs = Vec::with_capacity(hashes.len());
+      while !hashes_hex.is_empty() {
+        let this_count = TXS_PER_REQUEST.min(hashes_hex.len());
+
+        let txs: TransactionsResponse = self
+          .rpc_call(
+            "get_transactions",
+            Some(json!({
+              "txs_hashes": hashes_hex.drain(.. this_count).collect::<Vec<_>>(),
+              "prune": true,
+            })),
+          )
+          .await?;
+
+        if !txs.missed_tx.is_empty() {
+          Err(RpcError::TransactionsNotFound(
+            txs.missed_tx.iter().map(|hash| hash_hex(hash)).collect::<Result<_, _>>()?,
+          ))?;
+        }
+
+        all_txs.extend(txs.txs);
+      }
+
+      all_txs
+        .iter()
+        .map(|res| {
+          let buf = rpc_hex(&res.pruned_as_hex)?;
+          let mut buf = buf.as_slice();
+          let tx =
+            Transaction::<Pruned>::read(&mut buf).map_err(|_| match hash_hex(&res.tx_hash) {
+              Ok(hash) => RpcError::InvalidTransaction(hash),
+              Err(err) => err,
+            })?;
+          if !buf.is_empty() {
+            Err(RpcError::InvalidNode("pruned transaction had extra bytes after it".to_string()))?;
+          }
+          let prunable_hash = matches!(tx, Transaction::V2 { .. })
+            .then(|| hash_hex(&res.prunable_hash))
+            .transpose()?;
+          Ok(PrunedTransactionWithPrunableHash::new(tx, prunable_hash).unwrap())
+        })
+        .collect()
+    }
+  }
+}
+
+impl<D: MoneroDaemon> Rpc for D {}
+
+/// A prelude of recommend imports to glob import.
+pub mod prelude {
+  pub use crate::{
+    FeePriority, FeeRate, ScannableBlock, RpcError, MoneroDaemon, ProvidesTransactions, Rpc,
+  };
 }
