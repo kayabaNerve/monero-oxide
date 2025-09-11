@@ -1,5 +1,5 @@
 use core::future::Future;
-use alloc::vec::Vec;
+use alloc::{format, vec::Vec};
 
 use monero_oxide::transaction::{Pruned, Transaction};
 

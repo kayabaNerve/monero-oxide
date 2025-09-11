@@ -1,5 +1,5 @@
 use core::{ops::RangeInclusive, future::Future};
-use alloc::{vec::Vec, string::ToString};
+use alloc::{format, vec::Vec, string::ToString};
 
 use monero_oxide::block::Block;
 
@@ -12,7 +12,8 @@ use crate::{RpcError, ProvidesBlockchainMeta};
 pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
   /// Get a contiguous range of blocks.
   ///
-  /// No validation is applied to the received blocks other than that they deserialize.
+  /// No validation is applied to the received blocks other than that they deserialize and have the
+  /// expected length.
   // This accepts a `RangeInclusive`, not a `impl RangeBounds`, to ensure the range is finite
   fn get_contiguous_blocks(
     &self,
@@ -31,7 +32,8 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
 
   /// Get a list of blocks by their hashes.
   ///
-  /// No validation is applied to the received blocks other than that they deserialize.
+  /// No validation is applied to the received blocks other than that they deserialize and have the
+  /// expected length.
   fn get_blocks(
     &self,
     hashes: &[[u8; 32]],
@@ -117,7 +119,7 @@ pub trait ProvidesBlockchain: ProvidesBlockchainMeta {
   /// The block will be validated to be the requested block with a well-formed number.
   fn get_block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, RpcError>>;
 
-  /// Get a block by its index on the blockchain (number).
+  /// Get a block by its number.
   ///
   /// The number of a block is its index on the blockchain, so the genesis block would have
   /// `number = 0`.
@@ -127,6 +129,88 @@ pub trait ProvidesBlockchain: ProvidesBlockchainMeta {
     &self,
     number: usize,
   ) -> impl Send + Future<Output = Result<Block, RpcError>>;
+}
+
+pub(crate) fn sanity_check_contiguous_blocks<'a>(
+  range: RangeInclusive<usize>,
+  blocks: impl Iterator<Item = &'a Block>,
+) -> Result<(), RpcError> {
+  let mut parent = None;
+  for (number, block) in range.zip(blocks) {
+    match block.number() {
+      Some(actual_number) => {
+        if actual_number != number {
+          Err(RpcError::InvalidNode(format!(
+            "requested block #{number}, received #{actual_number}"
+          )))?;
+        }
+      }
+      None => Err(RpcError::InvalidNode(format!(
+        "source returned a block with an invalid miner transaction for #{number}",
+      )))?,
+    };
+
+    let block_hash = block.hash();
+    if let Some(parent) = parent.or((number == 0).then_some([0; 32])) {
+      if parent != block.header.previous {
+        Err(RpcError::InvalidNode(
+          "
+            source returned a block which doesn't build on the prior block \
+            when requesting a contiguous series
+          "
+          .to_string(),
+        ))?;
+      }
+    }
+    parent = Some(block_hash);
+  }
+  Ok(())
+}
+
+pub(crate) fn sanity_check_block_by_hash(hash: &[u8; 32], block: &Block) -> Result<(), RpcError> {
+  if block.number().is_none() {
+    Err(RpcError::InvalidNode(format!(
+      "source returned a block with an invalid miner transaction for {}",
+      hex::encode(hash),
+    )))?;
+  }
+
+  let actual_hash = block.hash();
+  if &actual_hash != hash {
+    Err(RpcError::InvalidNode(format!(
+      "requested block {}, received {}",
+      hex::encode(hash),
+      hex::encode(actual_hash)
+    )))?;
+  }
+
+  Ok(())
+}
+
+pub(crate) fn sanity_check_blocks<'a>(
+  hashes: &[[u8; 32]],
+  blocks: impl Iterator<Item = &'a Block>,
+) -> Result<(), RpcError> {
+  for (block, hash) in blocks.zip(hashes) {
+    sanity_check_block_by_hash(hash, block)?;
+  }
+  Ok(())
+}
+
+pub(crate) fn sanity_check_block_by_number(number: usize, block: &Block) -> Result<(), RpcError> {
+  match block.number() {
+    Some(actual_number) => {
+      if actual_number != number {
+        Err(RpcError::InvalidNode(format!(
+          "requested block #{number}, received #{actual_number}"
+        )))?;
+      }
+    }
+    None => Err(RpcError::InvalidNode(format!(
+      "source returned a block with an invalid miner transaction for #{number}",
+    )))?,
+  };
+  Ok(())
 }
 
 impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
@@ -146,37 +230,7 @@ impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
           expected_blocks,
         )))?;
       }
-
-      let mut parent = None;
-      for (number, block) in range.zip(&blocks) {
-        match block.number() {
-          Some(actual_number) => {
-            if actual_number != number {
-              Err(RpcError::InvalidNode(format!(
-                "requested block #{number}, received #{actual_number}"
-              )))?;
-            }
-          }
-          None => Err(RpcError::InvalidNode(format!(
-            "source returned a block with an invalid miner transaction for #{number}",
-          )))?,
-        };
-
-        let block_hash = block.hash();
-        if let Some(parent) = parent.or((number == 0).then_some([0; 32])) {
-          if parent != block.header.previous {
-            Err(RpcError::InvalidNode(
-              "
-              source returned a block which doesn't build on the prior block \
-              when requesting a contiguous series
-            "
-              .to_string(),
-            ))?;
-          }
-        }
-        parent = Some(block_hash);
-      }
-
+      sanity_check_contiguous_blocks(range, blocks.iter())?;
       Ok(blocks)
     }
   }
@@ -195,25 +249,7 @@ impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
           hashes.len(),
         )))?;
       }
-
-      for (block, hash) in blocks.iter().zip(hashes) {
-        if block.number().is_none() {
-          Err(RpcError::InvalidNode(format!(
-            "source returned a block with an invalid miner transaction for {}",
-            hex::encode(hash),
-          )))?;
-        }
-
-        let actual_hash = block.hash();
-        if &actual_hash != hash {
-          Err(RpcError::InvalidNode(format!(
-            "requested block {}, received {}",
-            hex::encode(hash),
-            hex::encode(actual_hash)
-          )))?;
-        }
-      }
-
+      sanity_check_blocks(hashes, blocks.iter())?;
       Ok(blocks)
     }
   }
@@ -221,23 +257,7 @@ impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
   fn get_block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, RpcError>> {
     async move {
       let block = <P as ProvidesUnvalidatedBlockchain>::get_block(self, hash).await?;
-
-      if block.number().is_none() {
-        Err(RpcError::InvalidNode(format!(
-          "source returned a block with an invalid miner transaction for {}",
-          hex::encode(hash),
-        )))?;
-      }
-
-      let actual_hash = block.hash();
-      if actual_hash != hash {
-        Err(RpcError::InvalidNode(format!(
-          "requested block {}, received {}",
-          hex::encode(hash),
-          hex::encode(actual_hash)
-        )))?;
-      }
-
+      sanity_check_block_by_hash(&hash, &block)?;
       Ok(block)
     }
   }
@@ -248,20 +268,7 @@ impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
   ) -> impl Send + Future<Output = Result<Block, RpcError>> {
     async move {
       let block = <P as ProvidesUnvalidatedBlockchain>::get_block_by_number(self, number).await?;
-
-      match block.number() {
-        Some(actual_number) => {
-          if actual_number != number {
-            Err(RpcError::InvalidNode(format!(
-              "requested block #{number}, received #{actual_number}"
-            )))?;
-          }
-        }
-        None => Err(RpcError::InvalidNode(format!(
-          "source returned a block with an invalid miner transaction for #{number}",
-        )))?,
-      };
-
+      sanity_check_block_by_number(number, &block)?;
       Ok(block)
     }
   }

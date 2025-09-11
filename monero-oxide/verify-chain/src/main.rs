@@ -20,7 +20,7 @@ use monero_simple_request_rpc::SimpleRequestRpc;
 
 use tokio::task::JoinHandle;
 
-async fn check_block(rpc: impl Rpc, block_i: usize) {
+async fn check_block(rpc: impl MoneroDaemon, block_i: usize) {
   let hash = loop {
     match rpc.get_block_hash(block_i).await {
       Ok(hash) => break hash,
@@ -130,7 +130,7 @@ async fn check_block(rpc: impl Rpc, block_i: usize) {
                 }
 
                 async fn get_outs(
-                  rpc: &impl Rpc,
+                  rpc: &impl MoneroDaemon,
                   amount: u64,
                   indexes: &[u64],
                 ) -> Vec<[CompressedPoint; 2]> {

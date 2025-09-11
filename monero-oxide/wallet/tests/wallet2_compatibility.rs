@@ -106,7 +106,7 @@ async fn from_wallet_rpc_to_self(spec: AddressSpec) {
 
   // unlock it
   let block = runner::mine_until_unlocked(&daemon_rpc, &wallet_rpc_addr, tx_hash).await;
-  let block = daemon_rpc.get_scannable_block(block).await.unwrap();
+  let block = daemon_rpc.expand_to_scannable_block(block).await.unwrap();
 
   // Create the scanner
   let mut scanner = Scanner::new(view_pair);

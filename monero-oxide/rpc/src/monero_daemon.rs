@@ -1,5 +1,6 @@
 use core::{fmt::Debug, future::Future};
 use alloc::{
+  format,
   vec::Vec,
   string::{String, ToString},
 };
@@ -17,7 +18,7 @@ use monero_address::Address;
 use crate::{
   RpcError, PrunedTransactionWithPrunableHash, ProvidesUnvalidatedTransactions, PublishTransaction,
   ProvidesBlockchainMeta, ProvidesUnvalidatedBlockchain, ProvidesUnvalidatedOutputs, FeePriority,
-  FeeRate, ProvidesUnvalidatedFeeRates, Rpc, rpc_hex, hash_hex,
+  FeeRate, ProvidesUnvalidatedFeeRates, rpc_hex, hash_hex,
 };
 
 #[derive(Debug, Deserialize)]
@@ -671,5 +672,3 @@ mod provides_fee_rates {
     }
   }
 }
-
-impl<D: MoneroDaemon> Rpc for D {}
