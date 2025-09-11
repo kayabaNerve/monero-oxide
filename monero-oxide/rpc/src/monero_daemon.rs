@@ -6,20 +6,42 @@ use alloc::{
 };
 use std_shims::io;
 
+use curve25519_dalek::EdwardsPoint;
+
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 use monero_oxide::{
+  io::CompressedPoint,
   transaction::{Input, Pruned, Transaction},
   block::Block,
 };
 use monero_address::Address;
 
 use crate::{
-  RpcError, PrunedTransactionWithPrunableHash, ProvidesUnvalidatedTransactions, PublishTransaction,
-  ProvidesBlockchainMeta, ProvidesUnvalidatedBlockchain, ProvidesUnvalidatedOutputs, FeePriority,
-  FeeRate, ProvidesUnvalidatedFeeRates, rpc_hex, hash_hex,
+  RpcError, ProvidesBlockchainMeta, PrunedTransactionWithPrunableHash,
+  ProvidesUnvalidatedTransactions, PublishTransaction, ProvidesUnvalidatedBlockchain,
+  RingCtOutputInformation, ProvidesUnvalidatedOutputs, FeePriority, FeeRate,
+  ProvidesUnvalidatedFeeRates,
 };
+
+fn rpc_hex(value: &str) -> Result<Vec<u8>, RpcError> {
+  hex::decode(value).map_err(|_| RpcError::InvalidNode("expected hex wasn't hex".to_string()))
+}
+
+fn hash_hex(hash: &str) -> Result<[u8; 32], RpcError> {
+  rpc_hex(hash)?.try_into().map_err(|_| RpcError::InvalidNode("hash wasn't 32-bytes".to_string()))
+}
+
+fn rpc_point(point: &str) -> Result<EdwardsPoint, RpcError> {
+  CompressedPoint(
+    rpc_hex(point)?
+      .try_into()
+      .map_err(|_| RpcError::InvalidNode(format!("invalid point: {point}")))?,
+  )
+  .decompress()
+  .ok_or_else(|| RpcError::InvalidNode(format!("invalid point: {point}")))
+}
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcResponse<T> {
@@ -134,6 +156,23 @@ pub trait MoneroDaemon: Sync + Clone {
         blocks.push(hash_hex(&block)?);
       }
       Ok((blocks, res.height))
+    }
+  }
+}
+
+impl<D: MoneroDaemon> ProvidesBlockchainMeta for D {
+  fn get_latest_block_number(&self) -> impl Send + Future<Output = Result<usize, RpcError>> {
+    async move {
+      #[derive(Debug, Deserialize)]
+      struct HeightResponse {
+        height: usize,
+      }
+      let res = self.rpc_call::<Option<()>, HeightResponse>("get_height", None).await?.height;
+      res.checked_sub(1).ok_or_else(|| {
+        RpcError::InvalidNode(
+          "node claimed the blockchain didn't even have the genesis block".to_string(),
+        )
+      })
     }
   }
 }
@@ -315,23 +354,6 @@ impl<D: MoneroDaemon> PublishTransaction for D {
       }
 
       Ok(())
-    }
-  }
-}
-
-impl<D: MoneroDaemon> ProvidesBlockchainMeta for D {
-  fn get_latest_block_number(&self) -> impl Send + Future<Output = Result<usize, RpcError>> {
-    async move {
-      #[derive(Debug, Deserialize)]
-      struct HeightResponse {
-        height: usize,
-      }
-      let res = self.rpc_call::<Option<()>, HeightResponse>("get_height", None).await?.height;
-      res.checked_sub(1).ok_or_else(|| {
-        RpcError::InvalidNode(
-          "node claimed the blockchain didn't even have the genesis block".to_string(),
-        )
-      })
     }
   }
 }
@@ -578,6 +600,74 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
         read_object(&mut indexes)
       })()
       .map_err(|e| RpcError::InvalidNode(format!("invalid binary response: {e:?}")))
+    }
+  }
+
+  fn get_ringct_outputs(
+    &self,
+    indexes: &[u64],
+  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, RpcError>> {
+    async move {
+      #[derive(Debug, Deserialize)]
+      struct OutputResponse {
+        height: usize,
+        unlocked: bool,
+        key: String,
+        mask: String,
+        txid: String,
+      }
+
+      #[derive(Debug, Deserialize)]
+      struct OutsResponse {
+        status: String,
+        outs: Vec<OutputResponse>,
+      }
+
+      // https://github.com/monero-project/monero/blob/cc73fe71162d564ffda8e549b79a350bca53c454
+      //   /src/rpc/core_rpc_server.cpp#L67
+      const MAX_OUTS: usize = 5000;
+
+      let mut res = Vec::with_capacity(indexes.len());
+      for indexes in indexes.chunks(MAX_OUTS) {
+        let rpc_res: OutsResponse = self
+          .rpc_call(
+            "get_outs",
+            Some(json!({
+              "get_txid": true,
+              "outputs": indexes.iter().map(|o| json!({
+                "amount": 0,
+                "index": o
+              })).collect::<Vec<_>>()
+            })),
+          )
+          .await?;
+
+        if rpc_res.status != "OK" {
+          Err(RpcError::InvalidNode("bad response to get_outs".to_string()))?;
+        }
+
+        res.extend(
+          rpc_res
+            .outs
+            .into_iter()
+            .map(|output| {
+              Ok(RingCtOutputInformation {
+                height: output.height,
+                unlocked: output.unlocked,
+                key: CompressedPoint(
+                  rpc_hex(&output.key)?
+                    .try_into()
+                    .map_err(|_| RpcError::InvalidNode("output key wasn't 32 bytes".to_string()))?,
+                ),
+                commitment: rpc_point(&output.mask)?,
+                transaction: hash_hex(&output.txid)?,
+              })
+            })
+            .collect::<Result<Vec<_>, RpcError>>()?,
+        );
+      }
+
+      Ok(res)
     }
   }
 }

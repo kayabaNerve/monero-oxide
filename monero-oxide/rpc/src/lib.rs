@@ -15,21 +15,19 @@ use alloc::{
   vec::Vec,
   string::{String, ToString},
 };
-use curve25519_dalek::edwards::EdwardsPoint;
+
+use curve25519_dalek::EdwardsPoint;
 
 use serde::Deserialize;
 use serde_json::json;
 
-use monero_oxide::{io::*, transaction::Timelock, DEFAULT_LOCK_WINDOW};
-
-mod monero_daemon;
-pub use monero_daemon::*;
-
-mod provides_transactions;
-pub use provides_transactions::*;
+use monero_oxide::{transaction::Timelock, DEFAULT_LOCK_WINDOW};
 
 mod provides_blockchain_meta;
 pub use provides_blockchain_meta::*;
+
+mod provides_transactions;
+pub use provides_transactions::*;
 
 pub(crate) mod provides_blockchain;
 pub use provides_blockchain::{ProvidesUnvalidatedBlockchain, ProvidesBlockchain};
@@ -42,6 +40,9 @@ pub use provides_scannable_blocks::*;
 
 mod provides_fee_rates;
 pub use provides_fee_rates::*;
+
+mod monero_daemon;
+pub use monero_daemon::*;
 
 /// An error from the RPC.
 #[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
@@ -74,44 +75,6 @@ pub enum RpcError {
   InvalidPriority,
 }
 
-/// The response to an query for the information of a RingCT output.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct OutputInformation {
-  /// The block number of the block this output was added to the chain in.
-  ///
-  /// This is equivalent to he height of the blockchain at the time the block was added.
-  pub height: usize,
-  /// If the output is unlocked, per the node's local view.
-  pub unlocked: bool,
-  /// The output's key.
-  ///
-  /// This is a CompressedPoint, not an EdwardsPoint, as it may be invalid. CompressedPoint
-  /// only asserts validity on decompression and allows representing compressed types.
-  pub key: CompressedPoint,
-  /// The output's commitment.
-  pub commitment: EdwardsPoint,
-  /// The transaction which created this output.
-  pub transaction: [u8; 32],
-}
-
-fn rpc_hex(value: &str) -> Result<Vec<u8>, RpcError> {
-  hex::decode(value).map_err(|_| RpcError::InvalidNode("expected hex wasn't hex".to_string()))
-}
-
-fn hash_hex(hash: &str) -> Result<[u8; 32], RpcError> {
-  rpc_hex(hash)?.try_into().map_err(|_| RpcError::InvalidNode("hash wasn't 32-bytes".to_string()))
-}
-
-fn rpc_point(point: &str) -> Result<EdwardsPoint, RpcError> {
-  CompressedPoint(
-    rpc_hex(point)?
-      .try_into()
-      .map_err(|_| RpcError::InvalidNode(format!("invalid point: {point}")))?,
-  )
-  .decompress()
-  .ok_or_else(|| RpcError::InvalidNode(format!("invalid point: {point}")))
-}
-
 /// A trait for any object which can be used to select RingCT decoys.
 ///
 /// An implementation is provided for any satisfier of `Rpc`. It is not recommended to use an `Rpc`
@@ -126,12 +89,6 @@ pub trait DecoyRpc: Sync + ProvidesBlockchainMeta {
     &self,
     range: impl Send + RangeBounds<usize>,
   ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>>;
-
-  /// Get the specified outputs from the RingCT (zero-amount) pool.
-  fn get_outs(
-    &self,
-    indexes: &[u64],
-  ) -> impl Send + Future<Output = Result<Vec<OutputInformation>, RpcError>>;
 
   /// Get the specified outputs from the RingCT (zero-amount) pool, but only return them if their
   /// timelock has been satisfied.
@@ -152,7 +109,9 @@ pub trait DecoyRpc: Sync + ProvidesBlockchainMeta {
   ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, RpcError>>;
 }
 
-impl<R: MoneroDaemon + ProvidesTransactions + ProvidesBlockchainMeta> DecoyRpc for R {
+impl<R: MoneroDaemon + ProvidesBlockchainMeta + ProvidesTransactions + ProvidesOutputs> DecoyRpc
+  for R
+{
   fn get_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,
@@ -348,7 +307,7 @@ impl<R: MoneroDaemon + ProvidesTransactions + ProvidesBlockchainMeta> DecoyRpc f
     fingerprintable_deterministic: bool,
   ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, RpcError>> {
     async move {
-      let outs = self.get_outs(indexes).await?;
+      let outs = self.get_ringct_outputs(indexes).await?;
 
       // Only need to fetch txs to do deterministic check on timelock
       let txs = if fingerprintable_deterministic {
@@ -395,8 +354,8 @@ impl<R: MoneroDaemon + ProvidesTransactions + ProvidesBlockchainMeta> DecoyRpc f
 /// A prelude of recommend imports to glob import.
 pub mod prelude {
   pub use crate::{
-    ScannableBlock, RpcError, MoneroDaemon, ProvidesTransactions, PublishTransaction,
-    ProvidesBlockchainMeta, ProvidesBlockchain, ProvidesOutputs, ExpandToScannableBlock,
+    ScannableBlock, RpcError, MoneroDaemon, ProvidesBlockchainMeta, ProvidesTransactions,
+    PublishTransaction, ProvidesBlockchain, ProvidesOutputs, ExpandToScannableBlock,
     ProvidesScannableBlocks, FeePriority, FeeRate, ProvidesFeeRates, DecoyRpc,
   };
 }
