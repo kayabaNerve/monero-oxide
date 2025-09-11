@@ -27,7 +27,7 @@ test!(
         &mut OsRng,
         &rpc,
         ring_len(rct_type),
-        rpc.get_latest_block_number().await.unwrap() + 1,
+        rpc.get_latest_block_number().await.unwrap(),
         output_tx0.clone(),
       )
       .await
@@ -43,13 +43,14 @@ test!(
 
       let rpc: SimpleRequestRpc = rpc;
 
-      let height = rpc.get_latest_block_number().await.unwrap() + 1;
+      let block_number = rpc.get_latest_block_number().await.unwrap();
+      let height = block_number + 1;
 
       let most_recent_o_index = rpc.get_output_indexes(tx.hash()).await.unwrap().pop().unwrap();
 
       // Make sure output from tx1 is in the block in which it unlocks
       let out_tx1 = rpc.get_ringct_outputs(&[most_recent_o_index]).await.unwrap().swap_remove(0);
-      assert_eq!(out_tx1.height, height - DEFAULT_LOCK_WINDOW);
+      assert_eq!(out_tx1.block_number, height - DEFAULT_LOCK_WINDOW);
       assert!(out_tx1.unlocked);
 
       // Select decoys using spendable output from tx0 as the real, and make sure DSA selects
@@ -62,7 +63,7 @@ test!(
           &mut OsRng, // TODO: use a seeded RNG to consistently select the latest output
           &rpc,
           ring_len(rct_type),
-          height,
+          block_number,
           output_tx0.clone(),
         )
         .await
@@ -104,7 +105,7 @@ test!(
         &mut OsRng,
         &rpc,
         ring_len(rct_type),
-        rpc.get_latest_block_number().await.unwrap() + 1,
+        rpc.get_latest_block_number().await.unwrap(),
         output_tx0.clone(),
       )
       .await
@@ -120,13 +121,14 @@ test!(
 
       let rpc: SimpleRequestRpc = rpc;
 
-      let height = rpc.get_latest_block_number().await.unwrap() + 1;
+      let block_number = rpc.get_latest_block_number().await.unwrap();
+      let height = block_number + 1;
 
       let most_recent_o_index = rpc.get_output_indexes(tx.hash()).await.unwrap().pop().unwrap();
 
       // Make sure output from tx1 is in the block in which it unlocks
       let out_tx1 = rpc.get_ringct_outputs(&[most_recent_o_index]).await.unwrap().swap_remove(0);
-      assert_eq!(out_tx1.height, height - DEFAULT_LOCK_WINDOW);
+      assert_eq!(out_tx1.block_number, height - DEFAULT_LOCK_WINDOW);
       assert!(out_tx1.unlocked);
 
       // Select decoys using spendable output from tx0 as the real, and make sure DSA selects
@@ -139,7 +141,7 @@ test!(
           &mut OsRng, // TODO: use a seeded RNG to consistently select the latest output
           &rpc,
           ring_len(rct_type),
-          height,
+          block_number,
           output_tx0.clone(),
         )
         .await

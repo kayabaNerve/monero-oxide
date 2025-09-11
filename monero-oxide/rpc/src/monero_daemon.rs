@@ -1,4 +1,8 @@
-use core::{fmt::Debug, future::Future};
+use core::{
+  fmt::Debug,
+  ops::{Bound, RangeBounds},
+  future::Future,
+};
 use alloc::{
   format,
   vec::Vec,
@@ -13,16 +17,17 @@ use serde_json::{Value, json};
 
 use monero_oxide::{
   io::CompressedPoint,
-  transaction::{Input, Pruned, Transaction},
+  transaction::{Input, Timelock, Pruned, Transaction},
   block::Block,
+  DEFAULT_LOCK_WINDOW,
 };
 use monero_address::Address;
 
 use crate::{
   RpcError, ProvidesBlockchainMeta, PrunedTransactionWithPrunableHash,
   ProvidesUnvalidatedTransactions, PublishTransaction, ProvidesUnvalidatedBlockchain,
-  RingCtOutputInformation, ProvidesUnvalidatedOutputs, FeePriority, FeeRate,
-  ProvidesUnvalidatedFeeRates,
+  RingCtOutputInformation, ProvidesUnvalidatedOutputs, EvaluateUnlocked, ProvidesUnvalidatedDecoys,
+  FeePriority, FeeRate, ProvidesUnvalidatedFeeRates,
 };
 
 fn rpc_hex(value: &str) -> Result<Vec<u8>, RpcError> {
@@ -652,7 +657,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
             .into_iter()
             .map(|output| {
               Ok(RingCtOutputInformation {
-                height: output.height,
+                block_number: output.height,
                 unlocked: output.unlocked,
                 key: CompressedPoint(
                   rpc_hex(&output.key)?
@@ -668,6 +673,170 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
       }
 
       Ok(res)
+    }
+  }
+}
+
+impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
+  fn get_ringct_output_distribution(
+    &self,
+    range: impl Send + RangeBounds<usize>,
+  ) -> impl Send + Future<Output = Result<Vec<u64>, RpcError>> {
+    async move {
+      #[derive(Default, Debug, Deserialize)]
+      struct Distribution {
+        distribution: Vec<u64>,
+        // A blockchain with just its genesis block has a height of 1
+        start_height: usize,
+      }
+
+      #[derive(Debug, Deserialize)]
+      struct Distributions {
+        distributions: [Distribution; 1],
+        status: String,
+      }
+
+      let from = match range.start_bound() {
+        Bound::Included(from) => *from,
+        Bound::Excluded(from) => from.checked_add(1).ok_or_else(|| {
+          RpcError::InternalError("range's from wasn't representable".to_string())
+        })?,
+        Bound::Unbounded => 0,
+      };
+      let to = match range.end_bound() {
+        Bound::Included(to) => *to,
+        Bound::Excluded(to) => to
+          .checked_sub(1)
+          .ok_or_else(|| RpcError::InternalError("range's to wasn't representable".to_string()))?,
+        Bound::Unbounded => self.get_latest_block_number().await?,
+      };
+      if from > to {
+        Err(RpcError::InternalError(format!(
+          "malformed range: inclusive start {from}, inclusive end {to}"
+        )))?;
+      }
+
+      let zero_zero_case = (from == 0) && (to == 0);
+      let distributions: Distributions = self
+        .json_rpc_call(
+          "get_output_distribution",
+          Some(json!({
+            "binary": false,
+            "amounts": [0],
+            "cumulative": true,
+            // These are actually block numbers, not heights
+            "from_height": from,
+            "to_height": if zero_zero_case { 1 } else { to },
+          })),
+        )
+        .await?;
+
+      if distributions.status != "OK" {
+        Err(RpcError::ConnectionError(
+          "node couldn't service this request for the output distribution".to_string(),
+        ))?;
+      }
+
+      let mut distributions = distributions.distributions;
+      let Distribution { start_height, mut distribution } = core::mem::take(&mut distributions[0]);
+      // start_height is also actually a block number, and it should be at least `from`
+      // It may be after depending on when these outputs first appeared on the blockchain
+      // Unfortunately, we can't validate without a binary search to find the RingCT activation
+      // block and an iterative search from there, so we solely sanity check it
+      if start_height < from {
+        Err(RpcError::InvalidNode(format!(
+          "requested distribution from {from} and got from {start_height}"
+        )))?;
+      }
+      // It shouldn't be after `to` though
+      if start_height > to {
+        Err(RpcError::InvalidNode(format!(
+          "requested distribution to {to} and got from {start_height}"
+        )))?;
+      }
+
+      let expected_len = if zero_zero_case {
+        2
+      } else {
+        (to - start_height).checked_add(1).ok_or_else(|| {
+          RpcError::InternalError("expected length of distribution exceeded usize".to_string())
+        })?
+      };
+      // Yet this is actually a height
+      if expected_len != distribution.len() {
+        Err(RpcError::InvalidNode(format!(
+          "distribution length ({}) wasn't of the requested length ({})",
+          distribution.len(),
+          expected_len
+        )))?;
+      }
+      // Requesting to = 0 returns the distribution for the entire chain
+      // We work around this by requesting 0, 1 (yielding two blocks), then popping the second
+      // block
+      if zero_zero_case {
+        distribution.pop();
+      }
+
+      Ok(distribution)
+    }
+  }
+
+  fn get_unlocked_ringct_outputs(
+    &self,
+    indexes: &[u64],
+    evaluate_unlocked: EvaluateUnlocked,
+  ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, RpcError>> {
+    async move {
+      let outs = self.get_ringct_outputs(indexes).await?;
+
+      // Only need to fetch transactions if we're doing a deterministic check on the timelock
+      let txs =
+        if matches!(evaluate_unlocked, EvaluateUnlocked::FingerprintableDeterministic { .. }) {
+          self.get_transactions(&outs.iter().map(|out| out.transaction).collect::<Vec<_>>()).await?
+        } else {
+          vec![]
+        };
+
+      // TODO: https://github.com/serai-dex/serai/issues/104
+      outs
+        .iter()
+        .enumerate()
+        .map(|(i, out)| {
+          /*
+            If the key is invalid, preventing it from being used as a decoy, return `None` to
+            trigger selection of a replacement decoy.
+          */
+          let Some(key) = out.key.decompress() else {
+            return Ok(None);
+          };
+          Ok(
+            (match evaluate_unlocked {
+              EvaluateUnlocked::Normal => out.unlocked,
+              EvaluateUnlocked::FingerprintableDeterministic { block_number } => {
+                // https://github.com/monero-project/monero/blob
+                //   /cc73fe71162d564ffda8e549b79a350bca53c454/src/cryptonote_core
+                //   /blockchain.cpp#L90
+                const ACCEPTED_TIMELOCK_DELTA: usize = 1;
+
+                let global_timelock_satisfied = out
+                  .block_number
+                  .checked_add(DEFAULT_LOCK_WINDOW - 1)
+                  .is_some_and(|locked| locked <= block_number);
+
+                // https://github.com/monero-project/monero/blob
+                //   /cc73fe71162d564ffda8e549b79a350bca53c454/src/cryptonote_core
+                //   /blockchain.cpp#L3836
+                let transaction_timelock_satisfied =
+                  Timelock::Block(block_number.wrapping_add(ACCEPTED_TIMELOCK_DELTA)) >=
+                    txs[i].prefix().additional_timelock;
+
+                global_timelock_satisfied && transaction_timelock_satisfied
+              }
+            })
+            .then_some([key, out.commitment]),
+          )
+        })
+        .collect()
     }
   }
 }

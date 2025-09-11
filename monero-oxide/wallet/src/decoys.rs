@@ -12,7 +12,7 @@ use curve25519_dalek::{Scalar, EdwardsPoint};
 use crate::{
   DEFAULT_LOCK_WINDOW, COINBASE_LOCK_WINDOW, BLOCK_TIME,
   primitives::{Commitment, Decoys},
-  rpc::{RpcError, DecoyRpc},
+  rpc::{RpcError, EvaluateUnlocked, ProvidesDecoys},
   output::OutputData,
   WalletOutput,
 };
@@ -24,23 +24,23 @@ const TIP_APPLICATION: f64 = (DEFAULT_LOCK_WINDOW * BLOCK_TIME) as f64;
 
 async fn select_n(
   rng: &mut (impl RngCore + CryptoRng),
-  rpc: &impl DecoyRpc,
-  height: usize,
+  rpc: &impl ProvidesDecoys,
+  block_number: usize,
   output_being_spent: &WalletOutput,
   ring_len: u8,
   fingerprintable_deterministic: bool,
 ) -> Result<Vec<(u64, [EdwardsPoint; 2])>, RpcError> {
-  if height < DEFAULT_LOCK_WINDOW {
+  if block_number <= DEFAULT_LOCK_WINDOW {
     Err(RpcError::InternalError("not enough blocks to select decoys".to_string()))?;
   }
-  if Some(height) > rpc.get_latest_block_number().await?.checked_add(1) {
+  if block_number > rpc.get_latest_block_number().await? {
     Err(RpcError::InternalError(
       "decoys being requested from blocks this node doesn't have".to_string(),
     ))?;
   }
 
   // Get the distribution
-  let distribution = rpc.get_output_distribution(.. height).await?;
+  let distribution = rpc.get_ringct_output_distribution(..= block_number).await?;
   if distribution.len() < DEFAULT_LOCK_WINDOW {
     Err(RpcError::InternalError("not enough blocks to select decoys".to_string()))?;
   }
@@ -162,7 +162,14 @@ async fn select_n(
     };
 
     for (i, output) in rpc
-      .get_unlocked_outputs(&candidates, height, fingerprintable_deterministic)
+      .get_unlocked_ringct_outputs(
+        &candidates,
+        if fingerprintable_deterministic {
+          EvaluateUnlocked::FingerprintableDeterministic { block_number }
+        } else {
+          EvaluateUnlocked::Normal
+        },
+      )
       .await?
       .iter_mut()
       .enumerate()
@@ -202,9 +209,9 @@ async fn select_n(
 
 async fn select_decoys<R: RngCore + CryptoRng>(
   rng: &mut R,
-  rpc: &impl DecoyRpc,
+  rpc: &impl ProvidesDecoys,
   ring_len: u8,
-  height: usize,
+  block_number: usize,
   input: &WalletOutput,
   fingerprintable_deterministic: bool,
 ) -> Result<Decoys, RpcError> {
@@ -215,7 +222,15 @@ async fn select_decoys<R: RngCore + CryptoRng>(
   // Select all decoys for this transaction, assuming we generate a sane transaction
   // We should almost never naturally generate an insane transaction, hence why this doesn't
   // bother with an overage
-  let decoys = select_n(rng, rpc, height, input, ring_len, fingerprintable_deterministic).await?;
+  let decoys = select_n(
+    rng,
+    rpc,
+    block_number,
+    input,
+    ring_len,
+    fingerprintable_deterministic,
+  )
+  .await?;
 
   // Form the complete ring
   let mut ring = decoys;
@@ -272,12 +287,12 @@ impl OutputWithDecoys {
   /// only connect to trusted RPCs.
   pub async fn new(
     rng: &mut (impl Send + Sync + RngCore + CryptoRng),
-    rpc: &impl DecoyRpc,
+    rpc: &impl ProvidesDecoys,
     ring_len: u8,
-    height: usize,
+    block_number: usize,
     output: WalletOutput,
   ) -> Result<OutputWithDecoys, RpcError> {
-    let decoys = select_decoys(rng, rpc, ring_len, height, &output, false).await?;
+    let decoys = select_decoys(rng, rpc, ring_len, block_number, &output, false).await?;
     Ok(OutputWithDecoys { output: output.data.clone(), decoys })
   }
 
@@ -297,12 +312,12 @@ impl OutputWithDecoys {
   /// only connect to trusted RPCs.
   pub async fn fingerprintable_deterministic_new(
     rng: &mut (impl Send + Sync + RngCore + CryptoRng),
-    rpc: &impl DecoyRpc,
+    rpc: &impl ProvidesDecoys,
     ring_len: u8,
-    height: usize,
+    block_number: usize,
     output: WalletOutput,
   ) -> Result<OutputWithDecoys, RpcError> {
-    let decoys = select_decoys(rng, rpc, ring_len, height, &output, true).await?;
+    let decoys = select_decoys(rng, rpc, ring_len, block_number, &output, true).await?;
     Ok(OutputWithDecoys { output: output.data.clone(), decoys })
   }
 

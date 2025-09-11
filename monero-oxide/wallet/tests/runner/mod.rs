@@ -309,7 +309,7 @@ macro_rules! test {
               &mut OsRng,
               &rpc,
               ring_len(rct_type),
-              rpc.get_latest_block_number().await.unwrap() + 1,
+              rpc.get_latest_block_number().await.unwrap(),
               miner_tx,
             ).await.unwrap();
             builder.add_input(input);

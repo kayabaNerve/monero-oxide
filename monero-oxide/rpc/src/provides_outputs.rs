@@ -10,7 +10,7 @@ use crate::RpcError;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct RingCtOutputInformation {
   /// The block number of the block this output was added to the chain in.
-  pub height: usize,
+  pub block_number: usize,
   /// If the output is unlocked, per the node's local view.
   pub unlocked: bool,
   /// The output's key.

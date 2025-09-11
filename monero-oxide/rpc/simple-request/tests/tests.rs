@@ -74,37 +74,37 @@ async fn test_decoy_rpc() {
     .await
     .unwrap();
 
-  // Test get_output_distribution
+  // Test get_ringct_output_distribution
   // Our documentation for our Rust fn defines it as taking two block numbers
   {
     let distribution_len = rpc.get_latest_block_number().await.unwrap() + 1;
 
-    rpc.get_output_distribution(0 ..= distribution_len).await.unwrap_err();
+    rpc.get_ringct_output_distribution(0 ..= distribution_len).await.unwrap_err();
     assert_eq!(
-      rpc.get_output_distribution(0 .. distribution_len).await.unwrap().len(),
+      rpc.get_ringct_output_distribution(0 .. distribution_len).await.unwrap().len(),
       distribution_len
     );
     assert_eq!(
-      rpc.get_output_distribution(.. distribution_len).await.unwrap().len(),
+      rpc.get_ringct_output_distribution(.. distribution_len).await.unwrap().len(),
       distribution_len
     );
 
     assert_eq!(
-      rpc.get_output_distribution(.. (distribution_len - 1)).await.unwrap().len(),
+      rpc.get_ringct_output_distribution(.. (distribution_len - 1)).await.unwrap().len(),
       distribution_len - 1
     );
     assert_eq!(
-      rpc.get_output_distribution(1 .. distribution_len).await.unwrap().len(),
+      rpc.get_ringct_output_distribution(1 .. distribution_len).await.unwrap().len(),
       distribution_len - 1
     );
 
-    assert_eq!(rpc.get_output_distribution(0 ..= 0).await.unwrap().len(), 1);
-    assert_eq!(rpc.get_output_distribution(0 ..= 1).await.unwrap().len(), 2);
-    assert_eq!(rpc.get_output_distribution(1 ..= 1).await.unwrap().len(), 1);
+    assert_eq!(rpc.get_ringct_output_distribution(0 ..= 0).await.unwrap().len(), 1);
+    assert_eq!(rpc.get_ringct_output_distribution(0 ..= 1).await.unwrap().len(), 2);
+    assert_eq!(rpc.get_ringct_output_distribution(1 ..= 1).await.unwrap().len(), 1);
 
-    rpc.get_output_distribution(0 .. 0).await.unwrap_err();
+    rpc.get_ringct_output_distribution(0 .. 0).await.unwrap_err();
     #[allow(clippy::reversed_empty_ranges)]
-    rpc.get_output_distribution(1 .. 0).await.unwrap_err();
+    rpc.get_ringct_output_distribution(1 .. 0).await.unwrap_err();
   }
 
   drop(guard);
