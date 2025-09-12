@@ -47,7 +47,7 @@ impl<'a, C: Ciphersuite> Zeroize for ArithmeticCircuitStatement<'a, C> {
 }
 
 /// The witness for an arithmetic circuit statement.
-#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct ArithmeticCircuitWitness<C: Ciphersuite> {
   aL: ScalarVector<C::F>,
   aR: ScalarVector<C::F>,

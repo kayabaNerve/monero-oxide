@@ -294,7 +294,7 @@ impl<'a, C: Ciphersuite> ProofGenerators<'a, C> {
 }
 
 /// The opening of a Pedersen commitment.
-#[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct PedersenCommitment<C: Ciphersuite> {
   /// The value committed to.
   pub value: C::F,
@@ -310,7 +310,7 @@ impl<C: Ciphersuite> PedersenCommitment<C> {
 }
 
 /// The opening of a Pedersen vector commitment.
-#[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct PedersenVectorCommitment<C: Ciphersuite> {
   /// The values committed to across the `g` (bold) generators.
   pub g_values: Vec<C::F>,
