@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 use monero_oxide::{
   io::CompressedPoint,
-  transaction::{Input, Timelock, Pruned, Transaction},
+  transaction::{MAX_NON_MINER_TRANSACTION_SIZE, Input, Timelock, Pruned, Transaction},
   block::Block,
   DEFAULT_LOCK_WINDOW,
 };
@@ -26,8 +26,32 @@ use monero_address::Address;
 use crate::*;
 
 const BASE_RESPONSE_SIZE: usize = u16::MAX as usize;
-const BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE: usize = 100;
+const BYTE_FACTOR_IN_JSON_RESPONSE_SIZE: usize = 100;
 const BYTE_FACTOR_IN_BIN_RESPONSE_SIZE: usize = 4;
+
+/*
+  Monero doesn't have a size limit on miner transactions and accordingly doesn't have a size limit
+  on transactions, yet we would like _a_ bound (even if absurd) to limit a malicious remote node
+  from sending a gigantic HTTP response and wasting our bandwidth.
+
+  We consider the bound for a miner transaction as 300 KB, which is thousands of outputs and an
+  entire Monero block (at its default block size limit).
+*/
+const fn const_max(a: usize, b: usize) -> usize {
+  if a > b {
+    a
+  } else {
+    b
+  }
+}
+const TRANSACTION_SIZE_BOUND: usize = const_max(300_000, MAX_NON_MINER_TRANSACTION_SIZE);
+
+/*
+  Monero doesn't have a block size limit, solely one contextual to the current blockchain. With a
+  default size of 300 KB, we assume it won't reach 5 MB. Even if it does, we'll still accept a 5 MB
+  block if it fits within our multiplicative allowance or other additive allowances.
+*/
+const BLOCK_SIZE_BOUND: usize = 5_000_000;
 
 fn rpc_hex(value: &str) -> Result<Vec<u8>, SourceError> {
   hex::decode(value).map_err(|_| SourceError::InvalidSource("expected hex wasn't hex".to_string()))
@@ -165,7 +189,7 @@ pub trait MoneroDaemon: Sync + Clone {
             "amount_of_blocks": block_count,
           })),
           Some(BASE_RESPONSE_SIZE.wrapping_add(
-            BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(block_count.wrapping_mul(32)),
+            BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(block_count.wrapping_mul(32)),
           )),
         )
         .await?;
@@ -239,7 +263,7 @@ mod provides_transaction {
               Some(json!({
                 "txs_hashes": hashes_hex.drain(.. this_count).collect::<Vec<_>>(),
               })),
-              Some(BASE_RESPONSE_SIZE.wrapping_add(BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(this_count.wrapping_mul(300_000)))),
+              Some(BASE_RESPONSE_SIZE.wrapping_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(this_count.wrapping_mul(TRANSACTION_SIZE_BOUND)))),
             )
             .await?;
 
@@ -307,7 +331,7 @@ mod provides_transaction {
                 "txs_hashes": hashes_hex.drain(.. this_count).collect::<Vec<_>>(),
                 "prune": true,
               })),
-              Some(BASE_RESPONSE_SIZE.wrapping_add(BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(this_count.wrapping_mul(300_000)))),
+              Some(BASE_RESPONSE_SIZE.wrapping_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(this_count.wrapping_mul(TRANSACTION_SIZE_BOUND)))),
             )
             .await?;
 
@@ -401,7 +425,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
           Some(json!({ "height": number })),
           Some(
             BASE_RESPONSE_SIZE
-              .wrapping_add(BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(1_000_000)),
+              .wrapping_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(BLOCK_SIZE_BOUND)),
           ),
         )
         .await?;
@@ -424,7 +448,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
           Some(json!({ "hash": hex::encode(hash) })),
           Some(
             BASE_RESPONSE_SIZE
-              .wrapping_add(BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(1_000_000)),
+              .wrapping_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(BLOCK_SIZE_BOUND)),
           ),
         )
         .await?;
@@ -453,7 +477,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
           "get_block_header_by_height",
           Some(json!({ "height": number })),
           Some(
-            BASE_RESPONSE_SIZE.wrapping_add(BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(256)),
+            BASE_RESPONSE_SIZE.wrapping_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(256)),
           ),
         )
         .await?;
@@ -694,7 +718,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
               })).collect::<Vec<_>>()
             })),
             Some(BASE_RESPONSE_SIZE.wrapping_add(
-              BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(indexes.len().wrapping_mul(128)),
+              BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(indexes.len().wrapping_mul(128)),
             )),
           )
           .await?;
@@ -785,7 +809,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
             "to_height": if zero_zero_case { 1 } else { to },
           })),
           Some(BASE_RESPONSE_SIZE.wrapping_add(
-            BYTE_FACTOR_IN_HTTP_RESPONSE_SIZE.wrapping_mul(to.max(2).wrapping_mul(16)),
+            BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(to.max(2).wrapping_mul(16)),
           )),
         )
         .await?;
