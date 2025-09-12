@@ -184,7 +184,7 @@ impl InternalScanner {
           // scanned accordingly (the one which has matching torsion of the spend key)
           let subaddress_spend_key =
             output_key - (&output_derivations.shared_key * ED25519_BASEPOINT_TABLE);
-          self.subaddresses.get(&subaddress_spend_key.compress().into())
+          self.subaddresses.get::<CompressedPoint>(&subaddress_spend_key.compress().into())
         }) else {
           continue;
         };
