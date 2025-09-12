@@ -1,7 +1,7 @@
 [package]
-name = "monero-rpc"
+name = "monero-interface"
 version = "0.1.0"
-description = "Trait for an RPC connection to a Monero daemon, built around monero-oxide"
+description = "Traits for interfacing with the Monero network, built around monero-oxide"
 license = "MIT"
 repository = "https://github.com/monero-oxide/monero-oxide/tree/main/monero-oxide/rpc"
 authors = ["Luke Parker <lukeparker5132@gmail.com>"]
@@ -16,7 +16,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 workspace = true
 
 [dependencies]
-std-shims = { version = "0.1.4", default-features = false }
+std-shims = { version = "0.1.5", default-features = false }
 
 thiserror = { version = "2", default-features = false }
 

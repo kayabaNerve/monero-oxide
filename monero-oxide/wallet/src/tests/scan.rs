@@ -8,7 +8,7 @@ use crate::{
   ringct::EncryptedAmount,
   transaction::{Timelock, Pruned, Transaction},
   block::Block,
-  rpc::ScannableBlock,
+  interface::ScannableBlock,
   PaymentId,
   output::{AbsoluteId, RelativeId, OutputData, Metadata},
   WalletOutput, ViewPair, Scanner,

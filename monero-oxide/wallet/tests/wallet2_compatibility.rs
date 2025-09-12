@@ -6,7 +6,7 @@ use serde_json::json;
 use monero_simple_request_rpc::SimpleRequestRpc;
 use monero_wallet::{
   transaction::Transaction,
-  rpc::prelude::*,
+  interface::prelude::*,
   address::{Network, SubaddressIndex, MoneroAddress},
   extra::{MAX_ARBITRARY_DATA_SIZE, Extra, PaymentId},
   Scanner,

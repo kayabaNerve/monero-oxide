@@ -22,7 +22,7 @@ digest_auth = { version = "0.3", default-features = false }
 simple-request = { version = "0.1.1", default-features = false, features = ["tls"] }
 tokio = { version = "1", default-features = false }
 
-monero-rpc = { path = "..", default-features = false, features = ["std"] }
+monero-interface = { path = "..", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 monero-address = { path = "../../wallet/address", default-features = false, features = ["std"] }

@@ -10,8 +10,8 @@ members = [
   "monero-oxide/ringct/bulletproofs",
   "monero-oxide",
 
-  "monero-oxide/rpc",
-  "monero-oxide/rpc/simple-request",
+  "monero-oxide/interface",
+  "monero-oxide/interface/simple-request",
 
   "monero-oxide/wallet/base58",
   "monero-oxide/wallet/address",

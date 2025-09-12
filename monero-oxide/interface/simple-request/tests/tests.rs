@@ -3,7 +3,7 @@ use tokio::sync::Mutex;
 
 use monero_address::{Network, MoneroAddress};
 
-// monero-rpc doesn't include a transport
+// monero-interface doesn't include a transport
 // We can't include the simple-request crate there as then we'd have a cyclical dependency
 // Accordingly, we test monero-rpc here (implicitly testing the simple-request transport)
 use monero_simple_request_rpc::*;
@@ -15,7 +15,7 @@ const ADDRESS: &str =
 
 #[tokio::test]
 async fn test_rpc() {
-  use monero_rpc::prelude::*;
+  use monero_interface::prelude::*;
 
   let guard = SEQUENTIAL.lock().await;
 
@@ -62,7 +62,7 @@ async fn test_rpc() {
 
 #[tokio::test]
 async fn test_decoy_rpc() {
-  use monero_rpc::prelude::*;
+  use monero_interface::prelude::*;
 
   let guard = SEQUENTIAL.lock().await;
 

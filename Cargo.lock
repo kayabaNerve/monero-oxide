@@ -893,6 +893,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "monero-interface"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "hex",
+ "monero-address",
+ "monero-oxide",
+ "serde",
+ "serde_json",
+ "std-shims",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
 name = "monero-io"
 version = "0.1.0"
 dependencies = [
@@ -947,8 +962,8 @@ version = "0.1.0"
 dependencies = [
  "curve25519-dalek",
  "hex",
+ "monero-interface",
  "monero-oxide",
- "monero-rpc",
  "monero-simple-request-rpc",
  "rand_core",
  "serde",
@@ -970,28 +985,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "monero-rpc"
-version = "0.1.0"
-dependencies = [
- "curve25519-dalek",
- "hex",
- "monero-address",
- "monero-oxide",
- "serde",
- "serde_json",
- "std-shims",
- "thiserror",
- "zeroize",
-]
-
-[[package]]
 name = "monero-simple-request-rpc"
 version = "0.1.0"
 dependencies = [
  "digest_auth",
  "hex",
  "monero-address",
- "monero-rpc",
+ "monero-interface",
  "simple-request",
  "tokio",
  "zeroize",
@@ -1007,8 +1007,8 @@ dependencies = [
  "modular-frost",
  "monero-address",
  "monero-clsag",
+ "monero-interface",
  "monero-oxide",
- "monero-rpc",
  "monero-simple-request-rpc",
  "rand",
  "rand_chacha",

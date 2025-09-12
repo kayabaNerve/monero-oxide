@@ -14,7 +14,7 @@ use simple_request::{
   Response, Client,
 };
 
-use monero_rpc::{SourceError, MoneroDaemon};
+use monero_interface::{SourceError, MoneroDaemon};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 

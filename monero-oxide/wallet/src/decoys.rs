@@ -12,7 +12,7 @@ use curve25519_dalek::{Scalar, EdwardsPoint};
 use crate::{
   DEFAULT_LOCK_WINDOW, COINBASE_LOCK_WINDOW, BLOCK_TIME,
   primitives::{Commitment, Decoys},
-  rpc::{SourceError, TransactionsError, EvaluateUnlocked, ProvidesDecoys},
+  interface::{SourceError, TransactionsError, EvaluateUnlocked, ProvidesDecoys},
   output::OutputData,
   WalletOutput,
 };
@@ -234,8 +234,8 @@ async fn select_decoys<R: RngCore + CryptoRng>(
     Monero does have sanity checks which it applies to the selected ring.
 
     They're statistically unlikely to be hit and only occur when the transaction is published over
-    the RPC (so they are not a relay rule). The RPC allows disabling them, which monero-rpc does to
-    ensure they don't pose a problem.
+    the RPC (so they are not a relay rule). The RPC allows disabling them, which our RPC
+    implementations do to ensure they don't pose a problem.
 
     They aren't worth the complexity to implement here, especially since they're non-deterministic.
   */

@@ -4,7 +4,7 @@ use rand_core::OsRng;
 
 use monero_simple_request_rpc::SimpleRequestRpc;
 use monero_wallet::{
-  ringct::RctType, transaction::Transaction, rpc::prelude::*, address::SubaddressIndex,
+  ringct::RctType, transaction::Transaction, interface::prelude::*, address::SubaddressIndex,
   extra::Extra, WalletOutput, OutputWithDecoys,
 };
 
@@ -105,7 +105,7 @@ test!(
   ),
   (
     |rct_type, rpc: SimpleRequestRpc, _, _, outputs: Vec<WalletOutput>| async move {
-      use monero_wallet::rpc::FeePriority;
+      use monero_wallet::interface::FeePriority;
 
       let view_priv = Zeroizing::new(Scalar::random(&mut OsRng));
       let mut outgoing_view = Zeroizing::new([0; 32]);
@@ -302,7 +302,7 @@ test!(
   ),
   (
     |rct_type, rpc: SimpleRequestRpc, _, addr, outputs: Vec<WalletOutput>| async move {
-      use monero_wallet::rpc::FeePriority;
+      use monero_wallet::interface::FeePriority;
 
       let mut outgoing_view = Zeroizing::new([0; 32]);
       OsRng.fill_bytes(outgoing_view.as_mut());
@@ -353,7 +353,7 @@ test!(
   ),
   (
     |rct_type, rpc: SimpleRequestRpc, _, _, outputs: Vec<WalletOutput>| async move {
-      use monero_wallet::rpc::FeePriority;
+      use monero_wallet::interface::FeePriority;
 
       let view_priv = Zeroizing::new(Scalar::random(&mut OsRng));
       let mut outgoing_view = Zeroizing::new([0; 32]);

@@ -5,12 +5,12 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
 
-use monero_rpc::ScannableBlock;
 use monero_oxide::{
   io::*,
   primitives::Commitment,
   transaction::{Timelock, Pruned, Transaction},
 };
+use monero_interface::ScannableBlock;
 use crate::{
   address::SubaddressIndex, ViewPair, GuaranteedViewPair, output::*, PaymentId, Extra,
   SharedKeyDerivations,

@@ -15,7 +15,7 @@ use monero_oxide::{
   io::CompressedPoint,
 };
 
-use monero_rpc::prelude::*;
+use monero_interface::prelude::*;
 use monero_simple_request_rpc::SimpleRequestRpc;
 
 use tokio::task::JoinHandle;
