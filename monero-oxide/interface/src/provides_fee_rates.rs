@@ -6,7 +6,7 @@ use zeroize::Zeroize;
 
 use monero_oxide::io::read_u64;
 
-use crate::SourceError;
+use crate::InterfaceError;
 
 /// The priority for the fee.
 ///
@@ -117,12 +117,12 @@ impl FeeRate {
   }
 }
 
-/// An error from the source.
+/// An error from the interface.
 #[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
 pub enum FeeError {
-  /// Error with the source.
-  #[error("source error ({0})")]
-  SourceError(SourceError),
+  /// Error with the interface.
+  #[error("interface error ({0})")]
+  InterfaceError(InterfaceError),
   /// The fee was invalid.
   #[error("invalid fee")]
   InvalidFee,
@@ -131,9 +131,9 @@ pub enum FeeError {
   InvalidFeePriority,
 }
 
-impl From<SourceError> for FeeError {
-  fn from(err: SourceError) -> Self {
-    Self::SourceError(err)
+impl From<InterfaceError> for FeeError {
+  fn from(err: InterfaceError) -> Self {
+    Self::InterfaceError(err)
   }
 }
 

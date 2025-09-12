@@ -32,24 +32,24 @@ pub use provides_fee_rates::*;
 mod monero_daemon;
 pub use monero_daemon::*;
 
-/// An error from the source.
+/// An error from the interface.
 #[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
-pub enum SourceError {
+pub enum InterfaceError {
   /// An internal error.
   #[error("internal error ({0})")]
   InternalError(String),
-  /// An error with the source.
-  #[error("source error ({0})")]
-  SourceError(String),
-  /// The source is invalid per the expected protocol and should be disconnected from.
+  /// An error with the interface.
+  #[error("interface error ({0})")]
+  InterfaceError(String),
+  /// The interface is invalid per the expected protocol and should be disconnected from.
   #[error("invalid node ({0})")]
-  InvalidSource(String),
+  InvalidInterface(String),
 }
 
 /// A prelude of recommend imports to glob import.
 pub mod prelude {
   pub use crate::{
-    SourceError, MoneroDaemon, ProvidesBlockchainMeta, TransactionsError, ProvidesTransactions,
+    InterfaceError, MoneroDaemon, ProvidesBlockchainMeta, TransactionsError, ProvidesTransactions,
     PublishTransactionError, PublishTransaction, ProvidesBlockchain, ProvidesOutputs,
     ScannableBlock, ExpandToScannableBlock, ProvidesScannableBlocks, EvaluateUnlocked,
     ProvidesDecoys, FeePriority, FeeRate, FeeError, ProvidesFeeRates,

@@ -3,7 +3,7 @@ use alloc::{format, vec, vec::Vec, string::String};
 
 use monero_oxide::transaction::{Pruned, Transaction};
 
-use crate::SourceError;
+use crate::InterfaceError;
 
 /// A pruned transaction with the hash of its pruned data, if `version != 1`.
 pub struct PrunedTransactionWithPrunableHash {
@@ -62,9 +62,9 @@ impl PrunedTransactionWithPrunableHash {
 /// An error when fetching transactions.
 #[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
 pub enum TransactionsError {
-  /// Error with the source.
-  #[error("source error ({0})")]
-  SourceError(SourceError),
+  /// Error with the interface.
+  #[error("interface error ({0})")]
+  InterfaceError(InterfaceError),
   /// A transaction wasn't found.
   #[error("transaction wasn't found")]
   TransactionNotFound,
@@ -73,13 +73,13 @@ pub enum TransactionsError {
   PrunedTransaction,
 }
 
-impl From<SourceError> for TransactionsError {
-  fn from(err: SourceError) -> Self {
-    Self::SourceError(err)
+impl From<InterfaceError> for TransactionsError {
+  fn from(err: InterfaceError) -> Self {
+    Self::InterfaceError(err)
   }
 }
 
-/// Provides unvalidated transactions from an untrusted source.
+/// Provides unvalidated transactions from an untrusted interface.
 ///
 /// This provides all its methods yet (`get_transactions` || `get_transaction`) &&
 /// (`get_pruned_transactions` || `get_pruned_transaction`) MUST be overriden, ideally the batch
@@ -135,7 +135,7 @@ pub trait ProvidesUnvalidatedTransactions: Sync {
     async move {
       let mut txs = self.transactions(&[hash]).await?;
       if txs.len() != 1 {
-        Err(SourceError::InternalError(format!(
+        Err(InterfaceError::InternalError(format!(
           "`{}` returned {} transactions, expected {}",
           "ProvidesUnvalidatedTransactions::transactions",
           txs.len(),
@@ -154,7 +154,7 @@ pub trait ProvidesUnvalidatedTransactions: Sync {
     async move {
       let mut txs = self.pruned_transactions(&[hash]).await?;
       if txs.len() != 1 {
-        Err(SourceError::InternalError(format!(
+        Err(InterfaceError::InternalError(format!(
           "`{}` returned {} transactions, expected {}",
           "ProvidesUnvalidatedTransactions::pruned_transactions",
           txs.len(),
@@ -212,7 +212,7 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
     async move {
       let txs = <P as ProvidesUnvalidatedTransactions>::transactions(self, hashes).await?;
       if txs.len() != hashes.len() {
-        Err(SourceError::InternalError(format!(
+        Err(InterfaceError::InternalError(format!(
           "`{}` returned {} transactions, expected {}",
           "ProvidesUnvalidatedTransactions::transactions",
           txs.len(),
@@ -223,8 +223,8 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
       for (tx, expected_hash) in txs.iter().zip(hashes) {
         let hash = tx.hash();
         if &hash != expected_hash {
-          Err(SourceError::InvalidSource(format!(
-            "source returned TX {} when {} was requested",
+          Err(InterfaceError::InvalidInterface(format!(
+            "interface returned TX {} when {} was requested",
             hex::encode(hash),
             hex::encode(expected_hash)
           )))?;
@@ -242,7 +242,7 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
       let unvalidated =
         <P as ProvidesUnvalidatedTransactions>::pruned_transactions(self, hashes).await?;
       if unvalidated.len() != hashes.len() {
-        Err(SourceError::InternalError(format!(
+        Err(InterfaceError::InternalError(format!(
           "`{}` returned {} transactions, expected {}",
           "ProvidesUnvalidatedTransactions::pruned_transactions",
           unvalidated.len(),
@@ -254,8 +254,8 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
       for (tx, expected_hash) in unvalidated.into_iter().zip(hashes) {
         match tx.verify_as_possible(*expected_hash) {
           Ok(tx) => txs.push(tx),
-          Err(hash) => Err(SourceError::InvalidSource(format!(
-            "source returned TX {} when {} was requested",
+          Err(hash) => Err(InterfaceError::InvalidInterface(format!(
+            "interface returned TX {} when {} was requested",
             hex::encode(hash),
             hex::encode(expected_hash)
           )))?,
@@ -273,8 +273,8 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
       let tx = <P as ProvidesUnvalidatedTransactions>::transaction(self, hash).await?;
       let actual_hash = tx.hash();
       if actual_hash != hash {
-        Err(SourceError::InvalidSource(format!(
-          "source returned TX {} when {} was requested",
+        Err(InterfaceError::InvalidInterface(format!(
+          "interface returned TX {} when {} was requested",
           hex::encode(actual_hash),
           hex::encode(hash)
         )))?;
@@ -293,8 +293,8 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
 
       match unvalidated.verify_as_possible(hash) {
         Ok(tx) => Ok(tx),
-        Err(actual_hash) => Err(SourceError::InvalidSource(format!(
-          "source returned TX {} when {} was requested",
+        Err(actual_hash) => Err(InterfaceError::InvalidInterface(format!(
+          "interface returned TX {} when {} was requested",
           hex::encode(actual_hash),
           hex::encode(hash)
         )))?,
@@ -303,20 +303,20 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
   }
 }
 
-/// An error from the source.
+/// An error from the interface.
 #[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
 pub enum PublishTransactionError {
-  /// Error with the source.
-  #[error("source error ({0})")]
-  SourceError(SourceError),
+  /// Error with the interface.
+  #[error("interface error ({0})")]
+  InterfaceError(InterfaceError),
   /// The transaction was rejected.
   #[error("transaction was rejected ({0})")]
   TransactionRejected(String),
 }
 
-impl From<SourceError> for PublishTransactionError {
-  fn from(err: SourceError) -> Self {
-    Self::SourceError(err)
+impl From<InterfaceError> for PublishTransactionError {
+  fn from(err: InterfaceError) -> Self {
+    Self::InterfaceError(err)
   }
 }
 

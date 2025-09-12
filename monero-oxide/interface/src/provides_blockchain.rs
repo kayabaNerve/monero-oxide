@@ -3,9 +3,9 @@ use alloc::{format, vec::Vec, string::ToString};
 
 use monero_oxide::block::Block;
 
-use crate::{SourceError, ProvidesBlockchainMeta};
+use crate::{InterfaceError, ProvidesBlockchainMeta};
 
-/// Provides the blockchain from an untrusted source.
+/// Provides the blockchain from an untrusted interface.
 ///
 /// This provides some of its methods yet (`get_contiguous_blocks` || `get_block_by_number`) &&
 /// (`get_blocks` || `get_block`) MUST be overriden, ideally the batch methods.
@@ -18,7 +18,7 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
   fn contiguous_blocks(
     &self,
     range: RangeInclusive<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<Block>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>> {
     async move {
       // If a caller requests an exorbitant amount of blocks, this may trigger an OOM kill
       // In order to maintain correctness, we have to attempt to service this request though
@@ -37,7 +37,7 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
   fn blocks(
     &self,
     hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<Block>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>> {
     async move {
       let mut blocks = Vec::with_capacity(hashes.len());
       for hash in hashes {
@@ -49,17 +49,18 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
 
   /* TODO
   /// Subscribe to blocks.
-  fn subscribe(start: usize) -> impl Iterator<Item = Future<Output = Result<Block, SourceError>>> {}
+  fn subscribe(start: usize) ->
+    impl Iterator<Item = Future<Output = Result<Block, InterfaceError>>> {}
   */
 
   /// Get a block by its hash.
   ///
   /// No validation is applied to the received block other than that it deserializes.
-  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, SourceError>> {
+  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
     async move {
       let mut blocks = self.blocks(&[hash]).await?;
       if blocks.len() != 1 {
-        Err(SourceError::InternalError(format!(
+        Err(InterfaceError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
           "ProvidesUnvalidatedBlockchain::blocks",
           blocks.len(),
@@ -79,11 +80,11 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
   fn block_by_number(
     &self,
     number: usize,
-  ) -> impl Send + Future<Output = Result<Block, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
     async move {
       let mut blocks = self.contiguous_blocks(number ..= number).await?;
       if blocks.len() != 1 {
-        Err(SourceError::InternalError(format!(
+        Err(InterfaceError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
           "ProvidesUnvalidatedBlockchain::contiguous_blocks",
           blocks.len(),
@@ -98,8 +99,10 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
   ///
   /// The number of a block is its index on the blockchain, so the genesis block would have
   /// `number = 0`.
-  fn block_hash(&self, number: usize)
-    -> impl Send + Future<Output = Result<[u8; 32], SourceError>>;
+  fn block_hash(
+    &self,
+    number: usize,
+  ) -> impl Send + Future<Output = Result<[u8; 32], InterfaceError>>;
 }
 
 /// Provides blocks which have been sanity-checked.
@@ -111,7 +114,7 @@ pub trait ProvidesBlockchain: ProvidesBlockchainMeta {
   fn contiguous_blocks(
     &self,
     range: RangeInclusive<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<Block>, SourceError>>;
+  ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>>;
 
   /// Get a list of blocks by their hashes.
   ///
@@ -119,12 +122,12 @@ pub trait ProvidesBlockchain: ProvidesBlockchainMeta {
   fn blocks(
     &self,
     hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<Block>, SourceError>>;
+  ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>>;
 
   /// Get a block by its hash.
   ///
   /// The block will be validated to be the requested block with a well-formed number.
-  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, SourceError>>;
+  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, InterfaceError>>;
 
   /// Get a block by its number.
   ///
@@ -135,41 +138,43 @@ pub trait ProvidesBlockchain: ProvidesBlockchainMeta {
   fn block_by_number(
     &self,
     number: usize,
-  ) -> impl Send + Future<Output = Result<Block, SourceError>>;
+  ) -> impl Send + Future<Output = Result<Block, InterfaceError>>;
 
   /// Get the hash of a block by its number.
   ///
   /// The number of a block is its index on the blockchain, so the genesis block would have
   /// `number = 0`.
-  fn block_hash(&self, number: usize)
-    -> impl Send + Future<Output = Result<[u8; 32], SourceError>>;
+  fn block_hash(
+    &self,
+    number: usize,
+  ) -> impl Send + Future<Output = Result<[u8; 32], InterfaceError>>;
 }
 
 pub(crate) fn sanity_check_contiguous_blocks<'a>(
   range: RangeInclusive<usize>,
   blocks: impl Iterator<Item = &'a Block>,
-) -> Result<(), SourceError> {
+) -> Result<(), InterfaceError> {
   let mut parent = None;
   for (number, block) in range.zip(blocks) {
     match block.number() {
       Some(actual_number) => {
         if actual_number != number {
-          Err(SourceError::InvalidSource(format!(
+          Err(InterfaceError::InvalidInterface(format!(
             "requested block #{number}, received #{actual_number}"
           )))?;
         }
       }
-      None => Err(SourceError::InvalidSource(format!(
-        "source returned a block with an invalid miner transaction for #{number}",
+      None => Err(InterfaceError::InvalidInterface(format!(
+        "interface returned a block with an invalid miner transaction for #{number}",
       )))?,
     };
 
     let block_hash = block.hash();
     if let Some(parent) = parent.or((number == 0).then_some([0; 32])) {
       if parent != block.header.previous {
-        Err(SourceError::InvalidSource(
+        Err(InterfaceError::InvalidInterface(
           "
-            source returned a block which doesn't build on the prior block \
+            interface returned a block which doesn't build on the prior block \
             when requesting a contiguous series
           "
           .to_string(),
@@ -184,17 +189,17 @@ pub(crate) fn sanity_check_contiguous_blocks<'a>(
 pub(crate) fn sanity_check_block_by_hash(
   hash: &[u8; 32],
   block: &Block,
-) -> Result<(), SourceError> {
+) -> Result<(), InterfaceError> {
   if block.number().is_none() {
-    Err(SourceError::InvalidSource(format!(
-      "source returned a block with an invalid miner transaction for {}",
+    Err(InterfaceError::InvalidInterface(format!(
+      "interface returned a block with an invalid miner transaction for {}",
       hex::encode(hash),
     )))?;
   }
 
   let actual_hash = block.hash();
   if &actual_hash != hash {
-    Err(SourceError::InvalidSource(format!(
+    Err(InterfaceError::InvalidInterface(format!(
       "requested block {}, received {}",
       hex::encode(hash),
       hex::encode(actual_hash)
@@ -207,7 +212,7 @@ pub(crate) fn sanity_check_block_by_hash(
 pub(crate) fn sanity_check_blocks<'a>(
   hashes: &[[u8; 32]],
   blocks: impl Iterator<Item = &'a Block>,
-) -> Result<(), SourceError> {
+) -> Result<(), InterfaceError> {
   for (block, hash) in blocks.zip(hashes) {
     sanity_check_block_by_hash(hash, block)?;
   }
@@ -217,17 +222,17 @@ pub(crate) fn sanity_check_blocks<'a>(
 pub(crate) fn sanity_check_block_by_number(
   number: usize,
   block: &Block,
-) -> Result<(), SourceError> {
+) -> Result<(), InterfaceError> {
   match block.number() {
     Some(actual_number) => {
       if actual_number != number {
-        Err(SourceError::InvalidSource(format!(
+        Err(InterfaceError::InvalidInterface(format!(
           "requested block #{number}, received #{actual_number}"
         )))?;
       }
     }
-    None => Err(SourceError::InvalidSource(format!(
-      "source returned a block with an invalid miner transaction for #{number}",
+    None => Err(InterfaceError::InvalidInterface(format!(
+      "interface returned a block with an invalid miner transaction for #{number}",
     )))?,
   };
   Ok(())
@@ -237,13 +242,13 @@ impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
   fn contiguous_blocks(
     &self,
     range: RangeInclusive<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<Block>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>> {
     async move {
       let blocks =
         <P as ProvidesUnvalidatedBlockchain>::contiguous_blocks(self, range.clone()).await?;
       let expected_blocks = range.end().wrapping_sub(*range.start());
       if blocks.len() != expected_blocks {
-        Err(SourceError::InternalError(format!(
+        Err(InterfaceError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
           "ProvidesUnvalidatedBlockchain::contiguous_blocks",
           blocks.len(),
@@ -258,11 +263,11 @@ impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
   fn blocks(
     &self,
     hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<Block>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>> {
     async move {
       let blocks = <P as ProvidesUnvalidatedBlockchain>::blocks(self, hashes).await?;
       if blocks.len() != hashes.len() {
-        Err(SourceError::InternalError(format!(
+        Err(InterfaceError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
           "ProvidesUnvalidatedBlockchain::blocks",
           blocks.len(),
@@ -274,7 +279,7 @@ impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
     }
   }
 
-  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, SourceError>> {
+  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
     async move {
       let block = <P as ProvidesUnvalidatedBlockchain>::block(self, hash).await?;
       sanity_check_block_by_hash(&hash, &block)?;
@@ -285,7 +290,7 @@ impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
   fn block_by_number(
     &self,
     number: usize,
-  ) -> impl Send + Future<Output = Result<Block, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
     async move {
       let block = <P as ProvidesUnvalidatedBlockchain>::block_by_number(self, number).await?;
       sanity_check_block_by_number(number, &block)?;
@@ -296,7 +301,7 @@ impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
   fn block_hash(
     &self,
     number: usize,
-  ) -> impl Send + Future<Output = Result<[u8; 32], SourceError>> {
+  ) -> impl Send + Future<Output = Result<[u8; 32], InterfaceError>> {
     <P as ProvidesUnvalidatedBlockchain>::block_hash(self, number)
   }
 }

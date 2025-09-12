@@ -6,7 +6,7 @@ use monero_oxide::{
   block::Block,
 };
 
-use crate::{SourceError, TransactionsError, ProvidesTransactions, ProvidesOutputs};
+use crate::{InterfaceError, TransactionsError, ProvidesTransactions, ProvidesOutputs};
 
 /// A block which is able to be scanned.
 // TODO: Should these fields be private so we can check their integrity within a constructor?
@@ -84,7 +84,7 @@ pub trait ExpandToScannableBlock: ProvidesTransactions + ProvidesOutputs {
 
         let index =
           *ProvidesOutputs::output_indexes(self, *hash).await?.first().ok_or_else(|| {
-            SourceError::InvalidSource(
+            InterfaceError::InvalidInterface(
               "requested output indexes for a TX with outputs and got none".to_string(),
             )
           })?;
@@ -99,7 +99,7 @@ pub trait ExpandToScannableBlock: ProvidesTransactions + ProvidesOutputs {
 
 impl<P: ProvidesTransactions + ProvidesOutputs> ExpandToScannableBlock for P {}
 
-/// Provides scannable blocks from an untrusted source.
+/// Provides scannable blocks from an untrusted interface.
 ///
 /// This provides all its methods yet
 /// (`get_contiguous_scannable_blocks` || `get_scannable_block_by_number`) &&
@@ -112,7 +112,7 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
   fn contiguous_scannable_blocks(
     &self,
     range: RangeInclusive<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, InterfaceError>> {
     async move {
       // If a caller requests an exorbitant amount of blocks, this may trigger an OOM kill
       // In order to maintain correctness, we have to attempt to service this request though
@@ -131,7 +131,7 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
   fn scannable_blocks(
     &self,
     hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, InterfaceError>> {
     async move {
       let mut blocks = Vec::with_capacity(hashes.len());
       for hash in hashes {
@@ -147,11 +147,11 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
   fn scannable_block(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<ScannableBlock, SourceError>> {
+  ) -> impl Send + Future<Output = Result<ScannableBlock, InterfaceError>> {
     async move {
       let mut blocks = self.scannable_blocks(&[hash]).await?;
       if blocks.len() != 1 {
-        Err(SourceError::InternalError(format!(
+        Err(InterfaceError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
           "ProvidesUnvalidatedScannableBlocks::scannable_blocks",
           blocks.len(),
@@ -168,11 +168,11 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
   fn scannable_block_by_number(
     &self,
     number: usize,
-  ) -> impl Send + Future<Output = Result<ScannableBlock, SourceError>> {
+  ) -> impl Send + Future<Output = Result<ScannableBlock, InterfaceError>> {
     async move {
       let mut blocks = self.contiguous_scannable_blocks(number ..= number).await?;
       if blocks.len() != 1 {
-        Err(SourceError::InternalError(format!(
+        Err(InterfaceError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
           "ProvidesUnvalidatedScannableBlocks::contiguous_scannable_blocks",
           blocks.len(),
@@ -194,7 +194,7 @@ pub trait ProvidesScannableBlocks: Sync {
   fn contiguous_scannable_blocks(
     &self,
     range: RangeInclusive<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, SourceError>>;
+  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, InterfaceError>>;
 
   /// Get a list of `ScannableBlock`s by their hashes.
   ///
@@ -203,7 +203,7 @@ pub trait ProvidesScannableBlocks: Sync {
   fn scannable_blocks(
     &self,
     hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, SourceError>>;
+  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, InterfaceError>>;
 
   /// Get a `ScannableBlock` by its hash.
   ///
@@ -212,7 +212,7 @@ pub trait ProvidesScannableBlocks: Sync {
   fn scannable_block(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<ScannableBlock, SourceError>>;
+  ) -> impl Send + Future<Output = Result<ScannableBlock, InterfaceError>>;
 
   /// Get a `ScannableBlock` by its number.
   ///
@@ -224,21 +224,21 @@ pub trait ProvidesScannableBlocks: Sync {
   fn scannable_block_by_number(
     &self,
     number: usize,
-  ) -> impl Send + Future<Output = Result<ScannableBlock, SourceError>>;
+  ) -> impl Send + Future<Output = Result<ScannableBlock, InterfaceError>>;
 }
 
 impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
   fn contiguous_scannable_blocks(
     &self,
     range: RangeInclusive<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, InterfaceError>> {
     async move {
       let blocks =
         <P as ProvidesUnvalidatedScannableBlocks>::contiguous_scannable_blocks(self, range.clone())
           .await?;
       let expected_blocks = range.end().wrapping_sub(*range.start());
       if blocks.len() != expected_blocks {
-        Err(SourceError::InternalError(format!(
+        Err(InterfaceError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
           "ProvidesUnvalidatedScannableBlocks::contiguous_scannable_blocks",
           blocks.len(),
@@ -252,7 +252,7 @@ impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
 
       for block in &blocks {
         if block.block.transactions.len() != block.transactions.len() {
-          Err(SourceError::InvalidSource(format!(
+          Err(InterfaceError::InvalidInterface(format!(
             "scannable block had {} transactions yet only received {}",
             block.block.transactions.len(),
             block.transactions.len()
@@ -267,12 +267,12 @@ impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
   fn scannable_blocks(
     &self,
     hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, InterfaceError>> {
     async move {
       let blocks =
         <P as ProvidesUnvalidatedScannableBlocks>::scannable_blocks(self, hashes).await?;
       if blocks.len() != hashes.len() {
-        Err(SourceError::InternalError(format!(
+        Err(InterfaceError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
           "ProvidesUnvalidatedScannableBlocks::scannable_blocks",
           blocks.len(),
@@ -286,7 +286,7 @@ impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
 
       for block in &blocks {
         if block.block.transactions.len() != block.transactions.len() {
-          Err(SourceError::InvalidSource(format!(
+          Err(InterfaceError::InvalidInterface(format!(
             "scannable block had {} transactions yet only received {}",
             block.block.transactions.len(),
             block.transactions.len()
@@ -301,13 +301,13 @@ impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
   fn scannable_block(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<ScannableBlock, SourceError>> {
+  ) -> impl Send + Future<Output = Result<ScannableBlock, InterfaceError>> {
     async move {
       let block = <P as ProvidesUnvalidatedScannableBlocks>::scannable_block(self, hash).await?;
       crate::provides_blockchain::sanity_check_block_by_hash(&hash, &block.block)?;
 
       if block.block.transactions.len() != block.transactions.len() {
-        Err(SourceError::InvalidSource(format!(
+        Err(InterfaceError::InvalidInterface(format!(
           "scannable block had {} transactions yet only received {}",
           block.block.transactions.len(),
           block.transactions.len()
@@ -321,14 +321,14 @@ impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
   fn scannable_block_by_number(
     &self,
     number: usize,
-  ) -> impl Send + Future<Output = Result<ScannableBlock, SourceError>> {
+  ) -> impl Send + Future<Output = Result<ScannableBlock, InterfaceError>> {
     async move {
       let block =
         <P as ProvidesUnvalidatedScannableBlocks>::scannable_block_by_number(self, number).await?;
       crate::provides_blockchain::sanity_check_block_by_number(number, &block.block)?;
 
       if block.block.transactions.len() != block.transactions.len() {
-        Err(SourceError::InvalidSource(format!(
+        Err(InterfaceError::InvalidInterface(format!(
           "scannable block had {} transactions yet only received {}",
           block.block.transactions.len(),
           block.transactions.len()

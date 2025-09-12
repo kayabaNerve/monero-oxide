@@ -12,7 +12,7 @@ use curve25519_dalek::{Scalar, EdwardsPoint};
 use crate::{
   DEFAULT_LOCK_WINDOW, COINBASE_LOCK_WINDOW, BLOCK_TIME,
   primitives::{Commitment, Decoys},
-  interface::{SourceError, TransactionsError, EvaluateUnlocked, ProvidesDecoys},
+  interface::{InterfaceError, TransactionsError, EvaluateUnlocked, ProvidesDecoys},
   output::OutputData,
   WalletOutput,
 };
@@ -31,10 +31,10 @@ async fn select_n(
   fingerprintable_deterministic: bool,
 ) -> Result<Vec<(u64, [EdwardsPoint; 2])>, TransactionsError> {
   if block_number <= DEFAULT_LOCK_WINDOW {
-    Err(SourceError::InternalError("not enough blocks to select decoys".to_string()))?;
+    Err(InterfaceError::InternalError("not enough blocks to select decoys".to_string()))?;
   }
   if block_number > rpc.latest_block_number().await? {
-    Err(SourceError::InternalError(
+    Err(InterfaceError::InternalError(
       "decoys being requested from blocks this node doesn't have".to_string(),
     ))?;
   }
@@ -42,7 +42,7 @@ async fn select_n(
   // Get the distribution
   let distribution = rpc.ringct_output_distribution(..= block_number).await?;
   if distribution.len() < DEFAULT_LOCK_WINDOW {
-    Err(SourceError::InternalError("not enough blocks to select decoys".to_string()))?;
+    Err(InterfaceError::InternalError("not enough blocks to select decoys".to_string()))?;
   }
   let highest_output_exclusive_bound = distribution[distribution.len() - DEFAULT_LOCK_WINDOW];
   // This assumes that each miner TX had one output (as sane) and checks we have sufficient
@@ -52,7 +52,7 @@ async fn select_n(
     u64::try_from(COINBASE_LOCK_WINDOW).expect("coinbase lock window exceeds 2^{64}"),
   ) < u64::from(ring_len)
   {
-    Err(SourceError::InternalError("not enough decoy candidates".to_string()))?;
+    Err(InterfaceError::InternalError("not enough decoy candidates".to_string()))?;
   }
 
   // Determine the outputs per second
@@ -97,7 +97,7 @@ async fn select_n(
             .expect("amount of ignored decoys exceeds 2^{64}")) <
           u64::from(ring_len))
       {
-        Err(SourceError::InternalError("hit decoy selection round limit".to_string()))?;
+        Err(InterfaceError::InternalError("hit decoy selection round limit".to_string()))?;
       }
     }
 
@@ -128,7 +128,7 @@ async fn select_n(
         let i = distribution.partition_point(|s| *s < (highest_output_exclusive_bound - 1 - o));
         let prev = i.saturating_sub(1);
         let n = distribution[i].checked_sub(distribution[prev]).ok_or_else(|| {
-          SourceError::InternalError("RPC returned non-monotonic distribution".to_string())
+          InterfaceError::InternalError("RPC returned non-monotonic distribution".to_string())
         })?;
         if n != 0 {
           // Select an output from within this block
@@ -180,7 +180,7 @@ async fn select_n(
           (Some(output_being_spent.commitment().calculate()) !=
             output.map(|[_key, commitment]| commitment))
         {
-          Err(SourceError::InvalidSource(
+          Err(InterfaceError::InvalidInterface(
             "node presented different view of output we're trying to spend".to_string(),
           ))?;
         }
@@ -216,7 +216,7 @@ async fn select_decoys<R: RngCore + CryptoRng>(
   fingerprintable_deterministic: bool,
 ) -> Result<Decoys, TransactionsError> {
   if ring_len == 0 {
-    Err(SourceError::InternalError("requesting a ring of length 0".to_string()))?;
+    Err(InterfaceError::InternalError("requesting a ring of length 0".to_string()))?;
   }
 
   // Select all decoys for this transaction, assuming we generate a sane transaction

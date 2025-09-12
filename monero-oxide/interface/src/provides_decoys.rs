@@ -3,7 +3,7 @@ use alloc::{format, vec::Vec, string::ToString};
 
 use curve25519_dalek::EdwardsPoint;
 
-use crate::{SourceError, TransactionsError, ProvidesBlockchainMeta};
+use crate::{InterfaceError, TransactionsError, ProvidesBlockchainMeta};
 
 /// How to evaluate if an output is unlocked.
 pub enum EvaluateUnlocked {
@@ -31,7 +31,7 @@ pub trait ProvidesUnvalidatedDecoys: ProvidesBlockchainMeta {
   fn ringct_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>>;
+  ) -> impl Send + Future<Output = Result<Vec<u64>, InterfaceError>>;
 
   /// Get the specified RingCT outputs, but only return them if they're unlocked.
   ///
@@ -57,7 +57,7 @@ pub trait ProvidesDecoys: ProvidesBlockchainMeta {
   fn ringct_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>>;
+  ) -> impl Send + Future<Output = Result<Vec<u64>, InterfaceError>>;
 
   /// Get the specified RingCT outputs, but only return them if they're unlocked.
   fn unlocked_ringct_outputs(
@@ -71,7 +71,7 @@ impl<P: ProvidesUnvalidatedDecoys> ProvidesDecoys for P {
   fn ringct_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<u64>, InterfaceError>> {
     async move {
       let distribution =
         <P as ProvidesUnvalidatedDecoys>::ringct_output_distribution(self, range).await?;
@@ -79,7 +79,7 @@ impl<P: ProvidesUnvalidatedDecoys> ProvidesDecoys for P {
       let mut monotonic = 0;
       for d in &distribution {
         if *d < monotonic {
-          Err(SourceError::InvalidSource(
+          Err(InterfaceError::InvalidInterface(
             "received output distribution didn't increase monotonically".to_string(),
           ))?;
         }
@@ -100,7 +100,7 @@ impl<P: ProvidesUnvalidatedDecoys> ProvidesDecoys for P {
         <P as ProvidesUnvalidatedDecoys>::unlocked_ringct_outputs(self, indexes, evaluate_unlocked)
           .await?;
       if outputs.len() != indexes.len() {
-        Err(SourceError::InternalError(format!(
+        Err(InterfaceError::InternalError(format!(
           "`{}` returned {} outputs, expected {}",
           "ProvidesUnvalidatedDecoys::unlocked_ringct_outputs",
           outputs.len(),

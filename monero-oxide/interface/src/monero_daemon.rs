@@ -53,24 +53,25 @@ const TRANSACTION_SIZE_BOUND: usize = const_max(300_000, MAX_NON_MINER_TRANSACTI
 */
 const BLOCK_SIZE_BOUND: usize = 5_000_000;
 
-fn rpc_hex(value: &str) -> Result<Vec<u8>, SourceError> {
-  hex::decode(value).map_err(|_| SourceError::InvalidSource("expected hex wasn't hex".to_string()))
+fn rpc_hex(value: &str) -> Result<Vec<u8>, InterfaceError> {
+  hex::decode(value)
+    .map_err(|_| InterfaceError::InvalidInterface("expected hex wasn't hex".to_string()))
 }
 
-fn hash_hex(hash: &str) -> Result<[u8; 32], SourceError> {
+fn hash_hex(hash: &str) -> Result<[u8; 32], InterfaceError> {
   rpc_hex(hash)?
     .try_into()
-    .map_err(|_| SourceError::InvalidSource("hash wasn't 32-bytes".to_string()))
+    .map_err(|_| InterfaceError::InvalidInterface("hash wasn't 32-bytes".to_string()))
 }
 
-fn rpc_point(point: &str) -> Result<EdwardsPoint, SourceError> {
+fn rpc_point(point: &str) -> Result<EdwardsPoint, InterfaceError> {
   CompressedPoint(
     rpc_hex(point)?
       .try_into()
-      .map_err(|_| SourceError::InvalidSource("invalid point".to_string()))?,
+      .map_err(|_| InterfaceError::InvalidInterface("invalid point".to_string()))?,
   )
   .decompress()
-  .ok_or_else(|| SourceError::InvalidSource("invalid point".to_string()))
+  .ok_or_else(|| InterfaceError::InvalidInterface("invalid point".to_string()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,7 +96,7 @@ pub trait MoneroDaemon: Sync + Clone {
     route: &str,
     body: Vec<u8>,
     response_size_limit: Option<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<u8>, SourceError>>;
+  ) -> impl Send + Future<Output = Result<Vec<u8>, InterfaceError>>;
 
   /// Perform a RPC call to the specified route with the provided parameters.
   ///
@@ -106,7 +107,7 @@ pub trait MoneroDaemon: Sync + Clone {
     route: &str,
     params: Option<Params>,
     response_size_limit: Option<usize>,
-  ) -> impl Send + Future<Output = Result<Response, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Response, InterfaceError>> {
     async move {
       let res = self
         .post(
@@ -114,7 +115,7 @@ pub trait MoneroDaemon: Sync + Clone {
           if let Some(params) = params.as_ref() {
             serde_json::to_string(params)
               .map_err(|e| {
-                SourceError::InternalError(format!(
+                InterfaceError::InternalError(format!(
                   "couldn't convert parameters ({params:?}) to JSON: {e:?}"
                 ))
               })?
@@ -126,9 +127,10 @@ pub trait MoneroDaemon: Sync + Clone {
         )
         .await?;
       let res_str = std_shims::str::from_utf8(&res)
-        .map_err(|_| SourceError::InvalidSource("response wasn't utf-8".to_string()))?;
-      serde_json::from_str(res_str)
-        .map_err(|_| SourceError::InvalidSource("response wasn't the expected json".to_string()))
+        .map_err(|_| InterfaceError::InvalidInterface("response wasn't utf-8".to_string()))?;
+      serde_json::from_str(res_str).map_err(|_| {
+        InterfaceError::InvalidInterface("response wasn't the expected json".to_string())
+      })
     }
   }
 
@@ -138,7 +140,7 @@ pub trait MoneroDaemon: Sync + Clone {
     method: &str,
     params: Option<Value>,
     response_size_limit: Option<usize>,
-  ) -> impl Send + Future<Output = Result<Response, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Response, InterfaceError>> {
     async move {
       let mut req = json!({ "method": method });
       if let Some(params) = params {
@@ -162,7 +164,7 @@ pub trait MoneroDaemon: Sync + Clone {
     route: &str,
     params: Vec<u8>,
     response_size_limit: Option<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<u8>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<u8>, InterfaceError>> {
     async move { self.post(route, params, response_size_limit).await }
   }
 
@@ -173,7 +175,7 @@ pub trait MoneroDaemon: Sync + Clone {
     &self,
     address: &Address<ADDR_BYTES>,
     block_count: usize,
-  ) -> impl Send + Future<Output = Result<(Vec<[u8; 32]>, usize), SourceError>> {
+  ) -> impl Send + Future<Output = Result<(Vec<[u8; 32]>, usize), InterfaceError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct BlocksResponse {
@@ -204,7 +206,7 @@ pub trait MoneroDaemon: Sync + Clone {
 }
 
 impl<D: MoneroDaemon> ProvidesBlockchainMeta for D {
-  fn latest_block_number(&self) -> impl Send + Future<Output = Result<usize, SourceError>> {
+  fn latest_block_number(&self) -> impl Send + Future<Output = Result<usize, InterfaceError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct HeightResponse {
@@ -215,7 +217,7 @@ impl<D: MoneroDaemon> ProvidesBlockchainMeta for D {
         .await?
         .height;
       res.checked_sub(1).ok_or_else(|| {
-        SourceError::InvalidSource(
+        InterfaceError::InvalidInterface(
           "node claimed the blockchain didn't even have the genesis block".to_string(),
         )
       })
@@ -271,7 +273,7 @@ mod provides_transaction {
             Err(TransactionsError::TransactionNotFound)?;
           }
           if txs.txs.len() != this_count {
-            Err(SourceError::InvalidSource(
+            Err(InterfaceError::InvalidInterface(
               "not missing any transactions yet didn't return all transactions".to_string(),
             ))?;
           }
@@ -287,13 +289,13 @@ mod provides_transaction {
               rpc_hex(if !res.as_hex.is_empty() { &res.as_hex } else { &res.pruned_as_hex })?;
             let mut buf = buf.as_slice();
             let tx = Transaction::read(&mut buf).map_err(|_| {
-              SourceError::InvalidSource(format!(
+              InterfaceError::InvalidInterface(format!(
                 "node yielded transaction allegedly with hash {:?} which was invalid",
                 rpc_hex(&res.tx_hash).ok().map(hex::encode),
               ))
             })?;
             if !buf.is_empty() {
-              Err(SourceError::InvalidSource("transaction had extra bytes after it".to_string()))?;
+              Err(InterfaceError::InvalidInterface("transaction had extra bytes after it".to_string()))?;
             }
 
             // We check this to ensure we didn't read a pruned transaction when we meant to read an
@@ -348,13 +350,13 @@ mod provides_transaction {
             let buf = rpc_hex(&res.pruned_as_hex)?;
             let mut buf = buf.as_slice();
             let tx = Transaction::<Pruned>::read(&mut buf).map_err(|_| {
-              SourceError::InvalidSource(
+              InterfaceError::InvalidInterface(
                 format!("node yielded transaction allegedly with hash {:?} which was invalid",
                 rpc_hex(&res.tx_hash).ok().map(hex::encode),
             ))
             })?;
             if !buf.is_empty() {
-              Err(SourceError::InvalidSource(
+              Err(InterfaceError::InvalidInterface(
                 "pruned transaction had extra bytes after it".to_string(),
               ))?;
             }
@@ -412,7 +414,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
   fn block_by_number(
     &self,
     number: usize,
-  ) -> impl Send + Future<Output = Result<Block, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct BlockResponse {
@@ -431,11 +433,11 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
         .await?;
 
       Block::read(&mut rpc_hex(&res.blob)?.as_slice())
-        .map_err(|_| SourceError::InvalidSource("invalid block".to_string()))
+        .map_err(|_| InterfaceError::InvalidInterface("invalid block".to_string()))
     }
   }
 
-  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, SourceError>> {
+  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct BlockResponse {
@@ -454,14 +456,14 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
         .await?;
 
       Block::read(&mut rpc_hex(&res.blob)?.as_slice())
-        .map_err(|_| SourceError::InvalidSource("invalid block".to_string()))
+        .map_err(|_| InterfaceError::InvalidInterface("invalid block".to_string()))
     }
   }
 
   fn block_hash(
     &self,
     number: usize,
-  ) -> impl Send + Future<Output = Result<[u8; 32], SourceError>> {
+  ) -> impl Send + Future<Output = Result<[u8; 32], InterfaceError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct BlockHeaderResponse {
@@ -490,7 +492,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
   fn output_indexes(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<u64>, InterfaceError>> {
     async move {
       // Given the immaturity of Rust epee libraries, this is a homegrown one which is only
       // validated to work against this specific function
@@ -677,14 +679,14 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
 
         read_object(&mut indexes)
       })()
-      .map_err(|e| SourceError::InvalidSource(format!("invalid binary response: {e:?}")))
+      .map_err(|e| InterfaceError::InvalidInterface(format!("invalid binary response: {e:?}")))
     }
   }
 
   fn ringct_outputs(
     &self,
     indexes: &[u64],
-  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, InterfaceError>> {
     async move {
       #[derive(Debug, Deserialize)]
       struct OutputResponse {
@@ -724,11 +726,11 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
           .await?;
 
         if rpc_res.status != "OK" {
-          Err(SourceError::InvalidSource("bad response to get_outs".to_string()))?;
+          Err(InterfaceError::InvalidInterface("bad response to get_outs".to_string()))?;
         }
 
         if rpc_res.outs.len() != indexes.len() {
-          Err(SourceError::InvalidSource(
+          Err(InterfaceError::InvalidInterface(
             "get_outs response omitted requested outputs".to_string(),
           ))?;
         }
@@ -742,13 +744,13 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
                 block_number: output.height,
                 unlocked: output.unlocked,
                 key: CompressedPoint(rpc_hex(&output.key)?.try_into().map_err(|_| {
-                  SourceError::InvalidSource("output key wasn't 32 bytes".to_string())
+                  InterfaceError::InvalidInterface("output key wasn't 32 bytes".to_string())
                 })?),
                 commitment: rpc_point(&output.mask)?,
                 transaction: hash_hex(&output.txid)?,
               })
             })
-            .collect::<Result<Vec<_>, SourceError>>()?,
+            .collect::<Result<Vec<_>, InterfaceError>>()?,
         );
       }
 
@@ -761,7 +763,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
   fn ringct_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<u64>, InterfaceError>> {
     async move {
       #[derive(Default, Debug, Deserialize)]
       struct Distribution {
@@ -779,19 +781,19 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
       let from = match range.start_bound() {
         Bound::Included(from) => *from,
         Bound::Excluded(from) => from.checked_add(1).ok_or_else(|| {
-          SourceError::InternalError("range's from wasn't representable".to_string())
+          InterfaceError::InternalError("range's from wasn't representable".to_string())
         })?,
         Bound::Unbounded => 0,
       };
       let to = match range.end_bound() {
         Bound::Included(to) => *to,
         Bound::Excluded(to) => to.checked_sub(1).ok_or_else(|| {
-          SourceError::InternalError("range's to wasn't representable".to_string())
+          InterfaceError::InternalError("range's to wasn't representable".to_string())
         })?,
         Bound::Unbounded => self.latest_block_number().await?,
       };
       if from > to {
-        Err(SourceError::InternalError(format!(
+        Err(InterfaceError::InternalError(format!(
           "malformed range: inclusive start {from}, inclusive end {to}"
         )))?;
       }
@@ -815,7 +817,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
         .await?;
 
       if distributions.status != "OK" {
-        Err(SourceError::SourceError(
+        Err(InterfaceError::InterfaceError(
           "node couldn't service this request for the output distribution".to_string(),
         ))?;
       }
@@ -827,13 +829,13 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
       // Unfortunately, we can't validate without a binary search to find the RingCT activation
       // block and an iterative search from there, so we solely sanity check it
       if start_height < from {
-        Err(SourceError::InvalidSource(format!(
+        Err(InterfaceError::InvalidInterface(format!(
           "requested distribution from {from} and got from {start_height}"
         )))?;
       }
       // It shouldn't be after `to` though
       if start_height > to {
-        Err(SourceError::InvalidSource(format!(
+        Err(InterfaceError::InvalidInterface(format!(
           "requested distribution to {to} and got from {start_height}"
         )))?;
       }
@@ -842,12 +844,14 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
         2
       } else {
         (to - start_height).checked_add(1).ok_or_else(|| {
-          SourceError::InternalError("expected length of distribution exceeded usize".to_string())
+          InterfaceError::InternalError(
+            "expected length of distribution exceeded usize".to_string(),
+          )
         })?
       };
       // Yet this is actually a height
       if expected_len != distribution.len() {
-        Err(SourceError::InvalidSource(format!(
+        Err(InterfaceError::InvalidInterface(format!(
           "distribution length ({}) wasn't of the requested length ({})",
           distribution.len(),
           expected_len

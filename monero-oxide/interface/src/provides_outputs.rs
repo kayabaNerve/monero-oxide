@@ -4,7 +4,7 @@ use alloc::{format, vec::Vec};
 use curve25519_dalek::EdwardsPoint;
 use monero_oxide::io::CompressedPoint;
 
-use crate::SourceError;
+use crate::InterfaceError;
 
 /// The response to an query for the information of a RingCT output.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -32,7 +32,7 @@ pub trait ProvidesUnvalidatedOutputs: Sync {
   fn output_indexes(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>>;
+  ) -> impl Send + Future<Output = Result<Vec<u64>, InterfaceError>>;
 
   /// Get the specified outputs from the RingCT (zero-amount) pool.
   ///
@@ -41,7 +41,7 @@ pub trait ProvidesUnvalidatedOutputs: Sync {
   fn ringct_outputs(
     &self,
     indexes: &[u64],
-  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, SourceError>>;
+  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, InterfaceError>>;
 }
 
 /// Provides information about outputs.
@@ -53,7 +53,7 @@ pub trait ProvidesOutputs: Sync {
   fn output_indexes(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>>;
+  ) -> impl Send + Future<Output = Result<Vec<u64>, InterfaceError>>;
 
   /// Get the specified outputs from the RingCT (zero-amount) pool.
   ///
@@ -62,14 +62,14 @@ pub trait ProvidesOutputs: Sync {
   fn ringct_outputs(
     &self,
     indexes: &[u64],
-  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, SourceError>>;
+  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, InterfaceError>>;
 }
 
 impl<P: ProvidesUnvalidatedOutputs> ProvidesOutputs for P {
   fn output_indexes(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Vec<u64>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<u64>, InterfaceError>> {
     <P as ProvidesUnvalidatedOutputs>::output_indexes(self, hash)
   }
 
@@ -80,11 +80,11 @@ impl<P: ProvidesUnvalidatedOutputs> ProvidesOutputs for P {
   fn ringct_outputs(
     &self,
     indexes: &[u64],
-  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, InterfaceError>> {
     async move {
       let outputs = <P as ProvidesUnvalidatedOutputs>::ringct_outputs(self, indexes).await?;
       if outputs.len() != indexes.len() {
-        Err(SourceError::InternalError(format!(
+        Err(InterfaceError::InternalError(format!(
           "`{}` returned {} outputs, expected {}",
           "ProvidesUnvalidatedOutputs::ringct_outputs",
           outputs.len(),

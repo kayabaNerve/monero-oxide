@@ -14,7 +14,7 @@ use simple_request::{
   Response, Client,
 };
 
-use monero_interface::{SourceError, MoneroDaemon};
+use monero_interface::{InterfaceError, MoneroDaemon};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -46,13 +46,15 @@ pub struct SimpleRequestRpc {
 impl SimpleRequestRpc {
   fn digest_auth_challenge(
     response: &Response,
-  ) -> Result<Option<(WwwAuthenticateHeader, u64)>, SourceError> {
+  ) -> Result<Option<(WwwAuthenticateHeader, u64)>, InterfaceError> {
     Ok(if let Some(header) = response.headers().get("www-authenticate") {
       Some((
         digest_auth::parse(header.to_str().map_err(|_| {
-          SourceError::InvalidSource("www-authenticate header wasn't a string".to_string())
+          InterfaceError::InvalidInterface("www-authenticate header wasn't a string".to_string())
         })?)
-        .map_err(|_| SourceError::InvalidSource("invalid digest-auth response".to_string()))?,
+        .map_err(|_| {
+          InterfaceError::InvalidInterface("invalid digest-auth response".to_string())
+        })?,
         0,
       ))
     } else {
@@ -64,7 +66,7 @@ impl SimpleRequestRpc {
   ///
   /// A daemon requiring authentication can be used via including the username and password in the
   /// URL.
-  pub async fn new(url: String) -> Result<SimpleRequestRpc, SourceError> {
+  pub async fn new(url: String) -> Result<SimpleRequestRpc, InterfaceError> {
     Self::with_custom_timeout(url, DEFAULT_TIMEOUT).await
   }
 
@@ -75,13 +77,13 @@ impl SimpleRequestRpc {
   pub async fn with_custom_timeout(
     mut url: String,
     request_timeout: Duration,
-  ) -> Result<SimpleRequestRpc, SourceError> {
+  ) -> Result<SimpleRequestRpc, InterfaceError> {
     let authentication = if url.contains('@') {
       // Parse out the username and password
       let url_clone = Zeroizing::new(url);
       let split_url = url_clone.split('@').collect::<Vec<_>>();
       if split_url.len() != 2 {
-        Err(SourceError::SourceError("invalid amount of login specifications".to_string()))?;
+        Err(InterfaceError::InterfaceError("invalid amount of login specifications".to_string()))?;
       }
       let mut userpass = split_url[0];
       url = split_url[1].to_string();
@@ -90,7 +92,9 @@ impl SimpleRequestRpc {
       if userpass.contains("://") {
         let split_userpass = userpass.split("://").collect::<Vec<_>>();
         if split_userpass.len() != 2 {
-          Err(SourceError::SourceError("invalid amount of protocol specifications".to_string()))?;
+          Err(InterfaceError::InterfaceError(
+            "invalid amount of protocol specifications".to_string(),
+          ))?;
         }
         url = split_userpass[0].to_string() + "://" + &url;
         userpass = split_userpass[1];
@@ -98,22 +102,21 @@ impl SimpleRequestRpc {
 
       let split_userpass = userpass.split(':').collect::<Vec<_>>();
       if split_userpass.len() > 2 {
-        Err(SourceError::SourceError("invalid amount of passwords".to_string()))?;
+        Err(InterfaceError::InterfaceError("invalid amount of passwords".to_string()))?;
       }
 
       let client = Client::without_connection_pool(&url)
-        .map_err(|_| SourceError::SourceError("invalid URL".to_string()))?;
+        .map_err(|_| InterfaceError::InterfaceError("invalid URL".to_string()))?;
       // Obtain the initial challenge, which also somewhat validates this connection
-      let challenge = Self::digest_auth_challenge(
-        &client
-          .request(
-            Request::post(url.clone())
-              .body(vec![].into())
-              .map_err(|e| SourceError::SourceError(format!("couldn't make request: {e:?}")))?,
-          )
-          .await
-          .map_err(|e| SourceError::SourceError(format!("{e:?}")))?,
-      )?;
+      let challenge =
+        Self::digest_auth_challenge(
+          &client
+            .request(Request::post(url.clone()).body(vec![].into()).map_err(|e| {
+              InterfaceError::InterfaceError(format!("couldn't make request: {e:?}"))
+            })?)
+            .await
+            .map_err(|e| InterfaceError::InterfaceError(format!("{e:?}")))?,
+        )?;
       Authentication::Authenticated {
         username: Zeroizing::new(split_userpass[0].to_string()),
         password: Zeroizing::new((*split_userpass.get(1).unwrap_or(&"")).to_string()),
@@ -133,21 +136,21 @@ impl SimpleRequestRpc {
     route: &str,
     body: Vec<u8>,
     response_size_limit: Option<usize>,
-  ) -> Result<Vec<u8>, SourceError> {
+  ) -> Result<Vec<u8>, InterfaceError> {
     let request_fn = |uri| {
       Request::post(uri)
         .body(body.clone().into())
-        .map_err(|e| SourceError::SourceError(format!("couldn't make request: {e:?}")))
+        .map_err(|e| InterfaceError::InterfaceError(format!("couldn't make request: {e:?}")))
     };
 
-    async fn body_from_response(response: Response<'_>) -> Result<Vec<u8>, SourceError> {
+    async fn body_from_response(response: Response<'_>) -> Result<Vec<u8>, InterfaceError> {
       let mut res = Vec::with_capacity(128);
       response
         .body()
         .await
-        .map_err(|e| SourceError::SourceError(format!("{e:?}")))?
+        .map_err(|e| InterfaceError::InterfaceError(format!("{e:?}")))?
         .read_to_end(&mut res)
-        .map_err(|e| SourceError::SourceError(format!("{e:?}")))?;
+        .map_err(|e| InterfaceError::InterfaceError(format!("{e:?}")))?;
       Ok(res)
     }
 
@@ -158,7 +161,7 @@ impl SimpleRequestRpc {
             client
               .request(request_fn(self.url.clone() + "/" + route)?)
               .await
-              .map_err(|e| SourceError::SourceError(format!("{e:?}")))?,
+              .map_err(|e| InterfaceError::InterfaceError(format!("{e:?}")))?,
           )
           .await?
         }
@@ -174,7 +177,7 @@ impl SimpleRequestRpc {
                 .1
                 .request(request)
                 .await
-                .map_err(|e| SourceError::SourceError(format!("{e:?}")))?,
+                .map_err(|e| InterfaceError::InterfaceError(format!("{e:?}")))?,
             )?;
             request = request_fn("/".to_string() + route)?;
           }
@@ -199,14 +202,14 @@ impl SimpleRequestRpc {
                 &challenge
                   .respond(&context)
                   .map_err(|_| {
-                    SourceError::InvalidSource(
+                    InterfaceError::InvalidInterface(
                       "couldn't respond to digest-auth challenge".to_string(),
                     )
                   })?
                   .to_header_string(),
               )
               .map_err(|_| {
-                SourceError::InternalError(
+                InterfaceError::InternalError(
                   "digest-auth challenge response wasn't a valid string for an HTTP header"
                     .to_string(),
                 )
@@ -221,7 +224,7 @@ impl SimpleRequestRpc {
             .1
             .request(request)
             .await
-            .map_err(|e| SourceError::SourceError(format!("{e:?}")));
+            .map_err(|e| InterfaceError::InterfaceError(format!("{e:?}")));
 
           let (error, is_stale) = match &response {
             Err(e) => (Some(e.clone()), false),
@@ -232,7 +235,7 @@ impl SimpleRequestRpc {
                   header
                     .to_str()
                     .map_err(|_| {
-                      SourceError::InvalidSource(
+                      InterfaceError::InvalidInterface(
                         "www-authenticate header wasn't a string".to_string(),
                       )
                     })?
@@ -260,7 +263,7 @@ impl SimpleRequestRpc {
               Err(e)?
             } else {
               debug_assert!(is_stale);
-              Err(SourceError::InvalidSource(
+              Err(InterfaceError::InvalidInterface(
                 "node claimed fresh connection had stale authentication".to_string(),
               ))?
             }
@@ -281,11 +284,11 @@ impl MoneroDaemon for SimpleRequestRpc {
     route: &str,
     body: Vec<u8>,
     response_size_limit: Option<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<u8>, SourceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<u8>, InterfaceError>> {
     async move {
       tokio::time::timeout(self.request_timeout, self.inner_post(route, body, response_size_limit))
         .await
-        .map_err(|e| SourceError::SourceError(format!("{e:?}")))?
+        .map_err(|e| InterfaceError::InterfaceError(format!("{e:?}")))?
     }
   }
 }
