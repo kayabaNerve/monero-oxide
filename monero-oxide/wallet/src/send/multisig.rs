@@ -42,6 +42,10 @@ pub struct TransactionMachine {
 /// Second FROST machine to produce a signed transaction.
 ///
 /// Panics if a non-empty message is provided, or if `cache`, `from_cache` are called.
+///
+/// This MUST only be passed preprocesses obtained via calling `read_preprocess` with this very
+/// machine. Other machines representing distinct executions of the protocol will almost certainly
+/// be incompatible.
 pub struct TransactionSignMachine {
   signable: SignableTransaction,
 
@@ -54,6 +58,10 @@ pub struct TransactionSignMachine {
 }
 
 /// Final FROST machine to produce a signed transaction.
+///
+/// This MUST only be passed shares obtained via calling `read_share` with this very machine.
+/// Shares from other machines, representing distinct executions of the signing protocol, will be
+/// incompatible.
 pub struct TransactionSignatureMachine {
   tx: Transaction,
   clsags: Vec<AlgorithmSignatureMachine<Ed25519, ClsagMultisig>>,
