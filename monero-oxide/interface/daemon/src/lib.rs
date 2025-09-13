@@ -188,7 +188,9 @@ impl<T: HttpTransport> MoneroDaemon<T> {
 
   /// Generate blocks, with the specified address receiving the block reward.
   ///
-  /// Returns the hashes of the generated blocks and the last block's number.
+  /// Returns the hashes of the generated blocks and the last block's alleged number.
+  ///
+  /// This is intended for testing purposes and does not validate the result.
   pub fn generate_blocks<const ADDR_BYTES: u128>(
     &self,
     address: &Address<ADDR_BYTES>,
@@ -357,6 +359,11 @@ mod provides_transaction {
 
           if !txs.missed_tx.is_empty() {
             Err(TransactionsError::TransactionNotFound)?;
+          }
+          if txs.txs.len() != this_count {
+            Err(InterfaceError::InvalidInterface(
+              "not missing any transactions yet didn't return all pruned transactions".to_string(),
+            ))?;
           }
 
           all_txs.extend(txs.txs);
