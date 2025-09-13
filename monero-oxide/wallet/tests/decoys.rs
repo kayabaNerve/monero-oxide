@@ -3,8 +3,7 @@ use monero_wallet::{DEFAULT_LOCK_WINDOW, transaction::Transaction, WalletOutput}
 
 mod runner;
 
-#[allow(clippy::upper_case_acronyms)]
-type SRR = MoneroDaemon<SimpleRequestTransport>;
+type Rpc = MoneroDaemon<SimpleRequestTransport>;
 
 test!(
   select_latest_output_as_decoy_canonical,
@@ -14,7 +13,7 @@ test!(
       builder.add_payment(addr, 2000000000000);
       (builder.build().unwrap(), ())
     },
-    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, ()| async move {
+    |_rpc: Rpc, block, tx: Transaction, mut scanner: Scanner, ()| async move {
       let output = scanner.scan(block).unwrap().not_additionally_locked().swap_remove(0);
       assert_eq!(output.transaction(), tx.hash());
       assert_eq!(output.commitment().amount, 2000000000000);
@@ -23,7 +22,7 @@ test!(
   ),
   (
     // Then make a second tx1
-    |rct_type: RctType, rpc: SRR, mut builder: Builder, addr, state: _| async move {
+    |rct_type: RctType, rpc: Rpc, mut builder: Builder, addr, state: _| async move {
       let output_tx0: WalletOutput = state;
 
       let input = OutputWithDecoys::fingerprintable_deterministic_new(
@@ -41,7 +40,7 @@ test!(
       (builder.build().unwrap(), (rct_type, output_tx0))
     },
     // Then make sure DSA selects freshly unlocked output from tx1 as a decoy
-    |rpc: SRR, _, tx: Transaction, _: Scanner, state: (_, _)| async move {
+    |rpc: Rpc, _, tx: Transaction, _: Scanner, state: (_, _)| async move {
       use rand_core::OsRng;
 
       let block_number = rpc.latest_block_number().await.unwrap();
@@ -90,7 +89,7 @@ test!(
       builder.add_payment(addr, 2000000000000);
       (builder.build().unwrap(), ())
     },
-    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, ()| async move {
+    |_rpc: Rpc, block, tx: Transaction, mut scanner: Scanner, ()| async move {
       let output = scanner.scan(block).unwrap().not_additionally_locked().swap_remove(0);
       assert_eq!(output.transaction(), tx.hash());
       assert_eq!(output.commitment().amount, 2000000000000);
@@ -99,8 +98,8 @@ test!(
   ),
   (
     // Then make a second tx1
-    |rct_type: RctType, rpc: SRR, mut builder: Builder, addr, output_tx0: WalletOutput| async move {
-      let rpc: SRR = rpc;
+    |rct_type: RctType, rpc: Rpc, mut builder: Builder, addr, output_tx0: WalletOutput| async move {
+      let rpc: Rpc = rpc;
 
       let input = OutputWithDecoys::new(
         &mut OsRng,
@@ -117,7 +116,7 @@ test!(
       (builder.build().unwrap(), (rct_type, output_tx0))
     },
     // Then make sure DSA selects freshly unlocked output from tx1 as a decoy
-    |rpc: SRR, _, tx: Transaction, _: Scanner, state: (_, _)| async move {
+    |rpc: Rpc, _, tx: Transaction, _: Scanner, state: (_, _)| async move {
       use rand_core::OsRng;
 
       let block_number = rpc.latest_block_number().await.unwrap();
