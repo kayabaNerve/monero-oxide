@@ -1,4 +1,4 @@
-use monero_simple_request_rpc::SimpleRequestRpc;
+use monero_simple_request_rpc::{prelude::MoneroDaemon, SimpleRequestTransport};
 use monero_wallet::{
   transaction::Transaction, address::SubaddressIndex, extra::PaymentId, GuaranteedScanner,
 };
@@ -6,7 +6,7 @@ use monero_wallet::{
 mod runner;
 
 #[allow(clippy::upper_case_acronyms)]
-type SRR = SimpleRequestRpc;
+type SRR = MoneroDaemon<SimpleRequestTransport>;
 type Tx = Transaction;
 
 test!(

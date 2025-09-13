@@ -19,3 +19,4 @@ workspace = true
 
 [dependencies]
 monero-wallet = { path = "../../monero-oxide/wallet", default-features = false, features = ["compile-time-generators"] }
+monero-daemon-rpc = { path = "../../monero-oxide/interface/daemon", default-features = false }

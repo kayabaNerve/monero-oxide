@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use rand_core::OsRng;
 
-use monero_simple_request_rpc::SimpleRequestRpc;
+use monero_simple_request_rpc::{prelude::MoneroDaemon, SimpleRequestTransport};
 use monero_wallet::{
   ringct::RctType, transaction::Transaction, interface::prelude::*, address::SubaddressIndex,
   extra::Extra, WalletOutput, OutputWithDecoys,
@@ -12,13 +12,13 @@ mod runner;
 use runner::{SignableTransactionBuilder, ring_len};
 
 #[allow(clippy::upper_case_acronyms)]
-type SRR = SimpleRequestRpc;
+type SRR = MoneroDaemon<SimpleRequestTransport>;
 type SB = ScannableBlock;
 
 // Set up inputs, select decoys, then add them to the TX builder
 async fn add_inputs(
   rct_type: RctType,
-  rpc: &SimpleRequestRpc,
+  rpc: &SRR,
   outputs: Vec<WalletOutput>,
   builder: &mut SignableTransactionBuilder,
 ) {
@@ -44,7 +44,7 @@ test!(
       builder.add_payment(addr, 5);
       (builder.build().unwrap(), ())
     },
-    |_rpc: SimpleRequestRpc, block, tx: Transaction, mut scanner: Scanner, ()| async move {
+    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, ()| async move {
       let output = scanner.scan(block).unwrap().not_additionally_locked().swap_remove(0);
       assert_eq!(output.transaction(), tx.hash());
       assert_eq!(output.commitment().amount, 5);
@@ -60,7 +60,7 @@ test!(
       builder.add_payment(addr, 2000000000000);
       (builder.build().unwrap(), ())
     },
-    |_rpc: SimpleRequestRpc, block, tx: Transaction, mut scanner: Scanner, ()| async move {
+    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, ()| async move {
       let mut outputs = scanner.scan(block).unwrap().not_additionally_locked();
       assert_eq!(outputs.len(), 2);
       assert_eq!(outputs[0].transaction(), tx.hash());
@@ -77,7 +77,7 @@ test!(
       builder.add_payment(addr, 6);
       (builder.build().unwrap(), ())
     },
-    |_rpc: SimpleRequestRpc, block, tx: Transaction, mut scanner: Scanner, ()| async move {
+    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, ()| async move {
       let output = scanner.scan(block).unwrap().not_additionally_locked().swap_remove(0);
       assert_eq!(output.transaction(), tx.hash());
       assert_eq!(output.commitment().amount, 6);
@@ -95,7 +95,7 @@ test!(
       builder.add_payment(addr, 1000000000000);
       (builder.build().unwrap(), ())
     },
-    |_rpc: SimpleRequestRpc, block, tx: Transaction, mut scanner: Scanner, ()| async move {
+    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, ()| async move {
       let outputs = scanner.scan(block).unwrap().not_additionally_locked();
       assert_eq!(outputs.len(), 1);
       assert_eq!(outputs[0].transaction(), tx.hash());
@@ -104,7 +104,7 @@ test!(
     },
   ),
   (
-    |rct_type, rpc: SimpleRequestRpc, _, _, outputs: Vec<WalletOutput>| async move {
+    |rct_type, rpc: SRR, _, _, outputs: Vec<WalletOutput>| async move {
       use monero_wallet::interface::FeePriority;
 
       let view_priv = Zeroizing::new(Scalar::random(&mut OsRng));
@@ -160,7 +160,7 @@ test!(
       builder.add_payment(addr, 2000000000000);
       (builder.build().unwrap(), ())
     },
-    |_rpc: SimpleRequestRpc, block, tx: Transaction, mut scanner: Scanner, ()| async move {
+    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, ()| async move {
       let outputs = scanner.scan(block).unwrap().not_additionally_locked();
       assert_eq!(outputs.len(), 1);
       assert_eq!(outputs[0].transaction(), tx.hash());
@@ -174,7 +174,7 @@ test!(
       builder.add_payment(addr, 2);
       (builder.build().unwrap(), ())
     },
-    |_rpc: SimpleRequestRpc, block, tx: Transaction, mut scanner: Scanner, ()| async move {
+    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, ()| async move {
       let output = scanner.scan(block).unwrap().not_additionally_locked().swap_remove(0);
       assert_eq!(output.transaction(), tx.hash());
       assert_eq!(output.commitment().amount, 2);
@@ -189,7 +189,7 @@ test!(
       builder.add_payment(addr, 1000000000000);
       (builder.build().unwrap(), ())
     },
-    |_rpc: SimpleRequestRpc, block, tx: Transaction, mut scanner: Scanner, ()| async move {
+    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, ()| async move {
       let outputs = scanner.scan(block).unwrap().not_additionally_locked();
       assert_eq!(outputs.len(), 1);
       assert_eq!(outputs[0].transaction(), tx.hash());
@@ -206,7 +206,7 @@ test!(
       }
       (builder.build().unwrap(), ())
     },
-    |_rpc: SimpleRequestRpc, block, tx: Transaction, mut scanner: Scanner, ()| async move {
+    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, ()| async move {
       let mut scanned_tx = scanner.scan(block).unwrap().not_additionally_locked();
 
       let mut output_amounts = HashSet::new();
@@ -231,7 +231,7 @@ test!(
       builder.add_payment(addr, 1000000000000);
       (builder.build().unwrap(), ())
     },
-    |_rpc: SimpleRequestRpc, block, tx: Transaction, mut scanner: Scanner, ()| async move {
+    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, ()| async move {
       let outputs = scanner.scan(block).unwrap().not_additionally_locked();
       assert_eq!(outputs.len(), 1);
       assert_eq!(outputs[0].transaction(), tx.hash());
@@ -257,11 +257,7 @@ test!(
 
       (builder.build().unwrap(), (scanner, subaddresses))
     },
-    |_rpc: SimpleRequestRpc,
-     block,
-     tx: Transaction,
-     _,
-     mut state: (Scanner, Vec<SubaddressIndex>)| async move {
+    |_rpc: SRR, block, tx: Transaction, _, mut state: (Scanner, Vec<SubaddressIndex>)| async move {
       use std::collections::HashMap;
 
       let mut scanned_tx = state.0.scan(block).unwrap().not_additionally_locked();
@@ -292,7 +288,7 @@ test!(
       builder.add_payment(addr, 1000000000000);
       (builder.build().unwrap(), ())
     },
-    |_rpc: SimpleRequestRpc, block, tx: Transaction, mut scanner: Scanner, ()| async move {
+    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, ()| async move {
       let outputs = scanner.scan(block).unwrap().not_additionally_locked();
       assert_eq!(outputs.len(), 1);
       assert_eq!(outputs[0].transaction(), tx.hash());
@@ -301,7 +297,7 @@ test!(
     },
   ),
   (
-    |rct_type, rpc: SimpleRequestRpc, _, addr, outputs: Vec<WalletOutput>| async move {
+    |rct_type, rpc: SRR, _, addr, outputs: Vec<WalletOutput>| async move {
       use monero_wallet::interface::FeePriority;
 
       let mut outgoing_view = Zeroizing::new([0; 32]);
@@ -318,7 +314,7 @@ test!(
 
       (builder.build().unwrap(), ())
     },
-    |_rpc: SimpleRequestRpc, block, tx: Transaction, mut scanner: Scanner, ()| async move {
+    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, ()| async move {
       let mut outputs = scanner.scan(block).unwrap().not_additionally_locked();
       assert_eq!(outputs.len(), 2);
       assert_eq!(outputs[0].transaction(), tx.hash());
@@ -343,7 +339,7 @@ test!(
       builder.add_payment(addr, 1000000000000);
       (builder.build().unwrap(), ())
     },
-    |_rpc: SimpleRequestRpc, block, tx: Transaction, mut scanner: Scanner, ()| async move {
+    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, ()| async move {
       let outputs = scanner.scan(block).unwrap().not_additionally_locked();
       assert_eq!(outputs.len(), 1);
       assert_eq!(outputs[0].transaction(), tx.hash());
@@ -352,7 +348,7 @@ test!(
     },
   ),
   (
-    |rct_type, rpc: SimpleRequestRpc, _, _, outputs: Vec<WalletOutput>| async move {
+    |rct_type, rpc: SRR, _, _, outputs: Vec<WalletOutput>| async move {
       use monero_wallet::interface::FeePriority;
 
       let view_priv = Zeroizing::new(Scalar::random(&mut OsRng));
@@ -379,7 +375,7 @@ test!(
       builder.add_payment(view.legacy_address(Network::Mainnet), 1);
       (builder.build().unwrap(), change_view)
     },
-    |_rpc: SimpleRequestRpc, block, _, _, change_view: ViewPair| async move {
+    |_rpc: SRR, block, _, _, change_view: ViewPair| async move {
       // Make sure the change can pick up its output
       let mut change_scanner = Scanner::new(change_view);
       change_scanner.register_subaddress(SubaddressIndex::new(0, 1).unwrap());

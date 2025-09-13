@@ -878,6 +878,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "monero-daemon-rpc"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "hex",
+ "monero-address",
+ "monero-interface",
+ "monero-oxide",
+ "serde",
+ "serde_json",
+ "std-shims",
+]
+
+[[package]]
 name = "monero-generators"
 version = "0.4.0"
 dependencies = [
@@ -898,10 +912,7 @@ version = "0.1.0"
 dependencies = [
  "curve25519-dalek",
  "hex",
- "monero-address",
  "monero-oxide",
- "serde",
- "serde_json",
  "std-shims",
  "thiserror",
  "zeroize",
@@ -953,6 +964,7 @@ dependencies = [
 name = "monero-oxide-no-std-tests"
 version = "0.1.0"
 dependencies = [
+ "monero-daemon-rpc",
  "monero-wallet",
 ]
 
@@ -962,7 +974,6 @@ version = "0.1.0"
 dependencies = [
  "curve25519-dalek",
  "hex",
- "monero-interface",
  "monero-oxide",
  "monero-simple-request-rpc",
  "rand_core",
@@ -991,7 +1002,7 @@ dependencies = [
  "digest_auth",
  "hex",
  "monero-address",
- "monero-interface",
+ "monero-daemon-rpc",
  "simple-request",
  "tokio",
  "zeroize",

@@ -8,7 +8,7 @@ use curve25519_dalek::{constants::ED25519_BASEPOINT_TABLE, scalar::Scalar};
 
 use tokio::sync::Mutex;
 
-use monero_simple_request_rpc::SimpleRequestRpc;
+use monero_simple_request_rpc::{prelude::MoneroDaemon, SimpleRequestTransport};
 use monero_wallet::{
   ringct::RctType,
   transaction::Transaction,
@@ -65,7 +65,7 @@ pub fn random_guaranteed_address() -> (Scalar, GuaranteedViewPair, MoneroAddress
 // TODO: Support transactions already on-chain
 // TODO: Don't have a side effect of mining blocks more blocks than needed under race conditions
 pub async fn mine_until_unlocked(
-  rpc: &SimpleRequestRpc,
+  rpc: &MoneroDaemon<SimpleRequestTransport>,
   addr: &MoneroAddress,
   tx_hash: [u8; 32],
 ) -> Block {
@@ -97,7 +97,10 @@ pub async fn mine_until_unlocked(
 
 // Mines 60 blocks and returns an unlocked miner TX output.
 #[allow(dead_code)]
-pub async fn get_miner_tx_output(rpc: &SimpleRequestRpc, view: &ViewPair) -> WalletOutput {
+pub async fn get_miner_tx_output(
+  rpc: &MoneroDaemon<SimpleRequestTransport>,
+  view: &ViewPair,
+) -> WalletOutput {
   let mut scanner = Scanner::new(view.clone());
 
   // Mine 60 blocks to unlock a miner TX
@@ -125,8 +128,9 @@ pub fn check_weight_and_fee(tx: &Transaction, fee_rate: FeeRate) {
   assert_eq!(fee, expected_fee);
 }
 
-pub async fn rpc() -> SimpleRequestRpc {
-  let rpc = SimpleRequestRpc::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
+pub async fn rpc() -> MoneroDaemon<SimpleRequestTransport> {
+  let rpc =
+    SimpleRequestTransport::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
 
   const BLOCKS_TO_MINE: usize = 110;
 

@@ -29,9 +29,6 @@ pub use provides_decoys::*;
 mod provides_fee_rates;
 pub use provides_fee_rates::*;
 
-mod monero_daemon;
-pub use monero_daemon::*;
-
 /// An error from the interface.
 #[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
 pub enum InterfaceError {
@@ -46,10 +43,10 @@ pub enum InterfaceError {
   InvalidInterface(String),
 }
 
-/// A prelude of recommend imports to glob import.
+/// A prelude of recommended imports to glob import.
 pub mod prelude {
   pub use crate::{
-    InterfaceError, MoneroDaemon, ProvidesBlockchainMeta, TransactionsError, ProvidesTransactions,
+    InterfaceError, ProvidesBlockchainMeta, TransactionsError, ProvidesTransactions,
     PublishTransactionError, PublishTransaction, ProvidesBlockchain, ProvidesOutputs,
     ScannableBlock, ExpandToScannableBlock, ProvidesScannableBlocks, EvaluateUnlocked,
     ProvidesDecoys, FeePriority, FeeRate, FeeError, ProvidesFeeRates,

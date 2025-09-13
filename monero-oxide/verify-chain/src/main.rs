@@ -15,12 +15,11 @@ use monero_oxide::{
   io::CompressedPoint,
 };
 
-use monero_interface::prelude::*;
-use monero_simple_request_rpc::SimpleRequestRpc;
+use monero_simple_request_rpc::{prelude::*, SimpleRequestTransport};
 
 use tokio::task::JoinHandle;
 
-async fn check_block(rpc: impl MoneroDaemon, block_i: usize) {
+async fn check_block<T: HttpTransport>(rpc: MoneroDaemon<T>, block_i: usize) {
   let hash = loop {
     match rpc.block_hash(block_i).await {
       Ok(hash) => break hash,
@@ -129,8 +128,8 @@ async fn check_block(rpc: impl MoneroDaemon, block_i: usize) {
                   actual_indexes.push(running_sum);
                 }
 
-                async fn get_outs(
-                  rpc: &impl MoneroDaemon,
+                async fn get_outs<T: HttpTransport>(
+                  rpc: &MoneroDaemon<T>,
                   amount: u64,
                   indexes: &[u64],
                 ) -> Vec<[CompressedPoint; 2]> {
@@ -245,9 +244,9 @@ async fn main() {
   let nodes = if specified_nodes.is_empty() { default_nodes } else { specified_nodes };
 
   let rpc = |url: String| async move {
-    SimpleRequestRpc::new(url.clone())
+    SimpleRequestTransport::new(url.clone())
       .await
-      .unwrap_or_else(|_| panic!("couldn't create SimpleRequestRpc connected to {url}"))
+      .unwrap_or_else(|_| panic!("couldn't create SimpleRequestTransport connected to {url}"))
   };
   let main_rpc = rpc(nodes[0].clone()).await;
   let mut rpcs = vec![];

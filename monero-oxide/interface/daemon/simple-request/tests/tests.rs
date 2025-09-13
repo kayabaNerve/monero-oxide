@@ -6,7 +6,7 @@ use monero_address::{Network, MoneroAddress};
 // monero-interface doesn't include a transport
 // We can't include the simple-request crate there as then we'd have a cyclical dependency
 // Accordingly, we test monero-rpc here (implicitly testing the simple-request transport)
-use monero_simple_request_rpc::*;
+use monero_simple_request_rpc::{prelude::*, *};
 
 static SEQUENTIAL: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -15,11 +15,10 @@ const ADDRESS: &str =
 
 #[tokio::test]
 async fn test_rpc() {
-  use monero_interface::prelude::*;
-
   let guard = SEQUENTIAL.lock().await;
 
-  let rpc = SimpleRequestRpc::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
+  let rpc =
+    SimpleRequestTransport::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
 
   {
     // Test get_latest_block_number
@@ -62,11 +61,10 @@ async fn test_rpc() {
 
 #[tokio::test]
 async fn test_decoy_rpc() {
-  use monero_interface::prelude::*;
-
   let guard = SEQUENTIAL.lock().await;
 
-  let rpc = SimpleRequestRpc::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
+  let rpc =
+    SimpleRequestTransport::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
 
   // Ensure there's blocks on-chain
   rpc
@@ -114,11 +112,10 @@ async fn test_decoy_rpc() {
 /*
 #[tokio::test]
 async fn test_zero_out_tx_o_indexes() {
-  use monero_rpc::Rpc;
-
   let guard = SEQUENTIAL.lock().await;
 
-  let rpc = SimpleRequestRpc::new("https://node.sethforprivacy.com".to_string()).await.unwrap();
+  let rpc =
+    SimpleRequestTransport::new("https://node.sethforprivacy.com".to_string()).await.unwrap();
 
   assert_eq!(
     rpc

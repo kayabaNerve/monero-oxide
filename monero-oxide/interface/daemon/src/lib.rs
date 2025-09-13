@@ -1,13 +1,21 @@
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![doc = include_str!("../README.md")]
+#![deny(missing_docs)]
+#![cfg_attr(not(feature = "std"), no_std)]
+
 use core::{
   fmt::Debug,
   ops::{Bound, RangeBounds},
   future::Future,
 };
+
+extern crate alloc;
 use alloc::{
   format, vec,
   vec::Vec,
   string::{String, ToString},
 };
+
 use std_shims::io;
 
 use curve25519_dalek::EdwardsPoint;
@@ -23,7 +31,7 @@ use monero_oxide::{
 };
 use monero_address::Address;
 
-use crate::*;
+use monero_interface::*;
 
 const BASE_RESPONSE_SIZE: usize = u16::MAX as usize;
 const BYTE_FACTOR_IN_JSON_RESPONSE_SIZE: usize = 100;
@@ -38,11 +46,7 @@ const BYTE_FACTOR_IN_BIN_RESPONSE_SIZE: usize = 4;
   entire Monero block (at its default block size limit).
 */
 const fn const_max(a: usize, b: usize) -> usize {
-  if a > b {
-    a
-  } else {
-    b
-  }
+  if a > b { a } else { b }
 }
 const TRANSACTION_SIZE_BOUND: usize = const_max(300_000, MAX_NON_MINER_TRANSACTION_SIZE);
 
@@ -79,15 +83,16 @@ struct JsonRpcResponse<T> {
   result: T,
 }
 
-/// An RPC connection to a Monero daemon.
+#[rustfmt::skip]
+/// An HTTP transport usable with a Monero daemon.
 ///
 /// This is abstract such that users can use an HTTP library (which being their choice), a
 /// Tor/i2p-based transport, or even a memory buffer an external service somehow routes.
 ///
 /// While no implementors are directly provided, [monero-simple-request-rpc](
-///   https://github.com/monero-oxide/monero-oxide/tree/main/monero-oxide/rpc/simple-request
+///   https://github.com/monero-oxide/monero-oxide/tree/main/monero-oxide/interface/daemon/simple-request
 /// ) is recommended.
-pub trait MoneroDaemon: Sync + Clone {
+pub trait HttpTransport: Sync + Clone {
   /// Perform a POST request to the specified route with the specified body.
   ///
   /// The implementor is left to handle anything such as authentication.
@@ -97,12 +102,24 @@ pub trait MoneroDaemon: Sync + Clone {
     body: Vec<u8>,
     response_size_limit: Option<usize>,
   ) -> impl Send + Future<Output = Result<Vec<u8>, InterfaceError>>;
+}
 
+/// A connection to a Monero daemon.
+#[derive(Clone)]
+pub struct MoneroDaemon<T: HttpTransport>(pub T);
+
+impl<T: Debug + HttpTransport> core::fmt::Debug for MoneroDaemon<T> {
+  fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> Result<(), core::fmt::Error> {
+    fmt.debug_struct("MoneroDaemon").field("0", &self.0).finish()
+  }
+}
+
+impl<T: HttpTransport> MoneroDaemon<T> {
   /// Perform a RPC call to the specified route with the provided parameters.
   ///
   /// This is NOT a JSON-RPC call. They use a route of "json_rpc" and are available via
   /// `json_rpc_call`.
-  fn rpc_call<Params: Send + Serialize + Debug, Response: DeserializeOwned + Debug>(
+  pub fn rpc_call<Params: Send + Serialize + Debug, Response: DeserializeOwned + Debug>(
     &self,
     route: &str,
     params: Option<Params>,
@@ -110,6 +127,7 @@ pub trait MoneroDaemon: Sync + Clone {
   ) -> impl Send + Future<Output = Result<Response, InterfaceError>> {
     async move {
       let res = self
+        .0
         .post(
           route,
           if let Some(params) = params.as_ref() {
@@ -135,7 +153,7 @@ pub trait MoneroDaemon: Sync + Clone {
   }
 
   /// Perform a JSON-RPC call with the specified method with the provided parameters.
-  fn json_rpc_call<Response: DeserializeOwned + Debug>(
+  pub fn json_rpc_call<Response: DeserializeOwned + Debug>(
     &self,
     method: &str,
     params: Option<Value>,
@@ -165,13 +183,13 @@ pub trait MoneroDaemon: Sync + Clone {
     params: Vec<u8>,
     response_size_limit: Option<usize>,
   ) -> impl Send + Future<Output = Result<Vec<u8>, InterfaceError>> {
-    async move { self.post(route, params, response_size_limit).await }
+    async move { self.0.post(route, params, response_size_limit).await }
   }
 
   /// Generate blocks, with the specified address receiving the block reward.
   ///
   /// Returns the hashes of the generated blocks and the last block's number.
-  fn generate_blocks<const ADDR_BYTES: u128>(
+  pub fn generate_blocks<const ADDR_BYTES: u128>(
     &self,
     address: &Address<ADDR_BYTES>,
     block_count: usize,
@@ -205,7 +223,7 @@ pub trait MoneroDaemon: Sync + Clone {
   }
 }
 
-impl<D: MoneroDaemon> ProvidesBlockchainMeta for D {
+impl<T: HttpTransport> ProvidesBlockchainMeta for MoneroDaemon<T> {
   fn latest_block_number(&self) -> impl Send + Future<Output = Result<usize, InterfaceError>> {
     async move {
       #[derive(Debug, Deserialize)]
@@ -248,7 +266,7 @@ mod provides_transaction {
   }
 
   #[rustfmt::skip]
-  impl<D: MoneroDaemon> ProvidesUnvalidatedTransactions for D {
+  impl<T: HttpTransport> ProvidesUnvalidatedTransactions for MoneroDaemon<T> {
     fn transactions(
       &self,
       hashes: &[[u8; 32]],
@@ -371,7 +389,7 @@ mod provides_transaction {
   }
 }
 
-impl<D: MoneroDaemon> PublishTransaction for D {
+impl<T: HttpTransport> PublishTransaction for MoneroDaemon<T> {
   fn publish_transaction(
     &self,
     tx: &Transaction,
@@ -410,7 +428,7 @@ impl<D: MoneroDaemon> PublishTransaction for D {
   }
 }
 
-impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
+impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
   fn block_by_number(
     &self,
     number: usize,
@@ -488,7 +506,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedBlockchain for D {
   }
 }
 
-impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
+impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
   fn output_indexes(
     &self,
     hash: [u8; 32],
@@ -759,7 +777,7 @@ impl<D: MoneroDaemon> ProvidesUnvalidatedOutputs for D {
   }
 }
 
-impl<D: MoneroDaemon> ProvidesUnvalidatedDecoys for D {
+impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
   fn ringct_output_distribution(
     &self,
     range: impl Send + RangeBounds<usize>,
@@ -940,7 +958,7 @@ mod provides_fee_rates {
   //   /src/wallet/wallet2.cpp#L121
   const GRACE_BLOCKS_FOR_FEE_ESTIMATE: u64 = 10;
 
-  impl<D: MoneroDaemon> ProvidesUnvalidatedFeeRates for D {
+  impl<T: HttpTransport> ProvidesUnvalidatedFeeRates for MoneroDaemon<T> {
     fn fee_rate(
       &self,
       priority: FeePriority,
@@ -1002,4 +1020,10 @@ mod provides_fee_rates {
       }
     }
   }
+}
+
+/// A prelude of recommended imports to glob import.
+pub mod prelude {
+  pub use monero_interface::prelude::*;
+  pub use crate::{HttpTransport, MoneroDaemon};
 }

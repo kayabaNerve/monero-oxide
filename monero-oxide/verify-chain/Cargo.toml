@@ -26,7 +26,6 @@ serde = { version = "1", default-features = false, features = ["derive", "alloc"
 serde_json = { version = "1", default-features = false, features = ["alloc", "std"] }
 
 monero-oxide = { path = "..", default-features = false, features = ["std", "compile-time-generators"] }
-monero-interface = { path = "../interface", default-features = false, features = ["std"] }
-monero-simple-request-rpc = { path = "../interface/simple-request", default-features = false }
+monero-simple-request-rpc = { path = "../interface/daemon/simple-request", default-features = false }
 
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros"] }

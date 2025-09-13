@@ -14,7 +14,8 @@ use simple_request::{
   Response, Client,
 };
 
-use monero_interface::{InterfaceError, MoneroDaemon};
+pub use monero_daemon_rpc::prelude;
+use monero_daemon_rpc::{prelude::InterfaceError, HttpTransport, MoneroDaemon};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -33,17 +34,15 @@ enum Authentication {
   },
 }
 
-/// An HTTP(S) transport for the RPC.
-///
-/// Requires tokio.
+/// An HTTP(S) transport to connect to a Monero daemon.
 #[derive(Clone, Debug)]
-pub struct SimpleRequestRpc {
+pub struct SimpleRequestTransport {
   authentication: Authentication,
   url: String,
   request_timeout: Duration,
 }
 
-impl SimpleRequestRpc {
+impl SimpleRequestTransport {
   fn digest_auth_challenge(
     response: &Response,
   ) -> Result<Option<(WwwAuthenticateHeader, u64)>, InterfaceError> {
@@ -66,7 +65,7 @@ impl SimpleRequestRpc {
   ///
   /// A daemon requiring authentication can be used via including the username and password in the
   /// URL.
-  pub async fn new(url: String) -> Result<SimpleRequestRpc, InterfaceError> {
+  pub async fn new(url: String) -> Result<MoneroDaemon<SimpleRequestTransport>, InterfaceError> {
     Self::with_custom_timeout(url, DEFAULT_TIMEOUT).await
   }
 
@@ -77,7 +76,7 @@ impl SimpleRequestRpc {
   pub async fn with_custom_timeout(
     mut url: String,
     request_timeout: Duration,
-  ) -> Result<SimpleRequestRpc, InterfaceError> {
+  ) -> Result<MoneroDaemon<SimpleRequestTransport>, InterfaceError> {
     let authentication = if url.contains('@') {
       // Parse out the username and password
       let url_clone = Zeroizing::new(url);
@@ -126,11 +125,11 @@ impl SimpleRequestRpc {
       Authentication::Unauthenticated(Client::with_connection_pool())
     };
 
-    Ok(SimpleRequestRpc { authentication, url, request_timeout })
+    Ok(MoneroDaemon(SimpleRequestTransport { authentication, url, request_timeout }))
   }
 }
 
-impl SimpleRequestRpc {
+impl SimpleRequestTransport {
   async fn inner_post(
     &self,
     route: &str,
@@ -278,7 +277,7 @@ impl SimpleRequestRpc {
   }
 }
 
-impl MoneroDaemon for SimpleRequestRpc {
+impl HttpTransport for SimpleRequestTransport {
   fn post(
     &self,
     route: &str,

@@ -1,11 +1,11 @@
 use monero_oxide::transaction::Transaction;
-use monero_simple_request_rpc::SimpleRequestRpc;
+use monero_simple_request_rpc::{prelude::MoneroDaemon, SimpleRequestTransport};
 use monero_wallet::{extra::MAX_ARBITRARY_DATA_SIZE, send::SendError};
 
 mod runner;
 
 #[allow(clippy::upper_case_acronyms)]
-type SRR = SimpleRequestRpc;
+type SRR = MoneroDaemon<SimpleRequestTransport>;
 
 test!(
   add_single_data_less_than_max,
