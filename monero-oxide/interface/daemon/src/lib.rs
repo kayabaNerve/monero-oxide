@@ -673,19 +673,11 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
           )
           .await?;
 
-        let start = res.len();
-
         epee::accumulate_outs(&outs, indexes.len(), &mut res).map_err(|e| {
           InterfaceError::InvalidInterface(format!(
             "couldn't deserialize `get_outs` response: {e:?}"
           ))
         })?;
-
-        if res.len() != (start + indexes.len()) {
-          Err(InterfaceError::InvalidInterface(
-            "`get_outs` response was missing fields".to_string(),
-          ))?;
-        }
       }
 
       Ok(res)

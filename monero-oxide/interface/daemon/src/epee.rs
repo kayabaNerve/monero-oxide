@@ -282,6 +282,8 @@ pub(crate) fn accumulate_outs(
   amount: usize,
   res: &mut Vec<RingCtOutputInformation>,
 ) -> io::Result<()> {
+  let start = res.len();
+
   let mut block_numbers = seek_all(outs, Type::Uint64, "height")?;
   let mut keys = seek_all(outs, Type::String, "key")?;
   let mut commitments = seek_all(outs, Type::String, "mask")?;
@@ -315,6 +317,10 @@ pub(crate) fn accumulate_outs(
     let unlocked = read_byte(&mut unlocked?.1)? != 0;
 
     res.push(RingCtOutputInformation { block_number, key, commitment, transaction, unlocked });
+  }
+
+  if res.len() != (start + amount) {
+    Err(io::Error::other("`get_outs` had less outs than expected"))?;
   }
 
   if block_numbers.next().is_some() ||
