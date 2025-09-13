@@ -6,9 +6,13 @@
 use std_shims::prelude::*;
 use std_shims::io;
 
-use monero_oxide::io::{CompressedPoint, read_byte, read_u64, read_bytes, read_raw_vec};
+use monero_oxide::{
+  io::{CompressedPoint, read_byte, read_u64, read_bytes, read_raw_vec},
+  transaction::{Pruned, Transaction},
+  block::Block,
+};
 
-use crate::{InterfaceError, RingCtOutputInformation};
+use crate::{InterfaceError, PrunedTransactionWithPrunableHash, RingCtOutputInformation};
 
 // epee header, an 8-byte magic and a version
 pub(crate) const HEADER: &[u8] = b"\x01\x11\x01\x01\x01\x01\x02\x01\x01";
@@ -170,13 +174,7 @@ impl<'a> Iterator for Seek<'a> {
             let key = read_key(&mut self.reader)?;
             let (kind, len) = Type::read(&mut self.reader)?;
             self.stack.push((kind, len));
-            if key == self.field_name.as_bytes() {
-              if kind != self.expected_type {
-                Err(io::Error::other(format!(
-                  "seeked epee field `{}` was type {kind:?}, expected {:?}",
-                  self.field_name, self.expected_type,
-                )))?;
-              }
+            if (key == self.field_name.as_bytes()) && (kind == self.expected_type) {
               return Ok(Some((len, self.reader)));
             }
           }
@@ -335,4 +333,87 @@ pub(crate) fn accumulate_outs(
   }
 
   Ok(())
+}
+
+pub(crate) fn extract_blocks_from_blocks_bin(
+  blocks: &[u8],
+) -> Result<impl use<'_> + Iterator<Item = Result<Block, InterfaceError>>, InterfaceError> {
+  let blocks = seek_all(blocks, Type::String, "block").map_err(|e| {
+    InterfaceError::InvalidInterface(format!(
+      "couldn't `seek_all` for `get_blocks_by_height.bin`: {e:?}"
+    ))
+  })?;
+
+  Ok(blocks.map(|block| {
+    let mut block_string = block
+      .map_err(|e| InterfaceError::InvalidInterface(format!("couldn't seek `block`: {e:?}")))?
+      .1;
+    let _ = read_vi(&mut block_string)
+      .map_err(|_| InterfaceError::InvalidInterface("couldn't read block's length".to_string()))?;
+    Block::read(&mut block_string)
+      .map_err(|_| InterfaceError::InvalidInterface("invalid block".to_string()))
+  }))
+}
+
+pub(crate) fn extract_txs_from_blocks_bin(
+  blocks: &[u8],
+) -> Result<
+  impl use<'_> + Iterator<Item = Result<PrunedTransactionWithPrunableHash, InterfaceError>>,
+  InterfaceError,
+> {
+  let mut txs = seek_all(blocks, Type::String, "blob").map_err(|e| {
+    InterfaceError::InvalidInterface(format!(
+      "couldn't `seek_all` for `get_blocks_by_height.bin`: {e:?}"
+    ))
+  })?;
+  let mut prunable_hashes = seek_all(blocks, Type::String, "prunable_hash").map_err(|e| {
+    InterfaceError::InvalidInterface(format!(
+      "couldn't `seek_all` for `get_blocks_by_height.bin`: {e:?}"
+    ))
+  })?;
+
+  Ok(core::iter::from_fn(move || {
+    let tx = txs.next();
+    let prunable_hash = prunable_hashes.next();
+    if tx.is_some() != prunable_hash.is_some() {
+      return Some(Err(InterfaceError::InvalidInterface(
+        "node had unbalanced amount of transactions, prunable hashes".to_string(),
+      )));
+    }
+
+    let tx = tx?.map_err(|e| {
+      InterfaceError::InvalidInterface(format!("couldn't seek transaction `block`: {e:?}"))
+    });
+    let prunable_hash = prunable_hash?.map_err(|e| {
+      InterfaceError::InvalidInterface(format!("couldn't seek transaction `prunable_hash`: {e:?}"))
+    });
+    Some(tx.and_then(|(_, mut tx)| {
+      prunable_hash.and_then(|(_, mut prunable_hash)| {
+        let _ = read_vi(&mut tx).map_err(|_| {
+          InterfaceError::InvalidInterface("couldn't read transactions's length".to_string())
+        })?;
+        let tx = Transaction::<Pruned>::read(&mut tx).map_err(|e| {
+          InterfaceError::InvalidInterface(format!(
+            "blocks.bin contains invalid pruned transaction: {e:?}"
+          ))
+        })?;
+        let _ = read_vi(&mut prunable_hash).map_err(|_| {
+          InterfaceError::InvalidInterface("couldn't read prumnable hash's length".to_string())
+        })?;
+        let prunable_hash = read_bytes::<_, 32>(&mut prunable_hash).map_err(|e| {
+          InterfaceError::InvalidInterface(format!(
+            "couldn't read prunable hash from blocks.bin: {e:?}",
+          ))
+        })?;
+
+        Ok(if matches!(tx, Transaction::V1 { .. }) {
+          PrunedTransactionWithPrunableHash::new(tx, None)
+            .expect("v1 transaction expected prunable hash")
+        } else {
+          PrunedTransactionWithPrunableHash::new(tx, Some(prunable_hash))
+            .expect("non-v1 transaction expected no prunable hash")
+        })
+      })
+    }))
+  }))
 }
