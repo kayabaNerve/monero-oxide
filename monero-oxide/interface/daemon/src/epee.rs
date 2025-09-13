@@ -1,3 +1,7 @@
+// https://github.com/jeffro256/serde_epee
+//  /tree/cbebe75475fb2c6073f7b2e058c88ceb2531de17PORTABLE_STORAGE.md
+// for the best documentation on the epee specification.
+
 use std_shims::io;
 
 use monero_oxide::io::{CompressedPoint, read_byte, read_u64, read_bytes, read_raw_vec};
