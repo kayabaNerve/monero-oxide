@@ -5,7 +5,7 @@
 
 use core::{
   fmt::Debug,
-  ops::{Bound, RangeBounds},
+  ops::{RangeInclusive, Bound, RangeBounds},
   future::Future,
 };
 
@@ -16,15 +16,13 @@ use alloc::{
   string::{String, ToString},
 };
 
-use std_shims::io;
-
 use curve25519_dalek::EdwardsPoint;
 
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 use monero_oxide::{
-  io::{CompressedPoint, read_byte, read_u64, read_bytes},
+  io::read_u64,
   transaction::{MAX_NON_MINER_TRANSACTION_SIZE, Input, Timelock, Pruned, Transaction},
   block::Block,
   DEFAULT_LOCK_WINDOW,
@@ -438,66 +436,102 @@ impl<T: HttpTransport> PublishTransaction for MoneroDaemon<T> {
 }
 
 impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
-  fn block_by_number(
+  fn contiguous_blocks(
     &self,
-    number: usize,
-  ) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
+    range: RangeInclusive<usize>,
+  ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>> {
     async move {
-      let request = [
+      let Some(requested_blocks_sub_one) = range.end().checked_sub(*range.start()) else {
+        return Ok(vec![]);
+      };
+      let Some(requested_blocks) = requested_blocks_sub_one.checked_add(1) else {
+        Err(InterfaceError::InternalError(
+          "requested more blocks than representable in a `usize`".to_string(),
+        ))?
+      };
+      let Ok(requested_blocks_u64) = u64::try_from(requested_blocks) else {
+        Err(InterfaceError::InternalError(
+          "amount of requested blocks wasn't representable in a `u64`".to_string(),
+        ))?
+      };
+
+      let Ok(start) = u64::try_from(*range.start()) else {
+        Err(InterfaceError::InternalError(
+          "start block wasn't representable in a `u64`".to_string(),
+        ))?
+      };
+      let Ok(end) = u64::try_from(*range.end()) else {
+        Err(InterfaceError::InternalError(
+          "start block wasn't representable in a `u64`".to_string(),
+        ))?
+      };
+
+      let mut request = vec![
         epee::HEADER,
-        &[5 << 2],
+        &[3 << 2],
         &[u8::try_from("requested_info".len()).unwrap()],
         "requested_info".as_bytes(),
         &[epee::Type::Uint8 as u8],
         &[0],
-        &[u8::try_from("max_block_count".len()).unwrap()],
-        "max_block_count".as_bytes(),
-        &[epee::Type::Uint8 as u8],
-        &[1],
         &[u8::try_from("prune".len()).unwrap()],
         "prune".as_bytes(),
         &[epee::Type::Bool as u8],
         &[1],
-        &[u8::try_from("start_height".len()).unwrap()],
-        "start_height".as_bytes(),
-        &[epee::Type::Uint8 as u8],
-        &[0],
         &[u8::try_from("heights".len()).unwrap()],
         "heights".as_bytes(),
         &[(epee::Type::Uint64 as u8) | epee::ARRAY_FLAG],
-        &[1 << 2],
-        &u64::try_from(number)
-          .map_err(|_| {
-            InterfaceError::InternalError(
-              "block number wasn't representable as a `u64`".to_string(),
-            )
-          })?
-          .to_le_bytes(),
+        &((requested_blocks_u64 << 2) | 0b11).to_le_bytes(),
       ]
       .concat();
+      request.reserve(requested_blocks * 8);
+      for i in start ..= end {
+        request.extend(&i.to_le_bytes());
+      }
 
-      let res = self
+      // TODO: Do we have to chunk these requests?
+      let blocks = self
         .bin_call(
           "get_blocks_by_height.bin",
           request,
-          Some(BASE_RESPONSE_SIZE.saturating_add(BLOCK_SIZE_BOUND)),
+          Some(
+            BASE_RESPONSE_SIZE.saturating_add(requested_blocks.saturating_mul(BLOCK_SIZE_BOUND)),
+          ),
         )
         .await?;
-      let mut res = res.as_slice();
+      let mut blocks =
+        epee::seek_all(blocks.as_slice(), epee::Type::String, "block").map_err(|e| {
+          InterfaceError::InvalidInterface(format!(
+            "couldn't `seek_all` for `get_blocks_by_height.bin`: {e:?}"
+          ))
+        })?;
 
-      let len = epee::seek(&mut res, epee::Type::String, "block")
-        .map_err(|e| InterfaceError::InvalidInterface(format!("couldn't seek `block`: {e:?}")))?
-        .unwrap_or(0);
-      if len != 1 {
+      let mut res = Vec::with_capacity(requested_blocks);
+      for block in (&mut blocks).take(requested_blocks) {
+        let mut block_string = block
+          .map_err(|e| InterfaceError::InvalidInterface(format!("couldn't seek `block`: {e:?}")))?
+          .1;
+        let _ = epee::read_vi(&mut block_string).map_err(|_| {
+          InterfaceError::InvalidInterface("couldn't read block's length".to_string())
+        });
+        res.push(
+          Block::read(&mut block_string)
+            .map_err(|_| InterfaceError::InvalidInterface("invalid block".to_string()))?,
+        );
+      }
+
+      if res.len() != requested_blocks {
+        Err(InterfaceError::InvalidInterface(format!(
+          "node returned {} blocks, requested {requested_blocks}",
+          res.len()
+        )))?;
+      }
+      if blocks.next().is_some() {
         Err(InterfaceError::InvalidInterface(
-          "daemon didn't return one block as requested".to_string(),
+          "epee response had extra instances of `block`".to_string(),
         ))?;
       }
 
-      let _ = epee::read_vi(&mut res)
-        .map_err(|_| InterfaceError::InvalidInterface("couldn't read block's length".to_string()));
-      Block::read(&mut res)
-        .map_err(|_| InterfaceError::InvalidInterface("invalid block".to_string()))
+      Ok(res)
     }
   }
 
@@ -638,91 +672,20 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
             Some(BASE_RESPONSE_SIZE.saturating_add(indexes.len().saturating_mul(BOUND_PER_OUT))),
           )
           .await?;
-        let mut outs = outs.as_slice();
-        let len = epee::seek(&mut outs, epee::Type::Object, "outs")
-          .map_err(|e| InterfaceError::InvalidInterface(format!("couldn't seek `outs`: {e:?}")))?
-          .unwrap_or(0);
 
-        if len != indexes_len_u64 {
-          Err(InterfaceError::InvalidInterface(
-            "`get_outs` response omitted requested outputs or provided additional outputs"
-              .to_string(),
-          ))?;
-        }
+        let start = res.len();
 
-        let outs = &mut outs;
-        let res = &mut res;
-        (move || {
-          for _ in 0 .. len {
-            let fields = epee::read_vi(outs)?;
-            if fields != 5 {
-              Err(io::Error::other("unexpected amount of fields in `get_outs` out"))?;
-            }
-
-            let mut block_number = None;
-            let mut key = None;
-            let mut commitment = None;
-            let mut transaction = None;
-            let mut unlocked = None;
-            for _ in 0 .. fields {
-              match epee::read_key(outs)? {
-                b"height" => {
-                  let _ = epee::Type::read(outs)?;
-                  block_number = Some(usize::try_from(read_u64(outs)?).map_err(|_| {
-                    io::Error::other("`height` wasn't representable within a `usize`")
-                  })?);
-                }
-                b"key" => {
-                  let _ = epee::Type::read(outs)?;
-                  let _ = epee::read_vi(outs)?;
-                  key = Some(CompressedPoint(read_bytes(outs)?));
-                }
-                b"mask" => {
-                  let _ = epee::Type::read(outs)?;
-                  let _ = epee::read_vi(outs)?;
-                  commitment = Some(
-                    CompressedPoint(read_bytes(outs)?)
-                      .decompress()
-                      .ok_or_else(|| io::Error::other("`get_outs` out had invalid commitment"))?,
-                  );
-                }
-                b"txid" => {
-                  let _ = epee::Type::read(outs)?;
-                  let _ = epee::read_vi(outs)?;
-                  transaction = Some(read_bytes(outs)?);
-                }
-                b"unlocked" => {
-                  let _ = epee::Type::read(outs)?;
-                  unlocked = Some(read_byte(outs)? != 0);
-                }
-                _ => Err(io::Error::other("`get_outs` yielded response with unrecognized field"))?,
-              }
-            }
-            let (
-              Some(block_number),
-              Some(key),
-              Some(commitment),
-              Some(transaction),
-              Some(unlocked),
-            ) = (block_number, key, commitment, transaction, unlocked)
-            else {
-              return Err(io::Error::other("missing field for out from `get_outs`"));
-            };
-            res.push(RingCtOutputInformation {
-              block_number,
-              unlocked,
-              key,
-              commitment,
-              transaction,
-            });
-          }
-          Ok(())
-        })()
-        .map_err(|e| {
+        epee::accumulate_outs(&outs, indexes.len(), &mut res).map_err(|e| {
           InterfaceError::InvalidInterface(format!(
             "couldn't deserialize `get_outs` response: {e:?}"
           ))
         })?;
+
+        if res.len() != (start + indexes.len()) {
+          Err(InterfaceError::InvalidInterface(
+            "`get_outs` response was missing fields".to_string(),
+          ))?;
+        }
       }
 
       Ok(res)

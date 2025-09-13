@@ -1,8 +1,8 @@
 use std_shims::io;
 
-use monero_oxide::io::{read_byte, read_u64, read_bytes, read_raw_vec};
+use monero_oxide::io::{CompressedPoint, read_byte, read_u64, read_bytes, read_raw_vec};
 
-use crate::InterfaceError;
+use crate::{InterfaceError, RingCtOutputInformation};
 
 // epee header, an 8-byte magic and a version
 pub(crate) const HEADER: &[u8] = b"\x01\x11\x01\x01\x01\x01\x02\x01\x01";
@@ -182,6 +182,18 @@ impl<'a> Iterator for Seek<'a> {
   }
 }
 
+pub(crate) fn seek_all<'a>(
+  mut reader: &'a [u8],
+  expected_type: Type,
+  field_name: &'static str,
+) -> io::Result<impl Iterator<Item = io::Result<(u64, &'a [u8])>>> {
+  if read_bytes::<_, { HEADER.len() }>(&mut reader)? != HEADER {
+    Err(io::Error::other("missing EPEE header"))?;
+  }
+  let stack = vec![(Type::Object, 1u64)];
+  Ok(Seek { reader, expected_type, field_name, stack })
+}
+
 pub(crate) fn seek(
   reader: &mut &[u8],
   expected_type: Type,
@@ -195,6 +207,9 @@ pub(crate) fn seek(
     let mut iter = Seek { reader, expected_type, field_name, stack };
     let len_and_seeked = iter.next().transpose()?;
     *reader = iter.reader;
+    if iter.next().is_some() {
+      Err(io::Error::other("field was present multiple times within epee"))?;
+    }
     len_and_seeked.map(|(len, _seeked)| len)
   };
   Ok(len)
@@ -256,4 +271,56 @@ pub(crate) fn extract_distribution(mut distributions: &[u8]) -> Result<Vec<u64>,
     })?);
   }
   Ok(distribution)
+}
+
+pub(crate) fn accumulate_outs(
+  outs: &[u8],
+  amount: usize,
+  res: &mut Vec<RingCtOutputInformation>,
+) -> io::Result<()> {
+  let mut block_numbers = seek_all(outs, Type::Uint64, "height")?;
+  let mut keys = seek_all(outs, Type::String, "key")?;
+  let mut commitments = seek_all(outs, Type::String, "mask")?;
+  let mut transactions = seek_all(outs, Type::String, "txid")?;
+  let mut unlocked = seek_all(outs, Type::Bool, "unlocked")?;
+
+  for ((((block_number, key), commitment), transaction), unlocked) in (&mut block_numbers)
+    .zip(&mut keys)
+    .zip(&mut commitments)
+    .zip(&mut transactions)
+    .zip(&mut unlocked)
+    .take(amount)
+  {
+    let block_number = usize::try_from(read_u64(&mut block_number?.1)?)
+      .map_err(|_| io::Error::other("`height` wasn't representable within a `usize`"))?;
+
+    let mut key = key?.1;
+    let _ = read_vi(&mut key)?;
+    let key = CompressedPoint(read_bytes::<_, 32>(&mut key)?);
+
+    let mut commitment = commitment?.1;
+    let _ = read_vi(&mut commitment)?;
+    let commitment = CompressedPoint(read_bytes::<_, 32>(&mut commitment)?)
+      .decompress()
+      .ok_or_else(|| io::Error::other("`get_outs` commitment was invalid"))?;
+
+    let mut transaction = transaction?.1;
+    let _ = read_vi(&mut transaction)?;
+    let transaction = read_bytes::<_, 32>(&mut transaction)?;
+
+    let unlocked = read_byte(&mut unlocked?.1)? != 0;
+
+    res.push(RingCtOutputInformation { block_number, key, commitment, transaction, unlocked });
+  }
+
+  if block_numbers.next().is_some() ||
+    keys.next().is_some() ||
+    commitments.next().is_some() ||
+    transactions.next().is_some() ||
+    unlocked.next().is_some()
+  {
+    Err(io::Error::other("`get_outs` unexpectedly had more outs"))?;
+  }
+
+  Ok(())
 }
