@@ -46,7 +46,11 @@ const BYTE_FACTOR_IN_BIN_RESPONSE_SIZE: usize = 4;
   entire Monero block (at its default block size limit).
 */
 const fn const_max(a: usize, b: usize) -> usize {
-  if a > b { a } else { b }
+  if a > b {
+    a
+  } else {
+    b
+  }
 }
 const TRANSACTION_SIZE_BOUND: usize = const_max(300_000, MAX_NON_MINER_TRANSACTION_SIZE);
 
@@ -114,17 +118,18 @@ impl<T: Debug + HttpTransport> core::fmt::Debug for MoneroDaemon<T> {
   }
 }
 
+#[rustfmt::skip]
 impl<T: HttpTransport> MoneroDaemon<T> {
   /// Perform a RPC call to the specified route with the provided parameters.
   ///
   /// This is NOT a JSON-RPC call. They use a route of "json_rpc" and are available via
   /// `json_rpc_call`.
-  pub fn rpc_call<Params: Send + Serialize + Debug, Response: DeserializeOwned + Debug>(
-    &self,
-    route: &str,
+  pub fn rpc_call<'a, Params: Send + Serialize + Debug, Response: DeserializeOwned + Debug>(
+    &'a self,
+    route: &'a str,
     params: Option<Params>,
     response_size_limit: Option<usize>,
-  ) -> impl Send + Future<Output = Result<Response, InterfaceError>> {
+  ) -> impl use<'a, T, Params, Response> + Send + Future<Output = Result<Response, InterfaceError>> {
     async move {
       let res = self
         .0
@@ -153,12 +158,12 @@ impl<T: HttpTransport> MoneroDaemon<T> {
   }
 
   /// Perform a JSON-RPC call with the specified method with the provided parameters.
-  pub fn json_rpc_call<Response: DeserializeOwned + Debug>(
-    &self,
-    method: &str,
+  pub fn json_rpc_call<'a, Response: DeserializeOwned + Debug>(
+    &'a self,
+    method: &'a str,
     params: Option<Value>,
     response_size_limit: Option<usize>,
-  ) -> impl Send + Future<Output = Result<Response, InterfaceError>> {
+  ) -> impl use<'a, T, Response> + Send + Future<Output = Result<Response, InterfaceError>> {
     async move {
       let mut req = json!({ "method": method });
       if let Some(params) = params {
@@ -177,12 +182,12 @@ impl<T: HttpTransport> MoneroDaemon<T> {
   }
 
   /// Perform a binary call to the specified route with the provided parameters.
-  fn bin_call(
-    &self,
-    route: &str,
+  fn bin_call<'a>(
+    &'a self,
+    route: &'a str,
     params: Vec<u8>,
     response_size_limit: Option<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<u8>, InterfaceError>> {
+  ) -> impl use<'a, T> + Send + Future<Output = Result<Vec<u8>, InterfaceError>> {
     async move { self.0.post(route, params, response_size_limit).await }
   }
 
@@ -191,11 +196,12 @@ impl<T: HttpTransport> MoneroDaemon<T> {
   /// Returns the hashes of the generated blocks and the last block's alleged number.
   ///
   /// This is intended for testing purposes and does not validate the result.
-  pub fn generate_blocks<const ADDR_BYTES: u128>(
-    &self,
-    address: &Address<ADDR_BYTES>,
+  pub fn generate_blocks<'a, const ADDR_BYTES: u128>(
+    &'a self,
+    address: &'a Address<ADDR_BYTES>,
     block_count: usize,
-  ) -> impl Send + Future<Output = Result<(Vec<[u8; 32]>, usize), InterfaceError>> {
+  ) -> impl use<'a, T, ADDR_BYTES> + Send + Future<Output = Result<(Vec<[u8; 32]>, usize), InterfaceError>>
+  {
     async move {
       #[derive(Debug, Deserialize)]
       struct BlocksResponse {

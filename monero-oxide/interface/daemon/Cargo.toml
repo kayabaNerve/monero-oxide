@@ -5,8 +5,8 @@ description = "An interface to a Monero daemon"
 license = "MIT"
 repository = "https://github.com/monero-oxide/monero-oxide/tree/main/monero-oxide/interface/daemon"
 authors = ["Luke Parker <lukeparker5132@gmail.com>"]
-edition = "2024"
-rust-version = "1.85"
+edition = "2021"
+rust-version = "1.75"
 
 [package.metadata.docs.rs]
 all-features = true
