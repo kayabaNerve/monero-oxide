@@ -34,7 +34,7 @@ use monero_interface::*;
 mod epee;
 
 const BASE_RESPONSE_SIZE: usize = u16::MAX as usize;
-const BYTE_FACTOR_IN_JSON_RESPONSE_SIZE: usize = 100;
+const BYTE_FACTOR_IN_JSON_RESPONSE_SIZE: usize = 8;
 
 /*
   Monero doesn't have a size limit on miner transactions and accordingly doesn't have a size limit
