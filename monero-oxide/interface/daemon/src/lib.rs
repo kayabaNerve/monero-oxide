@@ -443,23 +443,60 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
     number: usize,
   ) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
     async move {
-      #[derive(Debug, Deserialize)]
-      struct BlockResponse {
-        blob: String,
-      }
+      let request = [
+        epee::HEADER,
+        &[5 << 2],
+        &[u8::try_from("requested_info".len()).unwrap()],
+        "requested_info".as_bytes(),
+        &[epee::Type::Uint8 as u8],
+        &[0],
+        &[u8::try_from("max_block_count".len()).unwrap()],
+        "max_block_count".as_bytes(),
+        &[epee::Type::Uint8 as u8],
+        &[1],
+        &[u8::try_from("prune".len()).unwrap()],
+        "prune".as_bytes(),
+        &[epee::Type::Bool as u8],
+        &[1],
+        &[u8::try_from("start_height".len()).unwrap()],
+        "start_height".as_bytes(),
+        &[epee::Type::Uint8 as u8],
+        &[0],
+        &[u8::try_from("heights".len()).unwrap()],
+        "heights".as_bytes(),
+        &[(epee::Type::Uint64 as u8) | epee::ARRAY_FLAG],
+        &[1 << 2],
+        &u64::try_from(number)
+          .map_err(|_| {
+            InterfaceError::InternalError(
+              "block number wasn't representable as a `u64`".to_string(),
+            )
+          })?
+          .to_le_bytes(),
+      ]
+      .concat();
 
-      let res: BlockResponse = self
-        .json_rpc_call(
-          "get_block",
-          Some(json!({ "height": number })),
-          Some(
-            BASE_RESPONSE_SIZE
-              .saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(BLOCK_SIZE_BOUND)),
-          ),
+      let res = self
+        .bin_call(
+          "get_blocks_by_height.bin",
+          request,
+          Some(BASE_RESPONSE_SIZE.saturating_add(BLOCK_SIZE_BOUND)),
         )
         .await?;
+      let mut res = res.as_slice();
 
-      Block::read(&mut rpc_hex(&res.blob)?.as_slice())
+      let len = epee::seek(&mut res, epee::Type::String, "block")
+        .map_err(|e| InterfaceError::InvalidInterface(format!("couldn't seek `block`: {e:?}")))?
+        .unwrap_or(0);
+      if len != 1 {
+        Err(InterfaceError::InvalidInterface(
+          "daemon didn't return one block as requested".to_string(),
+        ))?;
+      }
+
+      let _ = epee::read_vi(&mut res)
+        .map_err(|_| InterfaceError::InvalidInterface("couldn't read block's length".to_string()));
+      Block::read(&mut res)
         .map_err(|_| InterfaceError::InvalidInterface("invalid block".to_string()))
     }
   }
