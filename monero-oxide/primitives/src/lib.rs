@@ -162,7 +162,7 @@ impl core::fmt::Debug for Decoys {
 }
 
 /*
-  The max ring size the monero-oxide libraries is programmed to support.
+  The max ring size the monero-oxide libraries is programmed to support creating.
 
   This exceeds the current Monero protocol's ring size of `16`, with the next hard fork planned to
   remove rings entirely, making this without issue.
