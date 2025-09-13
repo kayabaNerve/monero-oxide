@@ -156,7 +156,7 @@ impl PreprocessMachine for TransactionMachine {
 }
 
 /// The signature share for a transaction.
-// Opaque wrapper around the CLSAG signature shares, forcing users to use `read_preprocess` to
+// Opaque wrapper around the CLSAG signature shares, forcing users to use `read_share` to
 // obtain this.
 #[derive(Clone, PartialEq)]
 pub struct TransactionSignatureShare(Vec<SignatureShare<Ed25519>>);
