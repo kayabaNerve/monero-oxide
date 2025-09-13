@@ -24,7 +24,7 @@ use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 use monero_oxide::{
-  io::CompressedPoint,
+  io::{CompressedPoint, read_byte, read_u64, read_bytes},
   transaction::{MAX_NON_MINER_TRANSACTION_SIZE, Input, Timelock, Pruned, Transaction},
   block::Block,
   DEFAULT_LOCK_WINDOW,
@@ -33,9 +33,10 @@ use monero_address::Address;
 
 use monero_interface::*;
 
+mod epee;
+
 const BASE_RESPONSE_SIZE: usize = u16::MAX as usize;
 const BYTE_FACTOR_IN_JSON_RESPONSE_SIZE: usize = 100;
-const BYTE_FACTOR_IN_BIN_RESPONSE_SIZE: usize = 4;
 
 /*
   Monero doesn't have a size limit on miner transactions and accordingly doesn't have a size limit
@@ -70,16 +71,6 @@ fn hash_hex(hash: &str) -> Result<[u8; 32], InterfaceError> {
   rpc_hex(hash)?
     .try_into()
     .map_err(|_| InterfaceError::InvalidInterface("hash wasn't 32-bytes".to_string()))
-}
-
-fn rpc_point(point: &str) -> Result<EdwardsPoint, InterfaceError> {
-  CompressedPoint(
-    rpc_hex(point)?
-      .try_into()
-      .map_err(|_| InterfaceError::InvalidInterface("invalid point".to_string()))?,
-  )
-  .decompress()
-  .ok_or_else(|| InterfaceError::InvalidInterface("invalid point".to_string()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,24 +122,25 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     response_size_limit: Option<usize>,
   ) -> impl use<'a, T, Params, Response> + Send + Future<Output = Result<Response, InterfaceError>> {
     async move {
-      let res = self
-        .0
-        .post(
-          route,
-          if let Some(params) = params.as_ref() {
-            serde_json::to_string(params)
-              .map_err(|e| {
-                InterfaceError::InternalError(format!(
-                  "couldn't convert parameters ({params:?}) to JSON: {e:?}"
-                ))
-              })?
-              .into_bytes()
-          } else {
-            vec![]
-          },
-          response_size_limit,
-        )
-        .await?;
+      let res =
+        self
+          .0
+          .post(
+            route,
+            if let Some(params) = params.as_ref() {
+              serde_json::to_string(params)
+                .map_err(|e| {
+                  InterfaceError::InternalError(format!(
+                    "couldn't convert parameters ({params:?}) to JSON: {e:?}"
+                  ))
+                })?
+                .into_bytes()
+            } else {
+              vec![]
+            },
+            response_size_limit,
+          )
+          .await?;
       let res_str = std_shims::str::from_utf8(&res)
         .map_err(|_| InterfaceError::InvalidInterface("response wasn't utf-8".to_string()))?;
       serde_json::from_str(res_str).map_err(|_| {
@@ -188,7 +180,11 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     params: Vec<u8>,
     response_size_limit: Option<usize>,
   ) -> impl use<'a, T> + Send + Future<Output = Result<Vec<u8>, InterfaceError>> {
-    async move { self.0.post(route, params, response_size_limit).await }
+    async move {
+      let res = self.0.post(route, params, response_size_limit).await?;
+      epee::check_status(&res)?;
+      Ok(res)
+    }
   }
 
   /// Generate blocks, with the specified address receiving the block reward.
@@ -526,192 +522,36 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
     hash: [u8; 32],
   ) -> impl Send + Future<Output = Result<Vec<u64>, InterfaceError>> {
     async move {
-      // Given the immaturity of Rust epee libraries, this is a homegrown one which is only
-      // validated to work against this specific function
+      let request = [
+        epee::HEADER,
+        &[1u8 << 2],
+        &[u8::try_from("txid".len()).unwrap()],
+        "txid".as_bytes(),
+        &[epee::Type::String as u8],
+        &[32u8 << 2],
+        &hash,
+      ]
+      .concat();
 
-      use monero_oxide::io::*;
-
-      // Header for EPEE, an 8-byte magic and a version
-      const EPEE_HEADER: &[u8] = b"\x01\x11\x01\x01\x01\x01\x02\x01\x01";
-
-      // Read an EPEE VarInt, distinct from the VarInts used throughout the rest of the protocol
-      fn read_epee_vi<R: io::Read>(reader: &mut R) -> io::Result<u64> {
-        let vi_start = read_byte(reader)?;
-        let len = match vi_start & 0b11 {
-          0 => 1,
-          1 => 2,
-          2 => 4,
-          3 => 8,
-          _ => unreachable!(),
-        };
-        let mut vi = u64::from(vi_start >> 2);
-        for i in 1 .. len {
-          vi |= u64::from(read_byte(reader)?) << (((i - 1) * 8) + 6);
-        }
-        Ok(vi)
-      }
-
-      let mut request = EPEE_HEADER.to_vec();
-      // Number of fields (shifted over 2 bits as the 2 LSBs are reserved for metadata)
-      request.push(1 << 2);
-      // Length of field name
-      request.push(4);
-      // Field name
-      request.extend(b"txid");
-      // Type of field
-      request.push(10);
-      // Length of string, since this byte array is technically a string
-      request.push(32 << 2);
-      // The "string"
-      request.extend(hash);
-
-      // 8 bytes per index, 1024 indexes per transaction
-      let indexes_buf = self
-        .bin_call(
-          "get_o_indexes.bin",
-          request,
-          Some(BASE_RESPONSE_SIZE.saturating_add(BYTE_FACTOR_IN_BIN_RESPONSE_SIZE * 1024 * 8)),
-        )
+      // 8 bytes per index, 10,000 indexes per transaction
+      let epee_res = self
+        .bin_call("get_o_indexes.bin", request, Some(BASE_RESPONSE_SIZE.saturating_add(10_000 * 8)))
         .await?;
-      let mut indexes = indexes_buf.as_slice();
+      let mut epee_res = epee_res.as_slice();
 
-      (|| {
-        let mut res = None;
-        let mut has_status = false;
-
-        if read_bytes::<_, { EPEE_HEADER.len() }>(&mut indexes)? != EPEE_HEADER {
-          Err(io::Error::other("invalid header"))?;
+      let mut res = vec![];
+      if let Some(len) =
+        epee::seek(&mut epee_res, epee::Type::Uint64, "o_indexes").map_err(|e| {
+          InterfaceError::InvalidInterface(format!("couldn't seek `o_indexes`: {e:?}"))
+        })?
+      {
+        for _ in 0 .. len {
+          res.push(read_u64(&mut epee_res).map_err(|e| {
+            InterfaceError::InvalidInterface(format!("incomplete `o_indexes`: {e:?}"))
+          })?);
         }
-
-        let read_object = |reader: &mut &[u8]| -> io::Result<Vec<u64>> {
-          // Read the amount of fields
-          let fields = read_byte(reader)? >> 2;
-
-          for _ in 0 .. fields {
-            // Read the length of the field's name
-            let name_len = read_byte(reader)?;
-            // Read the name of the field
-            let name = read_raw_vec(read_byte, name_len.into(), reader)?;
-
-            let type_with_array_flag = read_byte(reader)?;
-            // The type of this field, without the potentially set array flag
-            let kind = type_with_array_flag & (!0x80);
-            let has_array_flag = type_with_array_flag != kind;
-
-            // Read this many instances of the field
-            let iters = if has_array_flag { read_epee_vi(reader)? } else { 1 };
-
-            // Check the field type
-            {
-              #[allow(clippy::match_same_arms)]
-              let (expected_type, expected_array_flag) = match name.as_slice() {
-                b"o_indexes" => (5, true),
-                b"status" => (10, false),
-                b"untrusted" => (11, false),
-                b"credits" => (5, false),
-                b"top_hash" => (10, false),
-                // On-purposely prints name as a byte vector to prevent printing arbitrary strings
-                // This is a self-describing format so we don't have to error here, yet we don't
-                // claim this to be a complete deserialization function
-                // To ensure it works for this specific use case, it's best to ensure it's limited
-                // to this specific use case (ensuring we have less variables to deal with)
-                _ => Err(io::Error::other("unrecognized field in get_o_indexes".to_string()))?,
-              };
-              if (expected_type != kind) || (expected_array_flag != has_array_flag) {
-                let fmt_array_bool = |array_bool| if array_bool { "array" } else { "not array" };
-                Err(io::Error::other(format!(
-                  "field {name:?} was {kind} ({}), expected {expected_type} ({})",
-                  fmt_array_bool(has_array_flag),
-                  fmt_array_bool(expected_array_flag)
-                )))?;
-              }
-            }
-
-            let read_field_as_bytes = match kind {
-              /*
-              // i64
-              1 => |reader: &mut &[u8]| read_raw_vec(read_byte, 8, reader),
-              // i32
-              2 => |reader: &mut &[u8]| read_raw_vec(read_byte, 4, reader),
-              // i16
-              3 => |reader: &mut &[u8]| read_raw_vec(read_byte, 2, reader),
-              // i8
-              4 => |reader: &mut &[u8]| read_raw_vec(read_byte, 1, reader),
-              */
-              // u64
-              5 => |reader: &mut &[u8]| read_raw_vec(read_byte, 8, reader),
-              /*
-              // u32
-              6 => |reader: &mut &[u8]| read_raw_vec(read_byte, 4, reader),
-              // u16
-              7 => |reader: &mut &[u8]| read_raw_vec(read_byte, 2, reader),
-              // u8
-              8 => |reader: &mut &[u8]| read_raw_vec(read_byte, 1, reader),
-              // double
-              9 => |reader: &mut &[u8]| read_raw_vec(read_byte, 8, reader),
-              */
-              // string, or any collection of bytes
-              10 => |reader: &mut &[u8]| {
-                let len = read_epee_vi(reader)?;
-                read_raw_vec(
-                  read_byte,
-                  len.try_into().map_err(|_| io::Error::other("u64 length exceeded usize"))?,
-                  reader,
-                )
-              },
-              // bool
-              11 => |reader: &mut &[u8]| read_raw_vec(read_byte, 1, reader),
-              /*
-              // object, errors here as it shouldn't be used on this call
-              12 => {
-                |_: &mut &[u8]| Err(io::Error::other("node used object in reply to get_o_indexes"))
-              }
-              // array, so far unused
-              13 => |_: &mut &[u8]| Err(io::Error::other("node used the unused array type")),
-              */
-              _ => |_: &mut &[u8]| Err(io::Error::other("node used an invalid type")),
-            };
-
-            let mut bytes_res = vec![];
-            for _ in 0 .. iters {
-              bytes_res.push(read_field_as_bytes(reader)?);
-            }
-
-            let mut actual_res = Vec::with_capacity(bytes_res.len());
-            match name.as_slice() {
-              b"o_indexes" => {
-                for o_index in bytes_res {
-                  actual_res.push(read_u64(&mut o_index.as_slice())?);
-                }
-                res = Some(actual_res);
-              }
-              b"status" => {
-                if bytes_res
-                  .first()
-                  .ok_or_else(|| io::Error::other("status was a 0-length array"))?
-                  .as_slice() !=
-                  b"OK"
-                {
-                  Err(io::Error::other("response wasn't OK"))?;
-                }
-                has_status = true;
-              }
-              b"untrusted" | b"credits" | b"top_hash" => continue,
-              _ => Err(io::Error::other("unrecognized field in get_o_indexes"))?,
-            }
-          }
-
-          if !has_status {
-            Err(io::Error::other("response didn't contain a status"))?;
-          }
-
-          // If the Vec was empty, it would've been omitted, hence the unwrap_or
-          Ok(res.unwrap_or(vec![]))
-        };
-
-        read_object(&mut indexes)
-      })()
-      .map_err(|e| InterfaceError::InvalidInterface(format!("invalid binary response: {e:?}")))
+      }
+      Ok(res)
     }
   }
 
@@ -720,70 +560,132 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
     indexes: &[u64],
   ) -> impl Send + Future<Output = Result<Vec<RingCtOutputInformation>, InterfaceError>> {
     async move {
-      #[derive(Debug, Deserialize)]
-      struct OutputResponse {
-        height: usize,
-        unlocked: bool,
-        key: String,
-        mask: String,
-        txid: String,
-      }
-
-      #[derive(Debug, Deserialize)]
-      struct OutsResponse {
-        status: String,
-        outs: Vec<OutputResponse>,
-      }
-
       // https://github.com/monero-project/monero/blob/cc73fe71162d564ffda8e549b79a350bca53c454
       //   /src/rpc/core_rpc_server.cpp#L67
       const MAX_OUTS: usize = 5000;
 
       let mut res = Vec::with_capacity(indexes.len());
+      let mut request = Vec::with_capacity(indexes.len().max(MAX_OUTS) * 16);
       for indexes in indexes.chunks(MAX_OUTS) {
-        let rpc_res: OutsResponse = self
-          .rpc_call(
-            "get_outs",
-            Some(json!({
-              "get_txid": true,
-              "outputs": indexes.iter().map(|o| json!({
-                "amount": 0,
-                "index": o
-              })).collect::<Vec<_>>()
-            })),
-            Some(BASE_RESPONSE_SIZE.saturating_add(
-              BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(indexes.len().saturating_mul(128)),
-            )),
-          )
-          .await?;
+        let indexes_len_u64 =
+          u64::try_from(indexes.len()).expect("requesting more than 2**64 indexes?");
 
-        if rpc_res.status != "OK" {
-          Err(InterfaceError::InvalidInterface("bad response to get_outs".to_string()))?;
+        request.clear();
+        request.extend(epee::HEADER);
+        request.push(1 << 2);
+        request.push(u8::try_from("outputs".len()).unwrap());
+        request.extend("outputs".as_bytes());
+        request.push((epee::Type::Object as u8) | epee::ARRAY_FLAG);
+        request.extend(((indexes_len_u64 << 2) | 0b11).to_le_bytes());
+        for index in indexes {
+          request.push(2u8 << 2);
+
+          request.push(u8::try_from("amount".len()).unwrap());
+          request.extend("amount".as_bytes());
+          request.push(epee::Type::Uint8 as u8);
+          request.push(0);
+
+          request.push(u8::try_from("index".len()).unwrap());
+          request.extend("index".as_bytes());
+          request.push(epee::Type::Uint64 as u8);
+          request.extend(&index.to_le_bytes());
         }
 
-        if rpc_res.outs.len() != indexes.len() {
+        // This is the size of the data, doubled to account for epee's structure
+        const BOUND_PER_OUT: usize = 2 * (8 + 8 + 32 + 32 + 32 + 1);
+
+        let outs = self
+          .bin_call(
+            "get_outs.bin",
+            request.clone(),
+            Some(BASE_RESPONSE_SIZE.saturating_add(indexes.len().saturating_mul(BOUND_PER_OUT))),
+          )
+          .await?;
+        let mut outs = outs.as_slice();
+        let len = epee::seek(&mut outs, epee::Type::Object, "outs")
+          .map_err(|e| InterfaceError::InvalidInterface(format!("couldn't seek `outs`: {e:?}")))?
+          .unwrap_or(0);
+
+        if len != indexes_len_u64 {
           Err(InterfaceError::InvalidInterface(
-            "get_outs response omitted requested outputs".to_string(),
+            "`get_outs` response omitted requested outputs or provided additional outputs"
+              .to_string(),
           ))?;
         }
 
-        res.extend(
-          rpc_res
-            .outs
-            .into_iter()
-            .map(|output| {
-              Ok(RingCtOutputInformation {
-                block_number: output.height,
-                unlocked: output.unlocked,
-                key: CompressedPoint(rpc_hex(&output.key)?.try_into().map_err(|_| {
-                  InterfaceError::InvalidInterface("output key wasn't 32 bytes".to_string())
-                })?),
-                commitment: rpc_point(&output.mask)?,
-                transaction: hash_hex(&output.txid)?,
-              })
-            })
-            .collect::<Result<Vec<_>, InterfaceError>>()?,
-        );
+        let outs = &mut outs;
+        let res = &mut res;
+        (move || {
+          for _ in 0 .. len {
+            let fields = epee::read_vi(outs)?;
+            if fields != 5 {
+              Err(io::Error::other("unexpected amount of fields in `get_outs` out"))?;
+            }
+
+            let mut block_number = None;
+            let mut key = None;
+            let mut commitment = None;
+            let mut transaction = None;
+            let mut unlocked = None;
+            for _ in 0 .. fields {
+              match epee::read_key(outs)? {
+                b"height" => {
+                  let _ = epee::Type::read(outs)?;
+                  block_number = Some(usize::try_from(read_u64(outs)?).map_err(|_| {
+                    io::Error::other("`height` wasn't representable within a `usize`")
+                  })?);
+                }
+                b"key" => {
+                  let _ = epee::Type::read(outs)?;
+                  let _ = epee::read_vi(outs)?;
+                  key = Some(CompressedPoint(read_bytes(outs)?));
+                }
+                b"mask" => {
+                  let _ = epee::Type::read(outs)?;
+                  let _ = epee::read_vi(outs)?;
+                  commitment = Some(
+                    CompressedPoint(read_bytes(outs)?)
+                      .decompress()
+                      .ok_or_else(|| io::Error::other("`get_outs` out had invalid commitment"))?,
+                  );
+                }
+                b"txid" => {
+                  let _ = epee::Type::read(outs)?;
+                  let _ = epee::read_vi(outs)?;
+                  transaction = Some(read_bytes(outs)?);
+                }
+                b"unlocked" => {
+                  let _ = epee::Type::read(outs)?;
+                  unlocked = Some(read_byte(outs)? != 0);
+                }
+                _ => Err(io::Error::other("`get_outs` yielded response with unrecognized field"))?,
+              }
+            }
+            let (
+              Some(block_number),
+              Some(key),
+              Some(commitment),
+              Some(transaction),
+              Some(unlocked),
+            ) = (block_number, key, commitment, transaction, unlocked)
+            else {
+              return Err(io::Error::other("missing field for out from `get_outs`"));
+            };
+            res.push(RingCtOutputInformation {
+              block_number,
+              unlocked,
+              key,
+              commitment,
+              transaction,
+            });
+          }
+          Ok(())
+        })()
+        .map_err(|e| {
+          InterfaceError::InvalidInterface(format!(
+            "couldn't deserialize `get_outs` response: {e:?}"
+          ))
+        })?;
       }
 
       Ok(res)
@@ -797,19 +699,6 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
     range: impl Send + RangeBounds<usize>,
   ) -> impl Send + Future<Output = Result<Vec<u64>, InterfaceError>> {
     async move {
-      #[derive(Default, Debug, Deserialize)]
-      struct Distribution {
-        distribution: Vec<u64>,
-        // A blockchain with just its genesis block has a height of 1
-        start_height: usize,
-      }
-
-      #[derive(Debug, Deserialize)]
-      struct Distributions {
-        distributions: [Distribution; 1],
-        status: String,
-      }
-
       let from = match range.start_bound() {
         Bound::Included(from) => *from,
         Bound::Excluded(from) => from.checked_add(1).ok_or_else(|| {
@@ -831,31 +720,61 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
       }
 
       let zero_zero_case = (from == 0) && (to == 0);
-      let distributions: Distributions = self
-        .json_rpc_call(
-          "get_output_distribution",
-          Some(json!({
-            "binary": false,
-            "amounts": [0],
-            "cumulative": true,
-            // These are actually block numbers, not heights
-            "from_height": from,
-            "to_height": if zero_zero_case { 1 } else { to },
-          })),
-          Some(BASE_RESPONSE_SIZE.saturating_add(
-            BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(to.max(2).saturating_mul(16)),
-          )),
+
+      let request = [
+        epee::HEADER,
+        &[5u8 << 2],
+        &[u8::try_from("from_height".len()).unwrap()],
+        "from_height".as_bytes(),
+        &[epee::Type::Uint64 as u8],
+        &u64::try_from(from)
+          .map_err(|_| {
+            InterfaceError::InternalError(
+              "range's from wasn't representable as a `u64`".to_string(),
+            )
+          })?
+          .to_le_bytes(),
+        &[u8::try_from("to_height".len()).unwrap()],
+        "to_height".as_bytes(),
+        &[epee::Type::Uint64 as u8],
+        &(if zero_zero_case {
+          1u64
+        } else {
+          u64::try_from(to).map_err(|_| {
+            InterfaceError::InternalError("range's to wasn't representable as a `u64`".to_string())
+          })?
+        })
+        .to_le_bytes(),
+        &[u8::try_from("cumulative".len()).unwrap()],
+        "cumulative".as_bytes(),
+        &[epee::Type::Bool as u8],
+        &[1],
+        &[u8::try_from("compress".len()).unwrap()],
+        "compress".as_bytes(),
+        &[epee::Type::Bool as u8],
+        &[0], // TODO
+        &[u8::try_from("amounts".len()).unwrap()],
+        "amounts".as_bytes(),
+        &[(epee::Type::Uint8 as u8) | epee::ARRAY_FLAG],
+        &[1u8 << 2],
+        &[0],
+      ]
+      .concat();
+
+      let distributions = self
+        .bin_call(
+          "get_output_distribution.bin",
+          request,
+          Some(
+            BASE_RESPONSE_SIZE
+              .saturating_add(to.saturating_sub(from).saturating_add(2).saturating_mul(8)),
+          ),
         )
         .await?;
 
-      if distributions.status != "OK" {
-        Err(InterfaceError::InterfaceError(
-          "node couldn't service this request for the output distribution".to_string(),
-        ))?;
-      }
+      let start_height = epee::extract_start_height(&distributions)?;
+      let mut distribution = epee::extract_distribution(&distributions)?;
 
-      let mut distributions = distributions.distributions;
-      let Distribution { start_height, mut distribution } = core::mem::take(&mut distributions[0]);
       // start_height is also actually a block number, and it should be at least `from`
       // It may be after depending on when these outputs first appeared on the blockchain
       // Unfortunately, we can't validate without a binary search to find the RingCT activation
