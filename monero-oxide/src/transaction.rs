@@ -39,24 +39,6 @@ const NON_MINER_TRANSACTION_OUTPUT_SIZE_LOWER_BOUND: usize = 32;
 const MAX_NON_MINER_TRANSACTION_OUTPUTS: usize =
   MAX_NON_MINER_TRANSACTION_SIZE / NON_MINER_TRANSACTION_OUTPUT_SIZE_LOWER_BOUND;
 
-struct LimitTotalSize<R: io::Read> {
-  reader: R,
-  bytes_read: usize,
-  limit: Option<usize>,
-}
-impl<R: io::Read> io::Read for LimitTotalSize<R> {
-  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-    let bytes_read = self.reader.read(buf)?;
-    self.bytes_read = self.bytes_read.wrapping_add(bytes_read);
-    if let Some(limit) = self.limit {
-      if self.bytes_read > limit {
-        Err(io::Error::other(format!("read object exceeded total limit of {limit}")))?;
-      }
-    }
-    Ok(bytes_read)
-  }
-}
-
 /// An input in the Monero protocol.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Input {
@@ -284,32 +266,14 @@ impl TransactionPrefix {
   /// This MAY error if miscellaneous Monero conseusus rules are broken, as useful when
   /// deserializing. The result is not guaranteed to follow all Monero consensus rules or any
   /// specific set of consensus rules.
-  pub fn read<R: Read>(reader: &mut R, version: u64) -> io::Result<TransactionPrefix> {
-    let mut r = LimitTotalSize { reader, bytes_read: 0, limit: None };
-    let r = &mut r;
-
+  pub fn read<R: Read>(r: &mut R, version: u64) -> io::Result<TransactionPrefix> {
     let additional_timelock = Timelock::read(r)?;
 
-    let mut is_miner_tx = None;
-    let inputs = read_vec(
-      |r| {
-        let input = Input::read(r)?;
-        if is_miner_tx.is_none() {
-          if matches!(input, Input::Gen { .. }) {
-            is_miner_tx = Some(true);
-          } else {
-            is_miner_tx = Some(false);
-            r.limit = Some(MAX_NON_MINER_TRANSACTION_SIZE);
-          }
-        }
-        Ok(input)
-      },
-      Some(INPUTS_UPPER_BOUND),
-      r,
-    )?;
-    let Some(is_miner_tx) = is_miner_tx else {
-      Err(io::Error::other("transaction had no inputs"))?
-    };
+    let inputs = read_vec(|r| Input::read(r), None, r)?;
+    if inputs.is_empty() {
+      Err(io::Error::other("transaction had no inputs"))?;
+    }
+    let is_miner_tx = matches!(inputs[0], Input::Gen { .. });
 
     let max_outputs = if is_miner_tx { None } else { Some(MAX_NON_MINER_TRANSACTION_OUTPUTS) };
     let mut prefix = TransactionPrefix {
@@ -536,20 +500,12 @@ impl<P: PotentiallyPruned> Transaction<P> {
   /// This MAY error if miscellaneous Monero conseusus rules are broken, as useful when
   /// deserializing. The result is not guaranteed to follow all Monero consensus rules or any
   /// specific set of consensus rules.
-  pub fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
-    let mut r = LimitTotalSize { reader, bytes_read: 0, limit: None };
-    let r = &mut r;
-
+  pub fn read<R: Read>(r: &mut R) -> io::Result<Self> {
     let version = read_varint(r)?;
     let prefix = TransactionPrefix::read(r, version)?;
 
-    let is_miner_tx = matches!(prefix.inputs[0], Input::Gen(_));
-    if !is_miner_tx {
-      r.limit = Some(MAX_NON_MINER_TRANSACTION_SIZE);
-    }
-
     if version == 1 {
-      let signatures = if (prefix.inputs.len() == 1) && is_miner_tx {
+      let signatures = if (prefix.inputs.len() == 1) && matches!(prefix.inputs[0], Input::Gen(_)) {
         Default::default()
       } else {
         P::RingSignatures::read_signatures(&prefix.inputs, r)?
