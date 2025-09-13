@@ -2,6 +2,8 @@
 //  /tree/cbebe75475fb2c6073f7b2e058c88ceb2531de17PORTABLE_STORAGE.md
 // for the best documentation on the epee specification.
 
+#[allow(unused_imports)]
+use std_shims::prelude::*;
 use std_shims::io;
 
 use monero_oxide::io::{CompressedPoint, read_byte, read_u64, read_bytes, read_raw_vec};
@@ -221,7 +223,7 @@ pub(crate) fn seek(
 
 pub(crate) fn check_status(mut epee: &[u8]) -> Result<(), InterfaceError> {
   if seek(&mut epee, Type::String, "status")
-    .map_err(|e| InterfaceError::InvalidInterface(format!("couldn't seek `status`: {e}")))? !=
+    .map_err(|e| InterfaceError::InvalidInterface(format!("couldn't seek `status`: {e:?}")))? !=
     Some(1)
   {
     Err(InterfaceError::InvalidInterface("`status` was an array".to_string()))?;
