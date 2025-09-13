@@ -85,15 +85,10 @@ pub(crate) fn read_key<'a>(reader: &mut &'a [u8]) -> io::Result<&'a [u8]> {
   Ok(res)
 }
 
-pub(crate) fn seek(
-  reader: &mut &[u8],
+struct Seek<'a> {
+  reader: &'a [u8],
   expected_type: Type,
   field_name: &'static str,
-) -> io::Result<Option<u64>> {
-  if read_bytes::<_, { HEADER.len() }>(reader)? != HEADER {
-    Err(io::Error::other("missing EPEE header"))?;
-  }
-
   /*
     epee allows nested objects, when we don't want to write a recursive function. The following
     function only reads a single item per iteration of its loop, using a heap-allocated vector
@@ -103,79 +98,106 @@ pub(crate) fn seek(
     DoS by claiming there's 100 items when there isn't, we associate each item with its length
     as `(Type::*, 100)`. This causes our stack to grow only with depth, not width.
   */
-  let mut stack = vec![(Type::Object, 1u64)];
-  while let Some((kind, remaining)) = stack.last_mut() {
-    let kind = *kind;
+  stack: Vec<(Type, u64)>,
+}
 
-    // Decrement the amount remaining by one
-    *remaining = (*remaining)
-      .checked_sub(1)
-      .ok_or_else(|| io::Error::other("stack contained an exhausted item"))?;
-    if *remaining == 0 {
-      stack.pop();
-    }
+impl<'a> Iterator for Seek<'a> {
+  type Item = io::Result<(u64, &'a [u8])>;
+  fn next(&mut self) -> Option<Self::Item> {
+    (|| {
+      while let Some((kind, remaining)) = self.stack.last_mut() {
+        let kind = *kind;
 
-    match kind {
-      Type::Int64 => {
-        read_bytes::<_, { core::mem::size_of::<i64>() }>(reader)?;
-      }
-      Type::Int32 => {
-        read_bytes::<_, { core::mem::size_of::<i32>() }>(reader)?;
-      }
-      Type::Int16 => {
-        read_bytes::<_, { core::mem::size_of::<i16>() }>(reader)?;
-      }
-      Type::Int8 => {
-        read_bytes::<_, { core::mem::size_of::<i8>() }>(reader)?;
-      }
-      Type::Uint64 => {
-        read_bytes::<_, { core::mem::size_of::<u64>() }>(reader)?;
-      }
-      Type::Uint32 => {
-        read_bytes::<_, { core::mem::size_of::<u32>() }>(reader)?;
-      }
-      Type::Uint16 => {
-        read_bytes::<_, { core::mem::size_of::<u16>() }>(reader)?;
-      }
-      Type::Uint8 => {
-        read_bytes::<_, { core::mem::size_of::<u8>() }>(reader)?;
-      }
-      Type::Double => {
-        read_bytes::<_, { core::mem::size_of::<f64>() }>(reader)?;
-      }
-      Type::String => {
-        let len = read_vi(reader)?;
-        read_raw_vec(
-          read_byte,
-          len
-            .try_into()
-            .map_err(|_| io::Error::other("length of epee string exceed usize::MAX"))?,
-          reader,
-        )?;
-      }
-      Type::Bool => {
-        read_bytes::<_, { core::mem::size_of::<bool>() }>(reader)?;
-      }
-      Type::Object => {
-        stack.push((Type::InternalEntry, read_vi(reader)?));
-      }
-      Type::InternalEntry => {
-        let key = read_key(reader)?;
-        let (kind, len) = Type::read(reader)?;
-        if key == field_name.as_bytes() {
-          if kind != expected_type {
-            Err(io::Error::other(format!(
-              "seeked epee field `{field_name}` was type {kind:?}, expected {expected_type:?}"
-            )))?;
-          }
-          return Ok(Some(len));
+        // Decrement the amount remaining by one
+        *remaining = (*remaining)
+          .checked_sub(1)
+          .ok_or_else(|| io::Error::other("stack contained an exhausted item"))?;
+        if *remaining == 0 {
+          self.stack.pop();
         }
-        stack.push((kind, len));
-      }
-    }
-  }
 
-  Ok(None)
+        match kind {
+          Type::Int64 => {
+            read_bytes::<_, { core::mem::size_of::<i64>() }>(&mut self.reader)?;
+          }
+          Type::Int32 => {
+            read_bytes::<_, { core::mem::size_of::<i32>() }>(&mut self.reader)?;
+          }
+          Type::Int16 => {
+            read_bytes::<_, { core::mem::size_of::<i16>() }>(&mut self.reader)?;
+          }
+          Type::Int8 => {
+            read_bytes::<_, { core::mem::size_of::<i8>() }>(&mut self.reader)?;
+          }
+          Type::Uint64 => {
+            read_bytes::<_, { core::mem::size_of::<u64>() }>(&mut self.reader)?;
+          }
+          Type::Uint32 => {
+            read_bytes::<_, { core::mem::size_of::<u32>() }>(&mut self.reader)?;
+          }
+          Type::Uint16 => {
+            read_bytes::<_, { core::mem::size_of::<u16>() }>(&mut self.reader)?;
+          }
+          Type::Uint8 => {
+            read_bytes::<_, { core::mem::size_of::<u8>() }>(&mut self.reader)?;
+          }
+          Type::Double => {
+            read_bytes::<_, { core::mem::size_of::<f64>() }>(&mut self.reader)?;
+          }
+          Type::String => {
+            let len = read_vi(&mut self.reader)?;
+            read_raw_vec(
+              read_byte,
+              len
+                .try_into()
+                .map_err(|_| io::Error::other("length of epee string exceed usize::MAX"))?,
+              &mut self.reader,
+            )?;
+          }
+          Type::Bool => {
+            read_bytes::<_, { core::mem::size_of::<bool>() }>(&mut self.reader)?;
+          }
+          Type::Object => {
+            self.stack.push((Type::InternalEntry, read_vi(&mut self.reader)?));
+          }
+          Type::InternalEntry => {
+            let key = read_key(&mut self.reader)?;
+            let (kind, len) = Type::read(&mut self.reader)?;
+            self.stack.push((kind, len));
+            if key == self.field_name.as_bytes() {
+              if kind != self.expected_type {
+                Err(io::Error::other(format!(
+                  "seeked epee field `{}` was type {kind:?}, expected {:?}",
+                  self.field_name, self.expected_type,
+                )))?;
+              }
+              return Ok(Some((len, self.reader)));
+            }
+          }
+        }
+      }
+      Ok(None)
+    })()
+    .transpose()
+  }
+}
+
+pub(crate) fn seek(
+  reader: &mut &[u8],
+  expected_type: Type,
+  field_name: &'static str,
+) -> io::Result<Option<u64>> {
+  if read_bytes::<_, { HEADER.len() }>(reader)? != HEADER {
+    Err(io::Error::other("missing EPEE header"))?;
+  }
+  let len = {
+    let stack = vec![(Type::Object, 1u64)];
+    let mut iter = Seek { reader, expected_type, field_name, stack };
+    let len_and_seeked = iter.next().transpose()?;
+    *reader = iter.reader;
+    len_and_seeked.map(|(len, _seeked)| len)
+  };
+  Ok(len)
 }
 
 pub(crate) fn check_status(mut epee: &[u8]) -> Result<(), InterfaceError> {
