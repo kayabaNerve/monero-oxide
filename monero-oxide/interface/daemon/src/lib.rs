@@ -216,8 +216,8 @@ impl<T: HttpTransport> MoneroDaemon<T> {
             "wallet_address": address.to_string(),
             "amount_of_blocks": block_count,
           })),
-          Some(BASE_RESPONSE_SIZE.wrapping_add(
-            BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(block_count.wrapping_mul(32)),
+          Some(BASE_RESPONSE_SIZE.saturating_add(
+            BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(block_count.saturating_mul(32)),
           )),
         )
         .await?;
@@ -291,7 +291,7 @@ mod provides_transaction {
               Some(json!({
                 "txs_hashes": hashes_hex.drain(.. this_count).collect::<Vec<_>>(),
               })),
-              Some(BASE_RESPONSE_SIZE.wrapping_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(this_count.wrapping_mul(TRANSACTION_SIZE_BOUND)))),
+              Some(BASE_RESPONSE_SIZE.saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(this_count.saturating_mul(TRANSACTION_SIZE_BOUND)))),
             )
             .await?;
 
@@ -359,7 +359,7 @@ mod provides_transaction {
                 "txs_hashes": hashes_hex.drain(.. this_count).collect::<Vec<_>>(),
                 "prune": true,
               })),
-              Some(BASE_RESPONSE_SIZE.wrapping_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(this_count.wrapping_mul(TRANSACTION_SIZE_BOUND)))),
+              Some(BASE_RESPONSE_SIZE.saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(this_count.saturating_mul(TRANSACTION_SIZE_BOUND)))),
             )
             .await?;
 
@@ -458,7 +458,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
           Some(json!({ "height": number })),
           Some(
             BASE_RESPONSE_SIZE
-              .wrapping_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(BLOCK_SIZE_BOUND)),
+              .saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(BLOCK_SIZE_BOUND)),
           ),
         )
         .await?;
@@ -481,7 +481,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
           Some(json!({ "hash": hex::encode(hash) })),
           Some(
             BASE_RESPONSE_SIZE
-              .wrapping_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(BLOCK_SIZE_BOUND)),
+              .saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(BLOCK_SIZE_BOUND)),
           ),
         )
         .await?;
@@ -510,7 +510,8 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
           "get_block_header_by_height",
           Some(json!({ "height": number })),
           Some(
-            BASE_RESPONSE_SIZE.wrapping_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(256)),
+            BASE_RESPONSE_SIZE
+              .saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(256)),
           ),
         )
         .await?;
@@ -569,7 +570,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
         .bin_call(
           "get_o_indexes.bin",
           request,
-          Some(BASE_RESPONSE_SIZE.wrapping_add(BYTE_FACTOR_IN_BIN_RESPONSE_SIZE * 1024 * 8)),
+          Some(BASE_RESPONSE_SIZE.saturating_add(BYTE_FACTOR_IN_BIN_RESPONSE_SIZE * 1024 * 8)),
         )
         .await?;
       let mut indexes = indexes_buf.as_slice();
@@ -750,8 +751,8 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
                 "index": o
               })).collect::<Vec<_>>()
             })),
-            Some(BASE_RESPONSE_SIZE.wrapping_add(
-              BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(indexes.len().wrapping_mul(128)),
+            Some(BASE_RESPONSE_SIZE.saturating_add(
+              BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(indexes.len().saturating_mul(128)),
             )),
           )
           .await?;
@@ -841,8 +842,8 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
             "from_height": from,
             "to_height": if zero_zero_case { 1 } else { to },
           })),
-          Some(BASE_RESPONSE_SIZE.wrapping_add(
-            BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.wrapping_mul(to.max(2).wrapping_mul(16)),
+          Some(BASE_RESPONSE_SIZE.saturating_add(
+            BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(to.max(2).saturating_mul(16)),
           )),
         )
         .await?;
@@ -949,7 +950,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
                 //   /cc73fe71162d564ffda8e549b79a350bca53c454/src/cryptonote_core
                 //   /blockchain.cpp#L3836
                 let transaction_timelock_satisfied =
-                  Timelock::Block(block_number.wrapping_add(ACCEPTED_TIMELOCK_DELTA)) >=
+                  Timelock::Block(block_number.saturating_add(ACCEPTED_TIMELOCK_DELTA)) >=
                     txs[i].prefix().additional_timelock;
 
                 global_timelock_satisfied && transaction_timelock_satisfied
