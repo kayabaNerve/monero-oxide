@@ -100,6 +100,10 @@ fn read_byte(reader: &mut &[u8]) -> Result<u8, EpeeError> {
   Ok(byte)
 }
 
+pub(super) fn read_bool(reader: &mut &[u8]) -> Result<bool, EpeeError> {
+  read_byte(reader).map(|byte| byte != 0)
+}
+
 fn read_bytes<'a, const N: usize>(reader: &mut &'a [u8]) -> Result<&'a [u8], EpeeError> {
   if reader.len() < N {
     Err(EpeeError::Short(N))?;

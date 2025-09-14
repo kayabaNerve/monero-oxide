@@ -2,10 +2,9 @@ use core::fmt::Display;
 
 #[allow(unused_imports)]
 use std_shims::prelude::*;
-use std_shims::io;
 
 use monero_oxide::{
-  io::{CompressedPoint, read_byte, read_u64},
+  io::{CompressedPoint, read_u64},
   transaction::{Pruned, Transaction},
   block::Block,
 };
@@ -16,7 +15,9 @@ mod compliant;
 use compliant::{EpeeError, read_varint};
 pub(crate) use compliant::{HEADER, Type, Array};
 
+// We use a depth-limit of `8` as that's more than sufficient for our purposes
 const MAX_OBJECT_DEPTH: usize = 8;
+
 fn seek_all<'a>(
   reader: &'a [u8],
   kind: Type,
@@ -159,6 +160,7 @@ pub(crate) fn extract_distribution(
   read_u64_array_from_epee(expected_len, epee)
 }
 
+/// Accumulate a set of outs from `get_outs.bin`.
 pub(crate) fn accumulate_outs(
   outs: &[u8],
   amount: usize,
@@ -166,6 +168,7 @@ pub(crate) fn accumulate_outs(
 ) -> Result<(), InterfaceError> {
   let start = res.len();
 
+  // Create iterators for each of the fields within each out's struct
   let mut block_numbers = seek_all(outs, Type::Uint64, Array::Unit, "height")?;
   let mut keys = seek_all(outs, Type::String, Array::Unit, "key")?;
   let mut commitments = seek_all(outs, Type::String, Array::Unit, "mask")?;
@@ -179,30 +182,27 @@ pub(crate) fn accumulate_outs(
     .zip(&mut unlocked)
     .take(amount)
   {
-    let mut block_number = block_number?.1;
+    let block_number = read_u64(&mut block_number?.1).map_err(|e| {
+      InterfaceError::InvalidInterface(format!(
+        "`epee` yielded `Uint64` yet couldn't read `Uint64` from it: {e:?}"
+      ))
+    })?;
+    let block_number = usize::try_from(block_number).map_err(|_| {
+      InterfaceError::InvalidInterface(
+        "out `height` wasn't representable within a `usize`".to_string(),
+      )
+    })?;
 
     let key = CompressedPoint(decapsulate_thirty_two_byte_array_from_string(key?.1)?);
     let commitment = CompressedPoint(decapsulate_thirty_two_byte_array_from_string(commitment?.1)?)
       .decompress()
       .ok_or_else(|| {
-        InterfaceError::InternalError("`get_outs` returned an invalid commitment".to_string())
+        InterfaceError::InvalidInterface("`get_outs` returned an invalid commitment".to_string())
       })?;
     let transaction = decapsulate_thirty_two_byte_array_from_string(transaction?.1)?;
-    let mut unlocked = unlocked?.1;
+    let unlocked = compliant::read_bool(&mut unlocked?.1)?;
 
-    let res = &mut *res;
-
-    (move || -> io::Result<()> {
-      let block_number = usize::try_from(read_u64(&mut block_number)?)
-        .map_err(|_| io::Error::other("`height` wasn't representable within a `usize`"))?;
-
-      let unlocked = read_byte(&mut unlocked)? != 0;
-
-      res.push(RingCtOutputInformation { block_number, key, commitment, transaction, unlocked });
-
-      Ok(())
-    })()
-    .map_err(|e| InterfaceError::InvalidInterface(format!("couldn't extract outputs: {e:?}")))?;
+    res.push(RingCtOutputInformation { block_number, key, commitment, transaction, unlocked });
   }
 
   if res.len() != (start + amount) {
