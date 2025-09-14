@@ -57,18 +57,13 @@ impl<T: HttpTransport> MoneroDaemon<T> {
   async fn fetch_contiguous_blocks(
     &self,
     range: RangeInclusive<usize>,
-  ) -> Result<(usize, Vec<u8>), InterfaceError> {
+  ) -> Result<(usize, Vec<Vec<u8>>), InterfaceError> {
     let Some(requested_blocks_sub_one) = range.end().checked_sub(*range.start()) else {
       return Ok((0, vec![]));
     };
     let Some(requested_blocks) = requested_blocks_sub_one.checked_add(1) else {
       Err(InterfaceError::InternalError(
         "requested more blocks than representable in a `usize`".to_string(),
-      ))?
-    };
-    let Ok(requested_blocks_u64) = u64::try_from(requested_blocks) else {
-      Err(InterfaceError::InternalError(
-        "amount of requested blocks wasn't representable in a `u64`".to_string(),
       ))?
     };
 
@@ -79,39 +74,81 @@ impl<T: HttpTransport> MoneroDaemon<T> {
       Err(InterfaceError::InternalError("start block wasn't representable in a `u64`".to_string()))?
     };
 
-    let mut request = vec![
-      epee::HEADER,
-      &[3 << 2],
-      &[u8::try_from("requested_info".len()).unwrap()],
-      "requested_info".as_bytes(),
-      &[epee::Type::Uint8 as u8],
-      &[0],
-      &[u8::try_from("prune".len()).unwrap()],
-      "prune".as_bytes(),
-      &[epee::Type::Bool as u8],
-      &[1],
-      &[u8::try_from("heights".len()).unwrap()],
-      "heights".as_bytes(),
-      &[(epee::Type::Uint64 as u8) | (epee::Array::Array as u8)],
-      &((requested_blocks_u64 << 2) | 0b11).to_le_bytes(),
-    ]
-    .concat();
-    request.reserve(requested_blocks * 8);
-    for i in start ..= end {
-      request.extend(&i.to_le_bytes());
-    }
+    // https://github.com/monero-project/monero/blob/cc73fe71162d564ffda8e549b79a350bca53c454
+    //   /src/rpc/core_rpc_server.cpp#L77
+    const BLOCKS_PER_REQUEST: usize = 1000;
+    const BLOCKS_PER_REQUEST_U64: u64 = BLOCKS_PER_REQUEST as u64;
 
-    // TODO: Do we have to chunk these requests?
-    let blocks = self
-      .bin_call(
-        "get_blocks_by_height.bin",
-        request,
-        Some(BASE_RESPONSE_SIZE.saturating_add(requested_blocks.saturating_mul(BLOCK_SIZE_BOUND))),
-      )
-      .await?;
+    let expected_request_header_len = 44;
+    let expected_request_len =
+      expected_request_header_len + (8 + (requested_blocks.min(BLOCKS_PER_REQUEST) * 8));
+    let mut request = Vec::with_capacity(expected_request_len);
+    request.extend(epee::HEADER);
+    request.push(3 << 2);
+
+    request.push(u8::try_from("requested_info".len()).unwrap());
+    request.extend("requested_info".as_bytes());
+    request.push(epee::Type::Uint8 as u8);
+    request.push(0);
+
+    request.push(u8::try_from("prune".len()).unwrap());
+    request.extend("prune".as_bytes());
+    request.push(epee::Type::Bool as u8);
+    request.push(1);
+
+    request.push(u8::try_from("heights".len()).unwrap());
+    request.extend("heights".as_bytes());
+    request.push((epee::Type::Uint64 as u8) | (epee::Array::Array as u8));
+    debug_assert_eq!(expected_request_header_len, request.len());
+
+    let mut blocks = vec![];
+    let mut i = start;
+    let mut first_iter = true;
+    while i <= end {
+      request.truncate(expected_request_header_len);
+      let this_end = start.saturating_add(BLOCKS_PER_REQUEST_U64 - 1).min(end);
+      let requested_blocks = this_end - start + 1;
+      request.extend(((requested_blocks << 2) | 0b11).to_le_bytes());
+      for i in i ..= this_end {
+        request.extend(&i.to_le_bytes());
+      }
+      // Only checked on the first iteration as the final chunk may be shorter
+      if first_iter {
+        debug_assert_eq!(expected_request_len, request.len());
+        first_iter = false;
+      }
+
+      blocks.push(
+        self
+          .bin_call(
+            "get_blocks_by_height.bin",
+            request.clone(),
+            Some(
+              BASE_RESPONSE_SIZE.saturating_add(
+                usize::try_from(requested_blocks)
+                  .expect("requested blocks in a single request exceeded `usize::MAX`")
+                  .saturating_mul(BLOCK_SIZE_BOUND),
+              ),
+            ),
+          )
+          .await?,
+      );
+
+      match this_end.checked_add(1) {
+        Some(j) => i = j,
+        None => break,
+      }
+    }
 
     Ok((requested_blocks, blocks))
   }
+}
+
+fn chained_iters<'a, I: Iterator, F: Fn(&'a [u8]) -> Result<I, InterfaceError>>(
+  values: &'a [Vec<u8>],
+  f: F,
+) -> Result<impl use<'a, I, F> + Iterator<Item = I::Item>, InterfaceError> {
+  Ok(values.iter().map(|value| f(value)).collect::<Result<Vec<_>, _>>()?.into_iter().flatten())
 }
 
 impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
@@ -120,10 +157,10 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
     range: RangeInclusive<usize>,
   ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>> {
     async move {
-      let (requested_blocks, blocks) = self.fetch_contiguous_blocks(range).await?;
+      let (requested_blocks, blocks_bin) = self.fetch_contiguous_blocks(range).await?;
       let mut res = Vec::with_capacity(requested_blocks);
 
-      let mut blocks = epee::extract_blocks_from_blocks_bin(&blocks)?;
+      let mut blocks = chained_iters(&blocks_bin, epee::extract_blocks_from_blocks_bin)?;
       for block in (&mut blocks).take(requested_blocks) {
         res.push(block?);
       }
@@ -205,12 +242,12 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
       let (requested_blocks, blocks_bin) = self.fetch_contiguous_blocks(range).await?;
       let mut res = Vec::with_capacity(requested_blocks);
 
-      let mut blocks = epee::extract_blocks_from_blocks_bin(&blocks_bin)?;
-      let mut txs = epee::extract_txs_from_blocks_bin(&blocks_bin)?;
+      let mut blocks = chained_iters(&blocks_bin, epee::extract_blocks_from_blocks_bin)?;
+      let mut txs = chained_iters(&blocks_bin, epee::extract_txs_from_blocks_bin)?;
 
-      // NOTE: If we rip out the very first index alone, we can calculate all of the rest
+      // NOTE: If we rip out the very first index alone, we could calculate all of the rest
       let mut first_output_index_per_transaction =
-        epee::extract_first_output_indexes_from_block_bin(&blocks_bin)?;
+        chained_iters(&blocks_bin, epee::extract_first_output_indexes_from_block_bin)?;
 
       for block in (&mut blocks).take(requested_blocks) {
         let block = block?;
@@ -226,9 +263,13 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
                     .to_string(),
                 )
               })??;
+
+            // If we have yet to write the output index for the first RingCT output...
             #[allow(clippy::collapsible_if)]
             if output_index_for_first_ringct_output.is_none() {
+              // This this transaction produced a RingCT output...
               if matches!(tx, Transaction::V2 { .. }) && (!tx.prefix().outputs.is_empty()) {
+                // Write this transaction's output index to the slot
                 output_index_for_first_ringct_output =
                   Some(first_output_index_per_transaction.ok_or_else(|| {
                     InterfaceError::InvalidInterface(
@@ -341,31 +382,47 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
       //   /src/rpc/core_rpc_server.cpp#L67
       const MAX_OUTS: usize = 5000;
 
+      let expected_request_header_len = 19;
+      let expected_request_len =
+        expected_request_header_len + 8 + (indexes.len().min(MAX_OUTS) * 26);
+      let mut request = Vec::with_capacity(expected_request_len);
+      request.extend(epee::HEADER);
+      request.push(1 << 2);
+      request.push(u8::try_from("outputs".len()).unwrap());
+      request.extend("outputs".as_bytes());
+      request.push((epee::Type::Object as u8) | (epee::Array::Array as u8));
+      debug_assert_eq!(request.len(), expected_request_header_len);
+
       let mut res = Vec::with_capacity(indexes.len());
-      let mut request = Vec::with_capacity(indexes.len().max(MAX_OUTS) * 16);
+      let mut first_iter = true;
       for indexes in indexes.chunks(MAX_OUTS) {
-        let indexes_len_u64 =
-          u64::try_from(indexes.len()).expect("requesting more than 2**64 indexes?");
+        // Form the request
+        {
+          request.truncate(expected_request_header_len);
 
-        request.clear();
-        request.extend(epee::HEADER);
-        request.push(1 << 2);
-        request.push(u8::try_from("outputs".len()).unwrap());
-        request.extend("outputs".as_bytes());
-        request.push((epee::Type::Object as u8) | (epee::Array::Array as u8));
-        request.extend(((indexes_len_u64 << 2) | 0b11).to_le_bytes());
-        for index in indexes {
-          request.push(2u8 << 2);
+          let indexes_len_u64 =
+            u64::try_from(indexes.len()).expect("requesting more than 2**64 indexes?");
+          request.extend(((indexes_len_u64 << 2) | 0b11).to_le_bytes());
 
-          request.push(u8::try_from("amount".len()).unwrap());
-          request.extend("amount".as_bytes());
-          request.push(epee::Type::Uint8 as u8);
-          request.push(0);
+          for index in indexes {
+            request.push(2u8 << 2);
 
-          request.push(u8::try_from("index".len()).unwrap());
-          request.extend("index".as_bytes());
-          request.push(epee::Type::Uint64 as u8);
-          request.extend(&index.to_le_bytes());
+            request.push(u8::try_from("amount".len()).unwrap());
+            request.extend("amount".as_bytes());
+            request.push(epee::Type::Uint8 as u8);
+            request.push(0);
+
+            request.push(u8::try_from("index".len()).unwrap());
+            request.extend("index".as_bytes());
+            request.push(epee::Type::Uint64 as u8);
+            request.extend(&index.to_le_bytes());
+          }
+
+          // Only checked on the first iteration as the final chunk may be shorter
+          if first_iter {
+            debug_assert_eq!(expected_request_len, request.len());
+            first_iter = false;
+          }
         }
 
         // This is the size of the data, doubled to account for epee's structure
