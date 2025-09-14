@@ -384,7 +384,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
 
       let expected_request_header_len = 19;
       let expected_request_len =
-        expected_request_header_len + 8 + (indexes.len().min(MAX_OUTS) * 27);
+        expected_request_header_len + 8 + (indexes.len().min(MAX_OUTS) * 25);
       let mut request = Vec::with_capacity(expected_request_len);
       request.extend(epee::HEADER);
       request.push(1 << 2);
