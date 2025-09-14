@@ -20,7 +20,7 @@ pub(crate) fn check_status(mut epee: &[u8]) -> Result<(), InterfaceError> {
   {
     Err(InterfaceError::InvalidInterface("`status` was an array".to_string()))?;
   }
-  if (epee.len() < 3) || (epee[0] != (2u8 << 2)) || (&epee[1 .. 3] != "OK".as_bytes()) {
+  if epee != [2 << 2, b'O', b'K'] {
     Err(InterfaceError::InvalidInterface("epee `status` wasn't \"OK\"".to_string()))?;
   }
   Ok(())

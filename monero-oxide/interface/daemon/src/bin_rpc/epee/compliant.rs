@@ -146,6 +146,8 @@ impl<'a> Iterator for Seek<'a> {
   type Item = io::Result<(u64, &'a [u8])>;
   fn next(&mut self) -> Option<Self::Item> {
     (|| {
+      let mut result = None;
+
       while let Some((kind, remaining)) = self.stack.last_mut() {
         let kind = *kind;
 
@@ -204,14 +206,31 @@ impl<'a> Iterator for Seek<'a> {
           TypeOrEntry::Entry => {
             let key = read_key(&mut self.reader)?;
             let (kind, len) = Type::read(&mut self.reader)?;
+            let result_stack_depth = self.stack.len();
             self.stack.push((TypeOrEntry::Type(kind), len));
             // If this is the requested `(name, type)`, yield it
             if (key == self.field_name.as_bytes()) && (kind == self.expected_type) {
-              return Ok(Some((len, self.reader)));
+              result = Some(((len, self.reader), result_stack_depth));
             }
           }
         }
+
+        if let Some(((epee_len, bytes), stack_depth)) = result {
+          if stack_depth == self.stack.len() {
+            let remaining_bytes = self.reader.len();
+            let bytes_used_by_field = bytes.len() - remaining_bytes;
+            return Ok(Some((epee_len, &bytes[.. dbg!(bytes_used_by_field)])));
+          }
+        }
       }
+
+      if !self.reader.is_empty() {
+        Err(io::Error::other(format!(
+          "read `epee` object yet found {} trailing bytes",
+          self.reader.len()
+        )))?;
+      }
+
       Ok(None)
     })()
     .transpose()
@@ -220,8 +239,8 @@ impl<'a> Iterator for Seek<'a> {
 
 /// Seek all instances of a field with the desired `(type, name)`.
 ///
-/// This yields the length of the item _as an epee value_ and a slice which starts with the
-/// epee-encoded value. The slice will not be bounded by the end of the epee-encoded value.
+/// This yields the length of the item _as an `epee` value_ and a slice for the bytes of the
+/// `epee`-encoded item.
 pub(crate) fn seek_all<'a>(
   mut reader: &'a [u8],
   expected_type: Type,
@@ -236,8 +255,10 @@ pub(crate) fn seek_all<'a>(
 
 /// Seek the _only_ instance of a field with the desired `(type, name)`.
 ///
-/// This yields the length of the item _as an epee value_ and a slice which starts with the
-/// epee-encoded value. The slice will not be bounded by the end of the epee-encoded value.
+/// This yields the length of the item _as an `epee` value_ and a slice for the bytes of the
+/// `epee`-encoded item.
+///
+/// Errors if multiple instances of the field are found.
 pub(crate) fn seek(
   reader: &mut &[u8],
   expected_type: Type,
@@ -250,11 +271,13 @@ pub(crate) fn seek(
     let stack = vec![(TypeOrEntry::Type(Type::Object), 1u64)];
     let mut iter = Seek { reader, expected_type, field_name, stack };
     let len_and_seeked = iter.next().transpose()?;
-    *reader = iter.reader;
     if iter.next().is_some() {
       Err(io::Error::other("field was present multiple times within epee"))?;
     }
-    len_and_seeked.map(|(len, _seeked)| len)
+    len_and_seeked.map(|(len, seeked)| {
+      *reader = seeked;
+      len
+    })
   };
   Ok(len)
 }
