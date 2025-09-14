@@ -7,8 +7,8 @@ use crate::{InterfaceError, ProvidesBlockchainMeta};
 
 /// Provides the blockchain from an untrusted interface.
 ///
-/// This provides some of its methods yet (`get_contiguous_blocks` || `get_block_by_number`) &&
-/// (`get_blocks` || `get_block`) MUST be overriden, ideally the batch methods.
+/// This provides some of its methods yet (`contiguous_blocks` || `block_by_number`) &&
+/// (`blocks` || `block`) MUST be overriden, ideally the batch methods.
 pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
   /// Get a contiguous range of blocks.
   ///

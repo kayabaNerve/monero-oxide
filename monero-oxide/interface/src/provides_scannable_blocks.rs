@@ -102,8 +102,8 @@ impl<P: ProvidesTransactions + ProvidesOutputs> ExpandToScannableBlock for P {}
 /// Provides scannable blocks from an untrusted interface.
 ///
 /// This provides all its methods yet
-/// (`get_contiguous_scannable_blocks` || `get_scannable_block_by_number`) &&
-/// (`get_scannable_blocks` || `get_scannable_block`) MUST be overriden, ideally the batch methods.
+/// (`contiguous_scannable_blocks` || `scannable_block_by_number`) &&
+/// (`scannable_blocks` || `scannable_block`) MUST be overriden, ideally the batch methods.
 pub trait ProvidesUnvalidatedScannableBlocks: Sync {
   /// Get a contiguous range of `ScannableBlock`s.
   ///

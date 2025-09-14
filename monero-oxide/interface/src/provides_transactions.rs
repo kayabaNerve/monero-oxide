@@ -81,8 +81,8 @@ impl From<InterfaceError> for TransactionsError {
 
 /// Provides unvalidated transactions from an untrusted interface.
 ///
-/// This provides all its methods yet (`get_transactions` || `get_transaction`) &&
-/// (`get_pruned_transactions` || `get_pruned_transaction`) MUST be overriden, ideally the batch
+/// This provides all its methods yet (`transactions` || `transaction`) &&
+/// (`pruned_transactions` || `pruned_transaction`) MUST be overriden, ideally the batch
 /// methods.
 #[rustfmt::skip]
 pub trait ProvidesUnvalidatedTransactions: Sync {
