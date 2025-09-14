@@ -81,11 +81,36 @@ pub trait HttpTransport: Sync + Clone {
 
 /// A connection to a Monero daemon.
 #[derive(Clone)]
-pub struct MoneroDaemon<T: HttpTransport>(pub T);
+pub struct MoneroDaemon<T: HttpTransport> {
+  transport: T,
+  response_size_limits: bool,
+}
+
+impl<T: HttpTransport> MoneroDaemon<T> {
+  /// Construct a new connection to a Monero daemon.
+  pub fn new(transport: T) -> Self {
+    Self { transport, response_size_limits: true }
+  }
+
+  /// Whether to enable or disable response size limits.
+  ///
+  /// The default is to enable size limits on the response, preventing a malicious daemon from
+  /// transmitting a 1 GB response to a request for a single transaction. However, as Monero has
+  /// unbounded block sizes, miner transaction sizes, a completely correct transport cannot bound
+  /// any responses. This allows disable size limits on responses (not recommended) to ensure
+  /// correctness.
+  pub fn response_size_limits(&mut self, enabled: bool) {
+    self.response_size_limits = enabled;
+  }
+}
 
 impl<T: Debug + HttpTransport> core::fmt::Debug for MoneroDaemon<T> {
   fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> Result<(), core::fmt::Error> {
-    fmt.debug_struct("MoneroDaemon").field("0", &self.0).finish()
+    fmt
+      .debug_struct("MoneroDaemon")
+      .field("transport", &self.transport)
+      .field("response_size_limits", &self.response_size_limits)
+      .finish()
   }
 }
 
@@ -99,12 +124,12 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     &'a self,
     route: &'a str,
     params: Option<Params>,
-    response_size_limit: Option<usize>,
+    response_size_limit: usize,
   ) -> impl use<'a, T, Params, Response> + Send + Future<Output = Result<Response, InterfaceError>> {
     async move {
       let res =
         self
-          .0
+          .transport
           .post(
             route,
             if let Some(params) = params.as_ref() {
@@ -118,7 +143,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
             } else {
               vec![]
             },
-            response_size_limit,
+            self.response_size_limits.then_some(response_size_limit),
           )
           .await?;
       let res_str = std_shims::str::from_utf8(&res)
@@ -134,7 +159,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     &'a self,
     method: &'a str,
     params: Option<Value>,
-    response_size_limit: Option<usize>,
+    response_size_limit: usize,
   ) -> impl use<'a, T, Response> + Send + Future<Output = Result<Response, InterfaceError>> {
     async move {
       let mut req = json!({ "method": method });
@@ -178,9 +203,9 @@ impl<T: HttpTransport> MoneroDaemon<T> {
             "wallet_address": address.to_string(),
             "amount_of_blocks": block_count,
           })),
-          Some(BASE_RESPONSE_SIZE.saturating_add(
+          BASE_RESPONSE_SIZE.saturating_add(
             BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(block_count.saturating_mul(32)),
-          )),
+          ),
         )
         .await?;
 
@@ -201,7 +226,7 @@ impl<T: HttpTransport> ProvidesBlockchainMeta for MoneroDaemon<T> {
         height: usize,
       }
       let res = self
-        .rpc_call::<Option<()>, HeightResponse>("get_height", None, Some(BASE_RESPONSE_SIZE))
+        .rpc_call::<Option<()>, HeightResponse>("get_height", None, BASE_RESPONSE_SIZE)
         .await?
         .height;
       res.checked_sub(1).ok_or_else(|| {
@@ -253,7 +278,7 @@ mod provides_transaction {
               Some(json!({
                 "txs_hashes": hashes_hex.drain(.. this_count).collect::<Vec<_>>(),
               })),
-              Some(BASE_RESPONSE_SIZE.saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(this_count.saturating_mul(TRANSACTION_SIZE_BOUND)))),
+              BASE_RESPONSE_SIZE.saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(this_count.saturating_mul(TRANSACTION_SIZE_BOUND))),
             )
             .await?;
 
@@ -321,7 +346,7 @@ mod provides_transaction {
                 "txs_hashes": hashes_hex.drain(.. this_count).collect::<Vec<_>>(),
                 "prune": true,
               })),
-              Some(BASE_RESPONSE_SIZE.saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(this_count.saturating_mul(TRANSACTION_SIZE_BOUND)))),
+              BASE_RESPONSE_SIZE.saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(this_count.saturating_mul(TRANSACTION_SIZE_BOUND))),
             )
             .await?;
 
@@ -390,7 +415,7 @@ impl<T: HttpTransport> PublishTransaction for MoneroDaemon<T> {
         .rpc_call(
           "send_raw_transaction",
           Some(json!({ "tx_as_hex": hex::encode(tx.serialize()), "do_sanity_checks": false })),
-          Some(BASE_RESPONSE_SIZE),
+          BASE_RESPONSE_SIZE,
         )
         .await?;
 
@@ -429,7 +454,7 @@ mod provides_fee_rates {
           .json_rpc_call(
             "get_fee_estimate",
             Some(json!({ "grace_blocks": GRACE_BLOCKS_FOR_FEE_ESTIMATE })),
-            Some(BASE_RESPONSE_SIZE),
+            BASE_RESPONSE_SIZE,
           )
           .await?;
 

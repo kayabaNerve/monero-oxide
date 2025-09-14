@@ -36,7 +36,7 @@ async fn make_integrated_address(rpc: &Rpc, payment_id: [u8; 8]) -> String {
     .json_rpc_call::<IntegratedAddressResponse>(
       "make_integrated_address",
       Some(json!({ "payment_id": hex::encode(payment_id) })),
-      None,
+      usize::MAX,
     )
     .await
     .unwrap();
@@ -59,13 +59,13 @@ async fn initialize_rpcs() -> (Rpc, Rpc, MoneroAddress) {
     .json_rpc_call(
       "create_wallet",
       Some(json!({ "filename": hex::encode(wallet_id), "language": "English" })),
-      None,
+      usize::MAX,
     )
     .await
     .unwrap();
 
   let address: AddressResponse = wallet_rpc
-    .json_rpc_call("get_address", Some(json!({ "account_index": 0 })), None)
+    .json_rpc_call("get_address", Some(json!({ "account_index": 0 })), usize::MAX)
     .await
     .unwrap();
 
@@ -91,7 +91,7 @@ async fn from_wallet_rpc_to_self(spec: AddressSpec) {
   };
 
   // refresh & make a tx
-  let _: EmptyResponse = wallet_rpc.json_rpc_call("refresh", None, None).await.unwrap();
+  let _: EmptyResponse = wallet_rpc.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
 
   #[derive(Debug, Deserialize)]
   struct TransferResponse {
@@ -103,7 +103,7 @@ async fn from_wallet_rpc_to_self(spec: AddressSpec) {
       Some(json!({
         "destinations": [{"address": addr.to_string(), "amount": 1_000_000_000_000u64 }],
       })),
-      None,
+      usize::MAX,
     )
     .await
     .unwrap();
@@ -192,12 +192,12 @@ test!(
     },
     |_, _, tx: Transaction, _, data: Rpc| async move {
       // confirm receipt
-      let _: EmptyResponse = data.json_rpc_call("refresh", None, None).await.unwrap();
+      let _: EmptyResponse = data.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
       let transfer: TransfersResponse = data
         .json_rpc_call(
           "get_transfer_by_txid",
           Some(json!({ "txid": hex::encode(tx.hash()) })),
-          None,
+          usize::MAX,
         )
         .await
         .unwrap();
@@ -222,7 +222,7 @@ test!(
         account_index: u32,
       }
       let addr: AccountResponse =
-        wallet_rpc.json_rpc_call("create_account", None, None).await.unwrap();
+        wallet_rpc.json_rpc_call("create_account", None, usize::MAX).await.unwrap();
       assert!(addr.account_index != 0);
 
       builder
@@ -231,13 +231,13 @@ test!(
     },
     |_, _, tx: Transaction, _, data: (Rpc, u32)| async move {
       // confirm receipt
-      let _: EmptyResponse = data.0.json_rpc_call("refresh", None, None).await.unwrap();
+      let _: EmptyResponse = data.0.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
       let transfer: TransfersResponse = data
         .0
         .json_rpc_call(
           "get_transfer_by_txid",
           Some(json!({ "txid": hex::encode(tx.hash()), "account_index": data.1 })),
-          None,
+          usize::MAX,
         )
         .await
         .unwrap();
@@ -265,7 +265,11 @@ test!(
         address_index: u32,
       }
       let addrs: AddressesResponse = wallet_rpc
-        .json_rpc_call("create_address", Some(json!({ "account_index": 0, "count": 2 })), None)
+        .json_rpc_call(
+          "create_address",
+          Some(json!({ "account_index": 0, "count": 2 })),
+          usize::MAX,
+        )
         .await
         .unwrap();
       assert!(addrs.address_index != 0);
@@ -279,13 +283,13 @@ test!(
     },
     |_, _, tx: Transaction, _, data: (Rpc, Rpc, u32)| async move {
       // confirm receipt
-      let _: EmptyResponse = data.0.json_rpc_call("refresh", None, None).await.unwrap();
+      let _: EmptyResponse = data.0.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
       let transfer: TransfersResponse = data
         .0
         .json_rpc_call(
           "get_transfer_by_txid",
           Some(json!({ "txid": hex::encode(tx.hash()), "account_index": 0 })),
-          None,
+          usize::MAX,
         )
         .await
         .unwrap();
@@ -324,13 +328,13 @@ test!(
     },
     |_, _, tx: Transaction, _, data: (Rpc, [u8; 8])| async move {
       // confirm receipt
-      let _: EmptyResponse = data.0.json_rpc_call("refresh", None, None).await.unwrap();
+      let _: EmptyResponse = data.0.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
       let transfer: TransfersResponse = data
         .0
         .json_rpc_call(
           "get_transfer_by_txid",
           Some(json!({ "txid": hex::encode(tx.hash()) })),
-          None,
+          usize::MAX,
         )
         .await
         .unwrap();
@@ -361,12 +365,12 @@ test!(
     },
     |_, _, tx: Transaction, _, data: Rpc| async move {
       // confirm receipt
-      let _: EmptyResponse = data.json_rpc_call("refresh", None, None).await.unwrap();
+      let _: EmptyResponse = data.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
       let transfer: TransfersResponse = data
         .json_rpc_call(
           "get_transfer_by_txid",
           Some(json!({ "txid": hex::encode(tx.hash()) })),
-          None,
+          usize::MAX,
         )
         .await
         .unwrap();

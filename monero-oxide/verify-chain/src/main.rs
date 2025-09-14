@@ -37,7 +37,10 @@ async fn check_block<T: HttpTransport>(rpc: MoneroDaemon<T>, block_i: usize) {
     blob: String,
   }
   let res: BlockResponse = loop {
-    match rpc.json_rpc_call("get_block", Some(json!({ "hash": hex::encode(hash) })), None).await {
+    match rpc
+      .json_rpc_call("get_block", Some(json!({ "hash": hex::encode(hash) })), usize::MAX)
+      .await
+    {
       Ok(res) => break res,
       Err(InterfaceError::InterfaceError(e)) => {
         println!("get_block InterfaceError: {e}");
@@ -155,7 +158,7 @@ async fn check_block<T: HttpTransport>(rpc: MoneroDaemon<T>, block_i: usize) {
                             "index": o
                           })).collect::<Vec<_>>()
                         })),
-                        None,
+                        usize::MAX,
                       )
                       .await
                     {

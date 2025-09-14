@@ -1,3 +1,6 @@
 # Monero simple-request RPC
 
-RPC connection to a Monero daemon via simple-request, built around monero-oxide.
+A [connection](https://docs.rs/monero-interface) to a
+[Monero daemon](https://docs.rs/monero-daemon-rpc) via
+[`simple-request`](https://docs.rs/simple-request), built around
+[`monero-oxide`](https://docs.rs/monero-oxide).

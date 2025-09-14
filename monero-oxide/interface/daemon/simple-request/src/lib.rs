@@ -125,7 +125,7 @@ impl SimpleRequestTransport {
       Authentication::Unauthenticated(Client::with_connection_pool())
     };
 
-    Ok(MoneroDaemon(SimpleRequestTransport { authentication, url, request_timeout }))
+    Ok(MoneroDaemon::new(SimpleRequestTransport { authentication, url, request_timeout }))
   }
 }
 

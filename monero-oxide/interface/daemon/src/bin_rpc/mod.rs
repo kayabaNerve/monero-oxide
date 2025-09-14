@@ -24,8 +24,8 @@ use monero_oxide::{
 use monero_interface::*;
 
 use crate::{
-  BASE_RESPONSE_SIZE, BYTE_FACTOR_IN_JSON_RESPONSE_SIZE, HttpTransport, MoneroDaemon, rpc_hex,
-  hash_hex,
+  BASE_RESPONSE_SIZE, BYTE_FACTOR_IN_JSON_RESPONSE_SIZE, TRANSACTION_SIZE_BOUND, HttpTransport,
+  MoneroDaemon, rpc_hex, hash_hex,
 };
 
 mod epee;
@@ -43,10 +43,13 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     &'a self,
     route: &'a str,
     params: Vec<u8>,
-    response_size_limit: Option<usize>,
+    response_size_limit: usize,
   ) -> impl use<'a, T> + Send + Future<Output = Result<Vec<u8>, InterfaceError>> {
     async move {
-      let res = self.0.post(route, params, response_size_limit).await?;
+      let res = self
+        .transport
+        .post(route, params, self.response_size_limits.then_some(response_size_limit))
+        .await?;
       epee::check_status(&res)?;
       Ok(res)
     }
@@ -123,12 +126,10 @@ impl<T: HttpTransport> MoneroDaemon<T> {
           .bin_call(
             "get_blocks_by_height.bin",
             request.clone(),
-            Some(
-              BASE_RESPONSE_SIZE.saturating_add(
-                usize::try_from(requested_blocks)
-                  .expect("requested blocks in a single request exceeded `usize::MAX`")
-                  .saturating_mul(BLOCK_SIZE_BOUND),
-              ),
+            BASE_RESPONSE_SIZE.saturating_add(
+              usize::try_from(requested_blocks)
+                .expect("requested blocks in a single request exceeded `usize::MAX`")
+                .saturating_mul(BLOCK_SIZE_BOUND),
             ),
           )
           .await?,
@@ -192,10 +193,8 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
         .json_rpc_call(
           "get_block",
           Some(json!({ "hash": hex::encode(hash) })),
-          Some(
-            BASE_RESPONSE_SIZE
-              .saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(BLOCK_SIZE_BOUND)),
-          ),
+          BASE_RESPONSE_SIZE
+            .saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(BLOCK_SIZE_BOUND)),
         )
         .await?;
 
@@ -222,10 +221,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
         .json_rpc_call(
           "get_block_header_by_height",
           Some(json!({ "height": number })),
-          Some(
-            BASE_RESPONSE_SIZE
-              .saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(256)),
-          ),
+          BASE_RESPONSE_SIZE,
         )
         .await?;
       hash_hex(&header.block_header.hash)
@@ -364,9 +360,13 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
       ]
       .concat();
 
-      // 8 bytes per index, 10,000 indexes per transaction
+      const OUTPUTS_AMOUNT_BOUND: usize = TRANSACTION_SIZE_BOUND.div_ceil(32);
       let epee = self
-        .bin_call("get_o_indexes.bin", request, Some(BASE_RESPONSE_SIZE.saturating_add(10_000 * 8)))
+        .bin_call(
+          "get_o_indexes.bin",
+          request,
+          BASE_RESPONSE_SIZE.saturating_add(OUTPUTS_AMOUNT_BOUND * 8),
+        )
         .await?;
 
       epee::extract_output_indexes(&epee)
@@ -432,7 +432,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
           .bin_call(
             "get_outs.bin",
             request.clone(),
-            Some(BASE_RESPONSE_SIZE.saturating_add(indexes.len().saturating_mul(BOUND_PER_OUT))),
+            BASE_RESPONSE_SIZE.saturating_add(indexes.len().saturating_mul(BOUND_PER_OUT)),
           )
           .await?;
 
@@ -516,10 +516,8 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
         .bin_call(
           "get_output_distribution.bin",
           request,
-          Some(
-            BASE_RESPONSE_SIZE
-              .saturating_add(to.saturating_sub(from).saturating_add(2).saturating_mul(8)),
-          ),
+          BASE_RESPONSE_SIZE
+            .saturating_add(to.saturating_sub(from).saturating_add(2).saturating_mul(8)),
         )
         .await?;
 
