@@ -16,7 +16,6 @@ use serde::Deserialize;
 use serde_json::json;
 
 use monero_oxide::{
-  io::read_u64,
   transaction::{Timelock, Transaction},
   block::Block,
   DEFAULT_LOCK_WINDOW,
@@ -93,7 +92,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
       &[1],
       &[u8::try_from("heights".len()).unwrap()],
       "heights".as_bytes(),
-      &[(epee::Type::Uint64 as u8) | epee::ARRAY_FLAG],
+      &[(epee::Type::Uint64 as u8) | (epee::Array::Array as u8)],
       &((requested_blocks_u64 << 2) | 0b11).to_le_bytes(),
     ]
     .concat();
@@ -209,43 +208,37 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
       let mut blocks = epee::extract_blocks_from_blocks_bin(&blocks_bin)?;
       let mut txs = epee::extract_txs_from_blocks_bin(&blocks_bin)?;
 
-      // NOTE: If we rip out the very fast index alone, we can calculate all of the rest
-      let mut output_indices_per_transaction =
-        epee::seek_all(&blocks_bin, epee::Type::Uint64, "indices").map_err(|e| {
-          InterfaceError::InvalidInterface(format!(
-            "couldn't `seek_all` for `get_blocks_by_height.bin`: {e:?}"
-          ))
-        })?;
+      // NOTE: If we rip out the very first index alone, we can calculate all of the rest
+      let mut first_output_index_per_transaction =
+        epee::extract_first_output_indexes_from_block_bin(&blocks_bin)?;
 
       for block in (&mut blocks).take(requested_blocks) {
         let block = block?;
         let mut block_txs = vec![];
 
         let mut output_index_for_first_ringct_output = None;
-        let mut update_output_index_for_first_ringct_output = |tx: &Transaction<_>| {
-          let mut indices = output_indices_per_transaction
-            .next()
-            .ok_or_else(|| {
-              InterfaceError::InvalidInterface(
-                "`get_blocks.bin` contained insufficient output indices".to_string(),
-              )
-            })?
-            .map_err(|e| {
-              InterfaceError::InvalidInterface(format!("couldn't seek to `indices`: {e:?}"))
-            })?;
-          #[allow(clippy::collapsible_if)]
-          if output_index_for_first_ringct_output.is_none() {
-            if matches!(tx, Transaction::V2 { .. }) && (!tx.prefix().outputs.is_empty()) {
-              output_index_for_first_ringct_output =
-                Some(read_u64(&mut indices.1).map_err(|e| {
-                  InterfaceError::InvalidInterface(format!(
-                    "couldn't read output index from epee: {e:?}"
-                  ))
-                })?);
+        let mut update_output_index_for_first_ringct_output =
+          |tx: &Transaction<_>| -> Result<_, InterfaceError> {
+            let first_output_index_per_transaction =
+              first_output_index_per_transaction.next().ok_or_else(|| {
+                InterfaceError::InvalidInterface(
+                  "`get_blocks.bin` contained insufficient output indexes for present transactions"
+                    .to_string(),
+                )
+              })??;
+            #[allow(clippy::collapsible_if)]
+            if output_index_for_first_ringct_output.is_none() {
+              if matches!(tx, Transaction::V2 { .. }) && (!tx.prefix().outputs.is_empty()) {
+                output_index_for_first_ringct_output =
+                  Some(first_output_index_per_transaction.ok_or_else(|| {
+                    InterfaceError::InvalidInterface(
+                      "transaction had outputs yet no output indexes".to_string(),
+                    )
+                  })?);
+              }
             }
-          }
-          Ok(())
-        };
+            Ok(())
+          };
         let pruned_miner_transaction = block.miner_transaction.clone().into();
         update_output_index_for_first_ringct_output(&pruned_miner_transaction)?;
 
@@ -280,10 +273,11 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
       }
       if blocks.next().is_some() ||
         txs.next().is_some() ||
-        output_indices_per_transaction.next().is_some()
+        first_output_index_per_transaction.next().is_some()
       {
         Err(InterfaceError::InvalidInterface(
-          "epee response had extra instances of `block`, `blob`, or `indices`".to_string(),
+          "epee response had extra instances of `block`, `blob`, `prunable_hash`, or `indices`"
+            .to_string(),
         ))?;
       }
 
@@ -330,24 +324,11 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
       .concat();
 
       // 8 bytes per index, 10,000 indexes per transaction
-      let epee_res = self
+      let epee = self
         .bin_call("get_o_indexes.bin", request, Some(BASE_RESPONSE_SIZE.saturating_add(10_000 * 8)))
         .await?;
-      let mut epee_res = epee_res.as_slice();
 
-      let mut res = vec![];
-      if let Some(len) =
-        epee::seek(&mut epee_res, epee::Type::Uint64, "o_indexes").map_err(|e| {
-          InterfaceError::InvalidInterface(format!("couldn't seek `o_indexes`: {e:?}"))
-        })?
-      {
-        for _ in 0 .. len {
-          res.push(read_u64(&mut epee_res).map_err(|e| {
-            InterfaceError::InvalidInterface(format!("incomplete `o_indexes`: {e:?}"))
-          })?);
-        }
-      }
-      Ok(res)
+      epee::extract_output_indexes(&epee)
     }
   }
 
@@ -371,7 +352,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
         request.push(1 << 2);
         request.push(u8::try_from("outputs".len()).unwrap());
         request.extend("outputs".as_bytes());
-        request.push((epee::Type::Object as u8) | epee::ARRAY_FLAG);
+        request.push((epee::Type::Object as u8) | (epee::Array::Array as u8));
         request.extend(((indexes_len_u64 << 2) | 0b11).to_le_bytes());
         for index in indexes {
           request.push(2u8 << 2);
@@ -398,11 +379,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
           )
           .await?;
 
-        epee::accumulate_outs(&outs, indexes.len(), &mut res).map_err(|e| {
-          InterfaceError::InvalidInterface(format!(
-            "couldn't deserialize `get_outs` response: {e:?}"
-          ))
-        })?;
+        epee::accumulate_outs(&outs, indexes.len(), &mut res)?;
       }
 
       Ok(res)
@@ -469,10 +446,10 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
         &[u8::try_from("compress".len()).unwrap()],
         "compress".as_bytes(),
         &[epee::Type::Bool as u8],
-        &[0], // TODO
+        &[0], // TODO: Use compression
         &[u8::try_from("amounts".len()).unwrap()],
         "amounts".as_bytes(),
-        &[(epee::Type::Uint8 as u8) | epee::ARRAY_FLAG],
+        &[(epee::Type::Uint8 as u8) | (epee::Array::Array as u8)],
         &[1u8 << 2],
         &[0],
       ]
@@ -490,7 +467,6 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
         .await?;
 
       let start_height = epee::extract_start_height(&distributions)?;
-      let mut distribution = epee::extract_distribution(&distributions)?;
 
       // start_height is also actually a block number, and it should be at least `from`
       // It may be after depending on when these outputs first appeared on the blockchain
@@ -517,14 +493,9 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
           )
         })?
       };
-      // Yet this is actually a height
-      if expected_len != distribution.len() {
-        Err(InterfaceError::InvalidInterface(format!(
-          "distribution length ({}) wasn't of the requested length ({})",
-          distribution.len(),
-          expected_len
-        )))?;
-      }
+
+      let mut distribution = epee::extract_distribution(&distributions, expected_len)?;
+
       // Requesting to = 0 returns the distribution for the entire chain
       // We work around this by requesting 0, 1 (yielding two blocks), then popping the second
       // block

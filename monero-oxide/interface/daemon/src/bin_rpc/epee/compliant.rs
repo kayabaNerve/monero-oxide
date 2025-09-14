@@ -15,9 +15,10 @@
   available via Monero's binary RPC. Today, we have an extended version of that handrolled encoder
   which is insufficient as an `epee` library yet sufficient for our needs.
 
-  This fille contains all the code which is expected to exactly follow the `epee` specification,
+  This file contains all the code which is expected to exactly follow the `epee` specification,
   with the following exceptions:
   - We don't support the `Array` type (type 13) as it's unused and lacking documentation
+  - We may accept a _wider_ class of inputs than the `epee` library itself
 
   We do not support:
   - Encoding objects, instead hand-rolling the few requests we have to make manually
@@ -29,19 +30,35 @@
   presumably require something akin to `serde_json::Value` or a proc macro. This is sufficient for
   our needs, much simpler, and should be trivial to verify it won't panic/face various exhaustion
   attacks.
+
+  ---
+
+  This module is usable on `core`, without `alloc`.
 */
 
-#[allow(unused_imports)]
-use std_shims::prelude::*;
-use std_shims::io;
-
-use monero_oxide::io::{read_byte, read_bytes, read_raw_vec};
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(super) enum EpeeError {
+  /// The `epee`-encoded blob did not have the expected header.
+  InvalidHeader,
+  /// The `epee`-encoded blob was short, as discovered when trying to read `{0}` bytes.
+  Short(usize),
+  /// Unrecognized type specified.
+  UnrecognizedType,
+  /// Array found when a unit was expected.
+  ArrayWhenUnit,
+  /// The `epee`-encoded blob had {0} trailing bytes.
+  TrailingBytes(usize),
+  /// The depth limit was exceeded.
+  DepthLimitExceeded,
+}
 
 // epee header, an 8-byte magic and a version
 pub(crate) const HEADER: &[u8] = b"\x01\x11\x01\x01\x01\x01\x02\x01\x01";
 
 // The type of the field being read.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
 pub(crate) enum Type {
   Int64 = 1,
   Int32 = 2,
@@ -59,17 +76,41 @@ pub(crate) enum Type {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub(crate) enum Array {
+  Unit = 0,
+  Array = 1 << 7,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum TypeOrEntry {
-  // An epee-defined types
+  // An epee-defined type
   Type(Type),
   // An entry (name, type, value)
   Entry,
 }
 
-pub(crate) const ARRAY_FLAG: u8 = 1 << 7;
+fn read_byte(reader: &mut &[u8]) -> Result<u8, EpeeError> {
+  #[allow(clippy::len_zero)]
+  if reader.len() < 1 {
+    Err(EpeeError::Short(1))?;
+  }
+  let byte = reader[0];
+  *reader = &reader[1 ..];
+  Ok(byte)
+}
+
+fn read_bytes<'a, const N: usize>(reader: &mut &'a [u8]) -> Result<&'a [u8], EpeeError> {
+  if reader.len() < N {
+    Err(EpeeError::Short(N))?;
+  }
+  let res = &reader[.. N];
+  *reader = &reader[N ..];
+  Ok(res)
+}
 
 // Read a VarInt
-pub(crate) fn read_vi<R: io::Read>(reader: &mut R) -> io::Result<u64> {
+pub(super) fn read_varint(reader: &mut &[u8]) -> Result<u64, EpeeError> {
   let vi_start = read_byte(reader)?;
   let len = match vi_start & 0b11 {
     0 => 1,
@@ -87,10 +128,10 @@ pub(crate) fn read_vi<R: io::Read>(reader: &mut R) -> io::Result<u64> {
 
 impl Type {
   // Read a type specification, including its length
-  pub(crate) fn read<R: io::Read>(reader: &mut R) -> io::Result<(Self, u64)> {
+  fn read(reader: &mut &[u8]) -> Result<(Self, u64), EpeeError> {
     let kind = read_byte(reader)?;
-    let array = kind & ARRAY_FLAG;
-    let kind = kind & (!ARRAY_FLAG);
+    let array = kind & (Array::Array as u8);
+    let kind = kind & (!(Array::Array as u8));
 
     let kind = match kind {
       1 => Type::Int64,
@@ -105,20 +146,20 @@ impl Type {
       10 => Type::String,
       11 => Type::Bool,
       12 => Type::Object,
-      _ => Err(io::Error::other("unrecognized epee type"))?,
+      _ => Err(EpeeError::UnrecognizedType)?,
     };
 
-    let len = if array != 0 { read_vi(reader)? } else { 1 };
+    let len = if array != 0 { read_varint(reader)? } else { 1 };
 
     Ok((kind, len))
   }
 }
 
 // Read a entry's key
-pub(crate) fn read_key<'a>(reader: &mut &'a [u8]) -> io::Result<&'a [u8]> {
+fn read_key<'a>(reader: &mut &'a [u8]) -> Result<&'a [u8], EpeeError> {
   let len = usize::from(read_byte(reader)?);
   if reader.len() < len {
-    Err(io::Error::new(io::ErrorKind::UnexpectedEof, "epee object ended while reading key"))?;
+    Err(EpeeError::Short(len))?;
   }
   let res = &reader[.. len];
   *reader = &reader[len ..];
@@ -126,9 +167,10 @@ pub(crate) fn read_key<'a>(reader: &mut &'a [u8]) -> io::Result<&'a [u8]> {
 }
 
 /// An iterator which seeks to all values of desired `(type, name)`.
-struct Seek<'a> {
+struct Seek<'a, const MAX_OBJECT_DEPTH: usize> {
   reader: &'a [u8],
-  expected_type: Type,
+  kind: Type,
+  array: Array,
   field_name: &'static str,
   /*
     epee allows nested objects, when we don't want to write a recursive function. The following
@@ -139,96 +181,121 @@ struct Seek<'a> {
     DoS by claiming there's 100 items when there isn't, we associate each item with its length
     as `(Type::*, 100)`. This causes our stack to grow only with depth, not width.
   */
-  stack: Vec<(TypeOrEntry, u64)>,
+  stack: [(TypeOrEntry, u64); MAX_OBJECT_DEPTH],
+  current_stack_depth: usize,
 }
 
-impl<'a> Iterator for Seek<'a> {
-  type Item = io::Result<(u64, &'a [u8])>;
+impl<'a, const MAX_OBJECT_DEPTH: usize> Seek<'a, MAX_OBJECT_DEPTH> {
+  fn new(
+    mut reader: &'a [u8],
+    kind: Type,
+    array: Array,
+    field_name: &'static str,
+  ) -> Result<Self, EpeeError> {
+    if read_bytes::<{ HEADER.len() }>(&mut reader).ok() != Some(HEADER) {
+      Err(EpeeError::InvalidHeader)?;
+    }
+    let stack = [(TypeOrEntry::Type(Type::Object), 1u64); MAX_OBJECT_DEPTH];
+    Ok(Seek { reader, kind, array, field_name, stack, current_stack_depth: 1 })
+  }
+
+  fn push_stack(&mut self, kind: TypeOrEntry, amount: u64) -> Result<(), EpeeError> {
+    if self.current_stack_depth == MAX_OBJECT_DEPTH {
+      Err(EpeeError::DepthLimitExceeded)?;
+    }
+    self.stack[self.current_stack_depth] = (kind, amount);
+    self.current_stack_depth += 1;
+    Ok(())
+  }
+}
+
+impl<'a, const MAX_OBJECT_DEPTH: usize> Iterator for Seek<'a, MAX_OBJECT_DEPTH> {
+  type Item = Result<(u64, &'a [u8]), EpeeError>;
   fn next(&mut self) -> Option<Self::Item> {
-    (|| {
+    (|| -> Result<_, EpeeError> {
       let mut result = None;
 
-      while let Some((kind, remaining)) = self.stack.last_mut() {
+      while self.current_stack_depth > 0 {
+        let (kind, remaining) = &mut self.stack[self.current_stack_depth - 1];
         let kind = *kind;
 
         // Decrement the amount remaining by one
-        *remaining = (*remaining)
-          .checked_sub(1)
-          .ok_or_else(|| io::Error::other("stack contained an exhausted item"))?;
+        *remaining -= 1;
         if *remaining == 0 {
-          self.stack.pop();
+          self.current_stack_depth -= 1;
         }
 
         match kind {
           TypeOrEntry::Type(Type::Int64) => {
-            read_bytes::<_, { core::mem::size_of::<i64>() }>(&mut self.reader)?;
+            read_bytes::<{ core::mem::size_of::<i64>() }>(&mut self.reader)?;
           }
           TypeOrEntry::Type(Type::Int32) => {
-            read_bytes::<_, { core::mem::size_of::<i32>() }>(&mut self.reader)?;
+            read_bytes::<{ core::mem::size_of::<i32>() }>(&mut self.reader)?;
           }
           TypeOrEntry::Type(Type::Int16) => {
-            read_bytes::<_, { core::mem::size_of::<i16>() }>(&mut self.reader)?;
+            read_bytes::<{ core::mem::size_of::<i16>() }>(&mut self.reader)?;
           }
           TypeOrEntry::Type(Type::Int8) => {
-            read_bytes::<_, { core::mem::size_of::<i8>() }>(&mut self.reader)?;
+            read_bytes::<{ core::mem::size_of::<i8>() }>(&mut self.reader)?;
           }
           TypeOrEntry::Type(Type::Uint64) => {
-            read_bytes::<_, { core::mem::size_of::<u64>() }>(&mut self.reader)?;
+            read_bytes::<{ core::mem::size_of::<u64>() }>(&mut self.reader)?;
           }
           TypeOrEntry::Type(Type::Uint32) => {
-            read_bytes::<_, { core::mem::size_of::<u32>() }>(&mut self.reader)?;
+            read_bytes::<{ core::mem::size_of::<u32>() }>(&mut self.reader)?;
           }
           TypeOrEntry::Type(Type::Uint16) => {
-            read_bytes::<_, { core::mem::size_of::<u16>() }>(&mut self.reader)?;
+            read_bytes::<{ core::mem::size_of::<u16>() }>(&mut self.reader)?;
           }
           TypeOrEntry::Type(Type::Uint8) => {
-            read_bytes::<_, { core::mem::size_of::<u8>() }>(&mut self.reader)?;
+            read_bytes::<{ core::mem::size_of::<u8>() }>(&mut self.reader)?;
           }
           TypeOrEntry::Type(Type::Double) => {
-            read_bytes::<_, { core::mem::size_of::<f64>() }>(&mut self.reader)?;
+            read_bytes::<{ core::mem::size_of::<f64>() }>(&mut self.reader)?;
           }
           TypeOrEntry::Type(Type::String) => {
-            let len = read_vi(&mut self.reader)?;
-            read_raw_vec(
-              read_byte,
-              len
-                .try_into()
-                .map_err(|_| io::Error::other("length of epee string exceed usize::MAX"))?,
-              &mut self.reader,
-            )?;
+            let len = usize::try_from(read_varint(&mut self.reader)?)
+              .map_err(|_| EpeeError::Short(usize::MAX))?;
+            if self.reader.len() < len {
+              Err(EpeeError::Short(len))?;
+            }
+            self.reader = &self.reader[len ..];
           }
           TypeOrEntry::Type(Type::Bool) => {
-            read_bytes::<_, { core::mem::size_of::<bool>() }>(&mut self.reader)?;
+            read_bytes::<{ core::mem::size_of::<bool>() }>(&mut self.reader)?;
           }
           TypeOrEntry::Type(Type::Object) => {
-            self.stack.push((TypeOrEntry::Entry, read_vi(&mut self.reader)?));
+            let amount_of_entries = read_varint(&mut self.reader)?;
+            self.push_stack(TypeOrEntry::Entry, amount_of_entries)?;
           }
           TypeOrEntry::Entry => {
             let key = read_key(&mut self.reader)?;
             let (kind, len) = Type::read(&mut self.reader)?;
-            let result_stack_depth = self.stack.len();
-            self.stack.push((TypeOrEntry::Type(kind), len));
+            let result_stack_depth = self.current_stack_depth;
+            self.push_stack(TypeOrEntry::Type(kind), len)?;
             // If this is the requested `(name, type)`, yield it
-            if (key == self.field_name.as_bytes()) && (kind == self.expected_type) {
+            if (key == self.field_name.as_bytes()) && (kind == self.kind) {
+              // Check if this was unexpectedly an array
+              // Note this is imperfect in that an array of length 1 will be accepted as a unit
+              if matches!(self.array, Array::Unit) && (len != 1) {
+                Err(EpeeError::ArrayWhenUnit)?;
+              }
               result = Some(((len, self.reader), result_stack_depth));
             }
           }
         }
 
         if let Some(((epee_len, bytes), stack_depth)) = result {
-          if stack_depth == self.stack.len() {
+          if stack_depth == self.current_stack_depth {
             let remaining_bytes = self.reader.len();
             let bytes_used_by_field = bytes.len() - remaining_bytes;
-            return Ok(Some((epee_len, &bytes[.. dbg!(bytes_used_by_field)])));
+            return Ok(Some((epee_len, &bytes[.. bytes_used_by_field])));
           }
         }
       }
 
       if !self.reader.is_empty() {
-        Err(io::Error::other(format!(
-          "read `epee` object yet found {} trailing bytes",
-          self.reader.len()
-        )))?;
+        Err(EpeeError::TrailingBytes(self.reader.len()))?;
       }
 
       Ok(None)
@@ -240,44 +307,12 @@ impl<'a> Iterator for Seek<'a> {
 /// Seek all instances of a field with the desired `(type, name)`.
 ///
 /// This yields the length of the item _as an `epee` value_ and a slice for the bytes of the
-/// `epee`-encoded item.
-pub(crate) fn seek_all<'a>(
-  mut reader: &'a [u8],
-  expected_type: Type,
+/// `epee`-encoded item. This will validate the resulting item is complete to the claimed length.
+pub(super) fn seek_all<'a, const MAX_OBJECT_DEPTH: usize>(
+  reader: &'a [u8],
+  kind: Type,
+  array: Array,
   field_name: &'static str,
-) -> io::Result<impl Iterator<Item = io::Result<(u64, &'a [u8])>>> {
-  if read_bytes::<_, { HEADER.len() }>(&mut reader)? != HEADER {
-    Err(io::Error::other("missing EPEE header"))?;
-  }
-  let stack = vec![(TypeOrEntry::Type(Type::Object), 1u64)];
-  Ok(Seek { reader, expected_type, field_name, stack })
-}
-
-/// Seek the _only_ instance of a field with the desired `(type, name)`.
-///
-/// This yields the length of the item _as an `epee` value_ and a slice for the bytes of the
-/// `epee`-encoded item.
-///
-/// Errors if multiple instances of the field are found.
-pub(crate) fn seek(
-  reader: &mut &[u8],
-  expected_type: Type,
-  field_name: &'static str,
-) -> io::Result<Option<u64>> {
-  if read_bytes::<_, { HEADER.len() }>(reader)? != HEADER {
-    Err(io::Error::other("missing EPEE header"))?;
-  }
-  let len = {
-    let stack = vec![(TypeOrEntry::Type(Type::Object), 1u64)];
-    let mut iter = Seek { reader, expected_type, field_name, stack };
-    let len_and_seeked = iter.next().transpose()?;
-    if iter.next().is_some() {
-      Err(io::Error::other("field was present multiple times within epee"))?;
-    }
-    len_and_seeked.map(|(len, seeked)| {
-      *reader = seeked;
-      len
-    })
-  };
-  Ok(len)
+) -> Result<impl Iterator<Item = Result<(u64, &'a [u8]), EpeeError>>, EpeeError> {
+  Seek::<MAX_OBJECT_DEPTH>::new(reader, kind, array, field_name)
 }
