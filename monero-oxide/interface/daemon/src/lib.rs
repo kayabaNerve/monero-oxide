@@ -20,8 +20,7 @@ use monero_address::Address;
 
 use monero_interface::*;
 
-pub(crate) mod epee;
-mod bin;
+mod bin_rpc;
 
 const BASE_RESPONSE_SIZE: usize = u16::MAX as usize;
 const BYTE_FACTOR_IN_JSON_RESPONSE_SIZE: usize = 8;

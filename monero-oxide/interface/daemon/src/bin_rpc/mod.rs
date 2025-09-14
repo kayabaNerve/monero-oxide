@@ -25,9 +25,11 @@ use monero_oxide::{
 use monero_interface::*;
 
 use crate::{
-  BASE_RESPONSE_SIZE, BYTE_FACTOR_IN_JSON_RESPONSE_SIZE, HttpTransport, MoneroDaemon, epee,
-  rpc_hex, hash_hex,
+  BASE_RESPONSE_SIZE, BYTE_FACTOR_IN_JSON_RESPONSE_SIZE, HttpTransport, MoneroDaemon, rpc_hex,
+  hash_hex,
 };
+
+mod epee;
 
 /*
   Monero doesn't have a block size limit, solely one contextual to the current blockchain. With a
