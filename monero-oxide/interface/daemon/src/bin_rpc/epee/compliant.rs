@@ -90,6 +90,27 @@ enum TypeOrEntry {
   Entry,
 }
 
+impl TypeOrEntry {
+  fn to_u8(self) -> u8 {
+    match self {
+      TypeOrEntry::Type(kind) => kind as u8,
+      TypeOrEntry::Entry => u8::MAX,
+    }
+  }
+
+  // Panics if not called with a valid serialization for a `TypeOrEntry`.
+  fn from_u8(kind: u8) -> Self {
+    match kind {
+      0xff => TypeOrEntry::Entry,
+      _ => TypeOrEntry::Type(
+        Type::read(&mut [kind].as_slice())
+          .expect("Type we converted to u8 could not be converted back")
+          .0,
+      ),
+    }
+  }
+}
+
 fn read_byte(reader: &mut &[u8]) -> Result<u8, EpeeError> {
   #[allow(clippy::len_zero)]
   if reader.len() < 1 {
@@ -170,26 +191,81 @@ fn read_key<'a>(reader: &mut &'a [u8]) -> Result<&'a [u8], EpeeError> {
   Ok(res)
 }
 
+// https://github.com/monero-project/monero/blob/8d4c625713e3419573dfcc7119c8848f47cabbaa/
+//   contrib/epee/include/storages/portable_storage_from_bin.h#L42
+const EPEE_LIB_MAX_OBJECT_DEPTH: usize = 100;
+// Explicitly set a larger depth in case we have slight differences in counting, so we can likely
+// handle at least the set of objects Monero's `epee` library would handle
+const MAX_OBJECT_DEPTH: usize = EPEE_LIB_MAX_OBJECT_DEPTH + 3;
+
+#[repr(Rust, packed)]
+struct PackedTypes([u8; MAX_OBJECT_DEPTH]);
+
+/*
+  epee allows nested objects, when we don't want to write a recursive function. The following
+  `Seek::next` only reads a single item per iteration of its loop, using this stack to keep track
+  of its depth.
+
+  In order to not represent an array of 100 items as `Type::*; 100]`, which would enable a DoS by
+  simply claiming there's 100 items when there isn't, we associate each item with its length as
+  `(Type::*, 100)`. This causes our stack to grow only with depth, not width.
+*/
+struct Stack {
+  remaining: [u64; MAX_OBJECT_DEPTH],
+  types: PackedTypes,
+  len: usize,
+}
+const _ASSERT_KILOBYTE_STACK: [(); 1024 - core::mem::size_of::<Stack>()] = [(); _];
+
+impl Stack {
+  fn new(initial_item: (TypeOrEntry, u64)) -> Self {
+    let (kind, amount) = initial_item;
+    Self {
+      types: PackedTypes([kind.to_u8(); MAX_OBJECT_DEPTH]),
+      remaining: [amount; MAX_OBJECT_DEPTH],
+      len: 1,
+    }
+  }
+
+  fn len(&self) -> usize {
+    self.len
+  }
+
+  /// Panics if the stack is empty, if range checks are on.
+  fn last(&mut self) -> (TypeOrEntry, &mut u64) {
+    let i = self.len - 1;
+    let kind = TypeOrEntry::from_u8(self.types.0[i]);
+    let amount = &mut self.remaining[i];
+    (kind, amount)
+  }
+
+  fn push(&mut self, kind: TypeOrEntry, amount: u64) -> Result<(), EpeeError> {
+    if self.len == MAX_OBJECT_DEPTH {
+      Err(EpeeError::DepthLimitExceeded)?;
+    }
+    self.types.0[self.len] = kind.to_u8();
+    self.remaining[self.len] = amount;
+    self.len += 1;
+    Ok(())
+  }
+
+  /// Panics if the stack is empty, if range checks are on.
+  fn pop(&mut self) {
+    self.len -= 1;
+  }
+}
+
 /// An iterator which seeks to all values of desired `(type, name)`.
-struct Seek<'a, const MAX_OBJECT_DEPTH: usize> {
+struct Seek<'a> {
   reader: &'a [u8],
   kind: Type,
   array: Array,
   field_name: &'static str,
-  /*
-    epee allows nested objects, when we don't want to write a recursive function. The following
-    function only reads a single item per iteration of its loop, using a heap-allocated vector
-    to keep track of its depth.
-
-    In order to not represent an array of 100 items as `vec![Type::*; 100]`, which would enable a
-    DoS by claiming there's 100 items when there isn't, we associate each item with its length
-    as `(Type::*, 100)`. This causes our stack to grow only with depth, not width.
-  */
-  stack: [(TypeOrEntry, u64); MAX_OBJECT_DEPTH],
-  current_stack_depth: usize,
+  stack: Stack,
 }
+const _ASSERT_KILOBYTE_SEEK: [(); 1024 - core::mem::size_of::<Seek>()] = [(); _];
 
-impl<'a, const MAX_OBJECT_DEPTH: usize> Seek<'a, MAX_OBJECT_DEPTH> {
+impl<'a> Seek<'a> {
   fn new(
     mut reader: &'a [u8],
     kind: Type,
@@ -199,34 +275,24 @@ impl<'a, const MAX_OBJECT_DEPTH: usize> Seek<'a, MAX_OBJECT_DEPTH> {
     if read_bytes::<{ HEADER.len() }>(&mut reader).ok() != Some(HEADER) {
       Err(EpeeError::InvalidHeader)?;
     }
-    let stack = [(TypeOrEntry::Type(Type::Object), 1u64); MAX_OBJECT_DEPTH];
-    Ok(Seek { reader, kind, array, field_name, stack, current_stack_depth: 1 })
-  }
-
-  fn push_stack(&mut self, kind: TypeOrEntry, amount: u64) -> Result<(), EpeeError> {
-    if self.current_stack_depth == MAX_OBJECT_DEPTH {
-      Err(EpeeError::DepthLimitExceeded)?;
-    }
-    self.stack[self.current_stack_depth] = (kind, amount);
-    self.current_stack_depth += 1;
-    Ok(())
+    let stack = Stack::new((TypeOrEntry::Type(Type::Object), 1u64));
+    Ok(Seek { reader, kind, array, field_name, stack })
   }
 }
 
-impl<'a, const MAX_OBJECT_DEPTH: usize> Iterator for Seek<'a, MAX_OBJECT_DEPTH> {
+impl<'a> Iterator for Seek<'a> {
   type Item = Result<(u64, &'a [u8]), EpeeError>;
   fn next(&mut self) -> Option<Self::Item> {
     (|| -> Result<_, EpeeError> {
       let mut result = None;
 
-      while self.current_stack_depth > 0 {
-        let (kind, remaining) = &mut self.stack[self.current_stack_depth - 1];
-        let kind = *kind;
+      while self.stack.len() > 0 {
+        let (kind, remaining) = self.stack.last();
 
         // Decrement the amount remaining by one
         *remaining -= 1;
         if *remaining == 0 {
-          self.current_stack_depth -= 1;
+          self.stack.pop();
         }
 
         match kind {
@@ -270,13 +336,13 @@ impl<'a, const MAX_OBJECT_DEPTH: usize> Iterator for Seek<'a, MAX_OBJECT_DEPTH> 
           }
           TypeOrEntry::Type(Type::Object) => {
             let amount_of_entries = read_varint(&mut self.reader)?;
-            self.push_stack(TypeOrEntry::Entry, amount_of_entries)?;
+            self.stack.push(TypeOrEntry::Entry, amount_of_entries)?;
           }
           TypeOrEntry::Entry => {
             let key = read_key(&mut self.reader)?;
             let (kind, len) = Type::read(&mut self.reader)?;
-            let result_stack_depth = self.current_stack_depth;
-            self.push_stack(TypeOrEntry::Type(kind), len)?;
+            let result_stack_depth = self.stack.len();
+            self.stack.push(TypeOrEntry::Type(kind), len)?;
             // If this is the requested `(name, type)`, yield it
             if (key == self.field_name.as_bytes()) && (kind == self.kind) {
               // Check if this was unexpectedly an array
@@ -290,7 +356,7 @@ impl<'a, const MAX_OBJECT_DEPTH: usize> Iterator for Seek<'a, MAX_OBJECT_DEPTH> 
         }
 
         if let Some(((epee_len, bytes), stack_depth)) = result {
-          if stack_depth == self.current_stack_depth {
+          if stack_depth == self.stack.len() {
             let remaining_bytes = self.reader.len();
             let bytes_used_by_field = bytes.len() - remaining_bytes;
             return Ok(Some((epee_len, &bytes[.. bytes_used_by_field])));
@@ -312,11 +378,11 @@ impl<'a, const MAX_OBJECT_DEPTH: usize> Iterator for Seek<'a, MAX_OBJECT_DEPTH> 
 ///
 /// This yields the length of the item _as an `epee` value_ and a slice for the bytes of the
 /// `epee`-encoded item. This will validate the resulting item is complete to the claimed length.
-pub(super) fn seek_all<'a, const MAX_OBJECT_DEPTH: usize>(
+pub(super) fn seek_all<'a>(
   reader: &'a [u8],
   kind: Type,
   array: Array,
   field_name: &'static str,
 ) -> Result<impl Iterator<Item = Result<(u64, &'a [u8]), EpeeError>>, EpeeError> {
-  Seek::<MAX_OBJECT_DEPTH>::new(reader, kind, array, field_name)
+  Seek::new(reader, kind, array, field_name)
 }

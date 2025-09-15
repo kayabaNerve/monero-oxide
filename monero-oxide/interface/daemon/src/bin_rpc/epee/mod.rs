@@ -12,20 +12,8 @@ use monero_oxide::{
 use crate::{InterfaceError, PrunedTransactionWithPrunableHash, RingCtOutputInformation};
 
 mod compliant;
-use compliant::{EpeeError, read_varint};
+use compliant::{EpeeError, read_varint, seek_all};
 pub(crate) use compliant::{HEADER, Type, Array};
-
-// We use a depth-limit of `8` as that's more than sufficient for our purposes
-const MAX_OBJECT_DEPTH: usize = 8;
-
-fn seek_all<'a>(
-  reader: &'a [u8],
-  kind: Type,
-  array: Array,
-  field_name: &'static str,
-) -> Result<impl Iterator<Item = Result<(u64, &'a [u8]), EpeeError>>, EpeeError> {
-  compliant::seek_all::<MAX_OBJECT_DEPTH>(reader, kind, array, field_name)
-}
 
 impl From<EpeeError> for InterfaceError {
   fn from(err: EpeeError) -> InterfaceError {
