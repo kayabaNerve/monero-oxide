@@ -25,6 +25,7 @@ tokio = { version = "1", default-features = false }
 monero-daemon-rpc = { path = "..", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+monero-oxide = { path = "../../..", default-features = false, features = ["std"] }
 monero-address = { path = "../../../wallet/address", default-features = false, features = ["std"] }
 
 tokio = { version = "1", default-features = false, features = ["macros"] }

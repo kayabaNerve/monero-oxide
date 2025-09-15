@@ -84,6 +84,11 @@ impl FeeRate {
     res
   }
 
+  /// The fee per weight.
+  pub fn per_weight(&self) -> u64 {
+    self.per_weight
+  }
+
   /// Read a FeeRate.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol

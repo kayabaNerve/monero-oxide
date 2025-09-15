@@ -1,11 +1,9 @@
+use core::time::Duration;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
 use monero_address::{Network, MoneroAddress};
 
-// monero-interface doesn't include a transport
-// We can't include the simple-request crate there as then we'd have a cyclical dependency
-// Accordingly, we test monero-rpc here (implicitly testing the simple-request transport)
 use monero_simple_request_rpc::{prelude::*, *};
 
 static SEQUENTIAL: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -14,54 +12,77 @@ const ADDRESS: &str =
   "4B33mFPMq6mKi7Eiyd5XuyKRVMGVZz1Rqb9ZTyGApXW5d1aT7UBDZ89ewmnWFkzJ5wPd2SFbn313vCT8a4E2Qf4KQH4pNey";
 
 #[tokio::test]
-async fn test_rpc() {
-  let guard = SEQUENTIAL.lock().await;
+async fn test_blockchain() {
+  let _guard = SEQUENTIAL.lock().await;
 
-  let rpc =
-    SimpleRequestTransport::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
+  let rpc = SimpleRequestTransport::with_custom_timeout(
+    "http://monero:oxide@127.0.0.1:18081".to_string(),
+    Duration::from_secs(360),
+  )
+  .await
+  .unwrap();
 
+  let current_block_number = rpc.latest_block_number().await.unwrap();
+  let latest_block = rpc.block_by_number(current_block_number).await.unwrap();
+  assert_eq!(latest_block.number().unwrap(), current_block_number);
+  assert!(rpc.block_by_number(current_block_number + 1).await.is_err());
+
+  let (hashes, number) = rpc
+    .generate_blocks(&MoneroAddress::from_str(Network::Mainnet, ADDRESS).unwrap(), 1)
+    .await
+    .unwrap();
+  assert_eq!(hashes.len(), 1);
+  assert_eq!(number, current_block_number + 1);
+  let latest_block = rpc.block_by_number(number).await.unwrap();
+  assert_eq!(latest_block.hash(), hashes[0]);
+  assert_eq!(rpc.block(hashes[0]).await.unwrap(), latest_block);
+
+  let blocks = rpc.blocks(&[hashes[0]]).await.unwrap();
+  assert_eq!(blocks.len(), 1);
+  assert_eq!(blocks[0], latest_block);
+
+  let contiguous_blocks = rpc.contiguous_blocks(number ..= number).await.unwrap();
+  assert_eq!(contiguous_blocks.len(), 1);
+  assert_eq!(contiguous_blocks[0], latest_block);
+
+  let (hashes, new_number) = rpc
+    .generate_blocks(&MoneroAddress::from_str(Network::Mainnet, ADDRESS).unwrap(), 2000)
+    .await
+    .unwrap();
+  let contiguous_blocks = rpc.contiguous_blocks(number ..= new_number).await.unwrap();
+  assert_eq!(contiguous_blocks[0], latest_block);
+  assert_eq!(&rpc.blocks(&hashes).await.unwrap(), &contiguous_blocks[1 ..]);
+  assert_eq!(contiguous_blocks.len(), new_number - number + 1);
+  for ((block, hash), number) in contiguous_blocks
+    .iter()
+    .zip(core::iter::once(latest_block.hash()).chain(hashes))
+    .zip(number ..= new_number)
   {
-    // Test get_latest_block_number
-    let block_number = rpc.latest_block_number().await.unwrap();
-    // The height should be the amount of blocks on chain
-    // The number of a block should be its zero-indexed position
-    // Accordingly, there should be no block whose number is the height
-    let height = block_number + 1;
-    assert!(rpc.block_by_number(height).await.is_err());
-    // There should be a block just prior
-    let block = rpc.block_by_number(block_number).await.unwrap();
-
-    // Also test the block RPC routes are consistent
-    assert_eq!(block.number().unwrap(), block_number);
-    assert_eq!(rpc.block(block.hash()).await.unwrap(), block);
-    assert_eq!(rpc.block_hash(block_number).await.unwrap(), block.hash());
+    assert_eq!(block.hash(), hash);
+    assert_eq!(block.number().unwrap(), number);
+    assert_eq!(rpc.block_hash(number).await.unwrap(), hash);
   }
-
-  // Test generate_blocks
-  for amount_of_blocks in [1, 5] {
-    let (blocks, number) = rpc
-      .generate_blocks(
-        &MoneroAddress::from_str(Network::Mainnet, ADDRESS).unwrap(),
-        amount_of_blocks,
-      )
-      .await
-      .unwrap();
-    let latest_block_number = rpc.latest_block_number().await.unwrap();
-    assert_eq!(number, latest_block_number);
-
-    let mut actual_blocks = Vec::with_capacity(amount_of_blocks);
-    for i in (latest_block_number - amount_of_blocks + 1) ..= latest_block_number {
-      actual_blocks.push(rpc.block_by_number(i).await.unwrap().hash());
-    }
-    assert_eq!(blocks, actual_blocks);
-  }
-
-  drop(guard);
 }
 
 #[tokio::test]
-async fn test_decoy_rpc() {
-  let guard = SEQUENTIAL.lock().await;
+async fn test_fee_rates() {
+  let _guard = SEQUENTIAL.lock().await;
+
+  let rpc = SimpleRequestTransport::with_custom_timeout(
+    "http://monero:oxide@127.0.0.1:18081".to_string(),
+    Duration::from_secs(360),
+  )
+  .await
+  .unwrap();
+
+  let fee_rate = rpc.fee_rate(FeePriority::Normal, u64::MAX).await.unwrap();
+  rpc.fee_rate(FeePriority::Normal, fee_rate.per_weight()).await.unwrap();
+  assert!(rpc.fee_rate(FeePriority::Normal, fee_rate.per_weight() - 1).await.is_err());
+}
+
+#[tokio::test]
+async fn test_decoys() {
+  let _guard = SEQUENTIAL.lock().await;
 
   let rpc =
     SimpleRequestTransport::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
@@ -72,7 +93,7 @@ async fn test_decoy_rpc() {
     .await
     .unwrap();
 
-  // Test get_ringct_output_distribution
+  // Test `get_ringct_output_distribution`
   // Our documentation for our Rust fn defines it as taking two block numbers
   {
     let distribution_len = rpc.latest_block_number().await.unwrap() + 1;
@@ -105,14 +126,56 @@ async fn test_decoy_rpc() {
     rpc.ringct_output_distribution(1 .. 0).await.unwrap_err();
   }
 
-  drop(guard);
+  {
+    let latest_block_number = rpc.latest_block_number().await.unwrap();
+
+    let lock_satisfied = latest_block_number - monero_oxide::COINBASE_LOCK_WINDOW;
+    let lock_satisfied =
+      rpc.ringct_output_distribution(lock_satisfied ..= lock_satisfied).await.unwrap();
+    assert_eq!(lock_satisfied.len(), 1);
+
+    {
+      let res =
+        rpc.unlocked_ringct_outputs(&[lock_satisfied[0]], EvaluateUnlocked::Normal).await.unwrap();
+      assert_eq!(res.len(), 1);
+      assert!(res[0].is_some());
+
+      let res = rpc
+        .unlocked_ringct_outputs(&[lock_satisfied[0] + 1], EvaluateUnlocked::Normal)
+        .await
+        .unwrap();
+      assert_eq!(res.len(), 1);
+      assert!(res[0].is_none());
+    }
+    {
+      let res = rpc
+        .unlocked_ringct_outputs(
+          &[lock_satisfied[0]],
+          EvaluateUnlocked::FingerprintableDeterministic { block_number: latest_block_number },
+        )
+        .await
+        .unwrap();
+      assert_eq!(res.len(), 1);
+      assert!(res[0].is_some());
+
+      let res = rpc
+        .unlocked_ringct_outputs(
+          &[lock_satisfied[0]],
+          EvaluateUnlocked::FingerprintableDeterministic { block_number: latest_block_number - 1 },
+        )
+        .await
+        .unwrap();
+      assert_eq!(res.len(), 1);
+      assert!(res[0].is_none());
+    }
+  }
 }
 
-// This test passes yet requires a mainnet node, which we don't have reliable access to in CI.
 /*
+// This test passes yet requires a mainnet node, which we don't have reliable access to in CI.
 #[tokio::test]
-async fn test_zero_out_tx_o_indexes() {
-  let guard = SEQUENTIAL.lock().await;
+async fn test_output_indexes_with_transaction_with_no_outputs() {
+  let _guard = SEQUENTIAL.lock().await;
 
   let rpc =
     SimpleRequestTransport::new("https://node.sethforprivacy.com".to_string()).await.unwrap();
@@ -129,7 +192,5 @@ async fn test_zero_out_tx_o_indexes() {
       .unwrap(),
     Vec::<u64>::new()
   );
-
-  drop(guard);
 }
 */
