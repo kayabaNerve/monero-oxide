@@ -5,11 +5,11 @@ use std_shims::prelude::*;
 
 use monero_oxide::{
   io::{CompressedPoint, read_u64},
-  transaction::{Pruned, Transaction},
+  transaction::Transaction,
   block::Block,
 };
 
-use crate::{InterfaceError, PrunedTransactionWithPrunableHash, RingCtOutputInformation};
+use crate::{InterfaceError, RingCtOutputInformation};
 
 mod compliant;
 use compliant::{EpeeError, read_varint, seek_all};
@@ -222,66 +222,42 @@ pub(crate) fn extract_blocks_from_blocks_bin(
 
 pub(crate) fn extract_txs_from_blocks_bin(
   blocks_bin: &[u8],
-) -> Result<
-  impl use<'_> + Iterator<Item = Result<PrunedTransactionWithPrunableHash, InterfaceError>>,
-  InterfaceError,
-> {
-  let mut txs = seek_all(blocks_bin, Type::String, Array::Unit, "blob")?;
-  let mut prunable_hashes = seek_all(blocks_bin, Type::String, Array::Unit, "prunable_hash")?;
+) -> Result<impl use<'_> + Iterator<Item = Result<Transaction, InterfaceError>>, InterfaceError> {
+  let mut txs = seek_all(blocks_bin, Type::String, Array::Array, "txs")?;
 
-  Ok(core::iter::from_fn(move || {
-    let tx = txs.next();
-    let prunable_hash = prunable_hashes.next();
-
-    let (tx, prunable_hash) = match (tx, prunable_hash) {
-      (Some(tx), Some(prunable_hash)) => {
-        (tx.map_err(InterfaceError::from), prunable_hash.map_err(InterfaceError::from))
-      }
-      (None, None) => None?,
-      _ => {
-        return Some(Err(InterfaceError::InvalidInterface(
-          "node had unbalanced amount of transactions, prunable hashes".to_string(),
-        )))
-      }
-    };
-
-    Some(tx.and_then(|(_epee_len, tx)| {
-      prunable_hash.and_then(|(_epee_len, prunable_hash)| {
-        let tx = Transaction::<Pruned>::read(&mut decapsulate_string(tx, None)?).map_err(|e| {
-          InterfaceError::InvalidInterface(format!(
-            "blocks.bin contains invalid pruned transaction: {e:?}"
-          ))
-        })?;
-        let prunable_hash = decapsulate_thirty_two_byte_array_from_string(prunable_hash)?;
-
-        Ok(if matches!(tx, Transaction::V1 { .. }) {
-          PrunedTransactionWithPrunableHash::new(tx, None)
-            .expect("v1 transaction expected prunable hash")
-        } else {
-          PrunedTransactionWithPrunableHash::new(tx, Some(prunable_hash))
-            .expect("non-v1 transaction expected no prunable hash")
-        })
-      })
-    }))
-  }))
-}
-
-pub(crate) fn extract_first_output_indexes_from_block_bin(
-  block_bin: &[u8],
-) -> Result<impl use<'_> + Iterator<Item = Result<Option<u64>, InterfaceError>>, InterfaceError> {
-  let output_indexes_per_transaction = seek_all(block_bin, Type::Uint64, Array::Array, "indices")?;
-  Ok(output_indexes_per_transaction.map(|epee| {
-    let (epee_len, mut epee) = epee?;
-    Ok(if epee_len > 0 {
-      Some(read_u64(&mut epee).map_err(|e| {
-        InterfaceError::InvalidInterface(format!(
-          "couldn't read `u64` from `epee` array with at least one: {e:?}"
-        ))
-      })?)
-    } else {
-      None
+  Ok(
+    core::iter::from_fn(move || {
+      Some(txs.next()?.map_err(InterfaceError::from).and_then(|(_epee_len, mut txs)| {
+        let mut res = vec![];
+        while !txs.is_empty() {
+          let tx_len = read_varint(&mut txs)?;
+          let start_len = txs.len();
+          res.push(Transaction::read(&mut txs).map_err(|e| {
+            InterfaceError::InvalidInterface(format!(
+              "blocks.bin contains invalid transaction: {e:?}"
+            ))
+          }));
+          if u64::try_from(start_len - txs.len())
+            .expect("couldn't convert difference in buffer lengths to `u64`?") !=
+            tx_len
+          {
+            Err(InterfaceError::InvalidInterface(
+              "`epee` string for transaction was of different length than the transaction itself"
+                .to_string(),
+            ))?;
+          }
+        }
+        Ok(res)
+      }))
     })
-  }))
+    .flat_map(|vec_txs: Result<Vec<Result<Transaction, InterfaceError>>, InterfaceError>| {
+      let (txs, err) = match vec_txs {
+        Ok(txs) => (txs, None),
+        Err(e) => (vec![], Some(Err(e))),
+      };
+      core::iter::from_fn(move || err.clone()).chain(txs)
+    }),
+  )
 }
 
 pub(crate) fn extract_output_indexes(epee: &[u8]) -> Result<Vec<u64>, InterfaceError> {

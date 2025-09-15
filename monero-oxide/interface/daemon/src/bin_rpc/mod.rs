@@ -82,22 +82,12 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     const BLOCKS_PER_REQUEST: usize = 1000;
     const BLOCKS_PER_REQUEST_U64: u64 = BLOCKS_PER_REQUEST as u64;
 
-    let expected_request_header_len = 44;
+    let expected_request_header_len = 19;
     let expected_request_len =
-      expected_request_header_len + (8 + (requested_blocks.min(BLOCKS_PER_REQUEST) * 8));
+      expected_request_header_len + 8 + (BLOCKS_PER_REQUEST.min(requested_blocks) * 8);
     let mut request = Vec::with_capacity(expected_request_len);
     request.extend(epee::HEADER);
-    request.push(3 << 2);
-
-    request.push(u8::try_from("requested_info".len()).unwrap());
-    request.extend("requested_info".as_bytes());
-    request.push(epee::Type::Uint8 as u8);
-    request.push(0);
-
-    request.push(u8::try_from("prune".len()).unwrap());
-    request.extend("prune".as_bytes());
-    request.push(epee::Type::Bool as u8);
-    request.push(1);
+    request.push(1 << 2);
 
     request.push(u8::try_from("heights".len()).unwrap());
     request.extend("heights".as_bytes());
@@ -108,12 +98,15 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     let mut first_iter = true;
     while start <= end {
       request.truncate(expected_request_header_len);
+
       let this_end = start.saturating_add(BLOCKS_PER_REQUEST_U64 - 1).min(end);
       let requested_blocks: u64 = this_end - start + 1;
       request.extend(((requested_blocks << 2) | 0b11).to_le_bytes());
+
       for i in start ..= this_end {
-        request.extend(&i.to_le_bytes());
+        request.extend(i.to_le_bytes());
       }
+
       // Only checked on the first iteration as the final chunk may be shorter
       if first_iter {
         debug_assert_eq!(expected_request_len, request.len());
@@ -172,6 +165,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
           res.len()
         )))?;
       }
+
       if blocks.next().is_some() {
         Err(InterfaceError::InvalidInterface(
           "epee response had extra instances of `block`".to_string(),
@@ -229,6 +223,46 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
   }
 }
 
+async fn update_output_index<T: HttpTransport>(
+  daemon: &MoneroDaemon<T>,
+  next_ringct_output_index: &mut Option<u64>,
+  output_index_for_first_ringct_output: &mut Option<u64>,
+  tx: &Transaction,
+) -> Result<(), InterfaceError> {
+  if matches!(tx, Transaction::V2 { .. }) {
+    // If we don't currently have the initial output index, fetch it via this transaction
+    if next_ringct_output_index.is_none() && (!tx.prefix().outputs.is_empty()) {
+      let indexes = <MoneroDaemon<T> as ProvidesOutputs>::output_indexes(daemon, tx.hash()).await?;
+      if tx.prefix().outputs.len() != indexes.len() {
+        Err(InterfaceError::InvalidInterface(format!(
+          "TX had {} outputs yet `get_o_indexes` returned {}",
+          tx.prefix().outputs.len(),
+          indexes.len()
+        )))?;
+      }
+      *next_ringct_output_index = Some(indexes[0]);
+    }
+
+    // Populate the block's first RingCT output's index, if it wasn't already
+    *output_index_for_first_ringct_output =
+      output_index_for_first_ringct_output.or(*next_ringct_output_index);
+
+    // Advance the next output index past this transaction
+    if let Some(next_ringct_output_index) = next_ringct_output_index {
+      *next_ringct_output_index = next_ringct_output_index
+        .checked_add(
+          u64::try_from(tx.prefix().outputs.len())
+            .expect("amount of transaction outputs exceeded 2**64?"),
+        )
+        .ok_or_else(|| {
+          InterfaceError::InvalidInterface("output index exceeded `u64::MAX`".to_string())
+        })?;
+    }
+  }
+
+  Ok(())
+}
+
 impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
   fn contiguous_scannable_blocks(
     &self,
@@ -241,43 +275,20 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
       let mut blocks = chained_iters(&blocks_bin, epee::extract_blocks_from_blocks_bin)?;
       let mut txs = chained_iters(&blocks_bin, epee::extract_txs_from_blocks_bin)?;
 
-      // NOTE: If we rip out the very first index alone, we could calculate all of the rest
-      let mut first_output_index_per_transaction =
-        chained_iters(&blocks_bin, epee::extract_first_output_indexes_from_block_bin)?;
-
+      let mut next_ringct_output_index = None;
       for block in (&mut blocks).take(requested_blocks) {
         let block = block?;
         let mut block_txs = vec![];
 
         let mut output_index_for_first_ringct_output = None;
-        let mut update_output_index_for_first_ringct_output =
-          |tx: &Transaction<_>| -> Result<_, InterfaceError> {
-            let first_output_index_per_transaction =
-              first_output_index_per_transaction.next().ok_or_else(|| {
-                InterfaceError::InvalidInterface(
-                  "`get_blocks.bin` contained insufficient output indexes for present transactions"
-                    .to_string(),
-                )
-              })??;
 
-            // If we have yet to write the output index for the first RingCT output...
-            #[allow(clippy::collapsible_if)]
-            if output_index_for_first_ringct_output.is_none() {
-              // This this transaction produced a RingCT output...
-              if matches!(tx, Transaction::V2 { .. }) && (!tx.prefix().outputs.is_empty()) {
-                // Write this transaction's output index to the slot
-                output_index_for_first_ringct_output =
-                  Some(first_output_index_per_transaction.ok_or_else(|| {
-                    InterfaceError::InvalidInterface(
-                      "transaction had outputs yet no output indexes".to_string(),
-                    )
-                  })?);
-              }
-            }
-            Ok(())
-          };
-        let pruned_miner_transaction = block.miner_transaction.clone().into();
-        update_output_index_for_first_ringct_output(&pruned_miner_transaction)?;
+        update_output_index(
+          self,
+          &mut next_ringct_output_index,
+          &mut output_index_for_first_ringct_output,
+          &block.miner_transaction,
+        )
+        .await?;
 
         for hash in &block.transactions {
           let tx = txs.next().ok_or_else(|| {
@@ -286,13 +297,21 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
                 .to_string(),
             )
           })??;
-          let tx = tx.verify_as_possible(*hash).map_err(|_| {
-            InterfaceError::InvalidInterface(
-              "failed to verify pruned transaction in scannable block".to_string(),
-            )
-          })?;
-          update_output_index_for_first_ringct_output(&tx)?;
-          block_txs.push(tx);
+          if tx.hash() != *hash {
+            Err(InterfaceError::InvalidInterface(
+              "transaction from `get_blocks.bin` didn't correspond to the block".to_string(),
+            ))?;
+          }
+
+          update_output_index(
+            self,
+            &mut next_ringct_output_index,
+            &mut output_index_for_first_ringct_output,
+            &tx,
+          )
+          .await?;
+
+          block_txs.push(tx.into());
         }
 
         res.push(ScannableBlock {
@@ -304,17 +323,13 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
 
       if res.len() != requested_blocks {
         Err(InterfaceError::InvalidInterface(format!(
-          "node returned {} blocks, requested {requested_blocks}",
+          "node returned {} scannable blocks, requested {requested_blocks}",
           res.len()
         )))?;
       }
-      if blocks.next().is_some() ||
-        txs.next().is_some() ||
-        first_output_index_per_transaction.next().is_some()
-      {
+      if blocks.next().is_some() || txs.next().is_some() {
         Err(InterfaceError::InvalidInterface(
-          "epee response had extra instances of `block`, `blob`, `prunable_hash`, or `indices`"
-            .to_string(),
+          "epee response had extra instances of `block` or `txs`".to_string(),
         ))?;
       }
 

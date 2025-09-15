@@ -206,6 +206,7 @@ macro_rules! test {
 
         use monero_wallet::{
           ringct::RctType,
+          transaction::Pruned,
           interface::prelude::*,
           address::Network,
           ViewPair, Scanner, OutputWithDecoys,
@@ -325,7 +326,16 @@ macro_rules! test {
             let block =
               mine_until_unlocked(&rpc, &random_address().2, signed.hash()).await;
             let block = rpc.expand_to_scannable_block(block).await.unwrap();
+            assert_eq!(rpc.scannable_block(block.block.hash()).await.unwrap(), block);
+            assert_eq!(
+              rpc.scannable_block_by_number(block.block.number().unwrap()).await.unwrap(),
+              block,
+            );
             let tx = rpc.transaction(signed.hash()).await.unwrap();
+            assert_eq!(
+              rpc.pruned_transaction(signed.hash()).await.unwrap(),
+              Transaction::<Pruned>::from(tx.clone()),
+            );
             check_weight_and_fee(&tx, fee_rate);
             let scanner = Scanner::new(view.clone());
             ($first_checks)(rpc.clone(), block, tx, scanner, state).await
@@ -347,7 +357,16 @@ macro_rules! test {
             let block =
               mine_until_unlocked(&rpc, &random_address().2, signed.hash()).await;
             let block = rpc.expand_to_scannable_block(block).await.unwrap();
+            assert_eq!(rpc.scannable_block(block.block.hash()).await.unwrap(), block);
+            assert_eq!(
+              rpc.scannable_block_by_number(block.block.number().unwrap()).await.unwrap(),
+              block,
+            );
             let tx = rpc.transaction(signed.hash()).await.unwrap();
+            assert_eq!(
+              rpc.pruned_transaction(signed.hash()).await.unwrap(),
+              Transaction::<Pruned>::from(tx.clone()),
+            );
             if stringify!($name) != "spend_one_input_to_two_outputs_no_change" {
               // Skip weight and fee check for the above test because when there is no change,
               // the change is added to the fee

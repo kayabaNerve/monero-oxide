@@ -1,5 +1,5 @@
 use core::future::Future;
-use alloc::{format, vec, vec::Vec, string::String};
+use alloc::{format, vec::Vec, string::String};
 
 use monero_oxide::transaction::{Pruned, Transaction};
 
@@ -94,10 +94,6 @@ pub trait ProvidesUnvalidatedTransactions: Sync {
     hashes: &[[u8; 32]],
   ) -> impl Send + Future<Output = Result<Vec<Transaction>, TransactionsError>> {
     async move {
-      if hashes.is_empty() {
-        return Ok(vec![]);
-      }
-
       let mut txs = Vec::with_capacity(hashes.len());
       for hash in hashes {
         txs.push(self.transaction(*hash).await?);
@@ -115,10 +111,6 @@ pub trait ProvidesUnvalidatedTransactions: Sync {
   ) -> impl Send + Future<Output = Result<Vec<PrunedTransactionWithPrunableHash>, TransactionsError>>
   {
     async move {
-      if hashes.is_empty() {
-        return Ok(vec![]);
-      }
-
       let mut txs = Vec::with_capacity(hashes.len());
       for hash in hashes {
         txs.push(self.pruned_transaction(*hash).await?);
