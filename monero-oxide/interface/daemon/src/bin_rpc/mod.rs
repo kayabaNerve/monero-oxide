@@ -70,7 +70,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
       ))?
     };
 
-    let Ok(start) = u64::try_from(*range.start()) else {
+    let Ok(mut start) = u64::try_from(*range.start()) else {
       Err(InterfaceError::InternalError("start block wasn't representable in a `u64`".to_string()))?
     };
     let Ok(end) = u64::try_from(*range.end()) else {
@@ -105,14 +105,13 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     debug_assert_eq!(expected_request_header_len, request.len());
 
     let mut blocks = vec![];
-    let mut i = start;
     let mut first_iter = true;
-    while i <= end {
+    while start <= end {
       request.truncate(expected_request_header_len);
       let this_end = start.saturating_add(BLOCKS_PER_REQUEST_U64 - 1).min(end);
-      let requested_blocks = this_end - start + 1;
+      let requested_blocks: u64 = this_end - start + 1;
       request.extend(((requested_blocks << 2) | 0b11).to_le_bytes());
-      for i in i ..= this_end {
+      for i in start ..= this_end {
         request.extend(&i.to_le_bytes());
       }
       // Only checked on the first iteration as the final chunk may be shorter
@@ -136,7 +135,8 @@ impl<T: HttpTransport> MoneroDaemon<T> {
       );
 
       match this_end.checked_add(1) {
-        Some(j) => i = j,
+        Some(after) => start = after,
+        // If the number after the end is unrepresentable, we've reached the end
         None => break,
       }
     }
