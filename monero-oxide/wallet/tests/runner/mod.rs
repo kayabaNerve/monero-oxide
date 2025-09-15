@@ -378,6 +378,19 @@ macro_rules! test {
               carried_state = Box::new(($checks)(rpc.clone(), block, tx, scanner, state).await);
             }
           )*
+
+          // Check the entire chain with `contiguous_scannable_blocks`
+          {
+            let number = rpc.latest_block_number().await.unwrap();
+            let chain = rpc.contiguous_scannable_blocks(0 ..= number).await.unwrap();
+            for i in 0 ..= number {
+              assert_eq!(
+                rpc.expand_to_scannable_block(rpc.block_by_number(i).await.unwrap()).await.unwrap(),
+                chain[i],
+              );
+              assert_eq!(chain[i].block.number().unwrap(), i);
+            }
+          }
         }
       }
     }
