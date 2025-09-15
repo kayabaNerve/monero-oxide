@@ -116,7 +116,8 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
     async move {
       // If a caller requests an exorbitant amount of blocks, this may trigger an OOM kill
       // In order to maintain correctness, we have to attempt to service this request though
-      let mut blocks = Vec::with_capacity(range.end().saturating_sub(*range.start()));
+      let mut blocks =
+        Vec::with_capacity(range.end().saturating_sub(*range.start()).saturating_add(1));
       for number in range {
         blocks.push(self.scannable_block_by_number(number).await?);
       }
@@ -236,7 +237,12 @@ impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
       let blocks =
         <P as ProvidesUnvalidatedScannableBlocks>::contiguous_scannable_blocks(self, range.clone())
           .await?;
-      let expected_blocks = range.end().saturating_sub(*range.start());
+      let expected_blocks =
+        range.end().saturating_sub(*range.start()).checked_add(1).ok_or_else(|| {
+          InterfaceError::InternalError(
+            "amount of blocks requested wasn't representable in a `usize`".to_string(),
+          )
+        })?;
       if blocks.len() != expected_blocks {
         Err(InterfaceError::InternalError(format!(
           "`{}` returned {} blocks, expected {}",
