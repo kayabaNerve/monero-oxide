@@ -293,7 +293,16 @@ impl SignMachine<Transaction> for TransactionSignMachine {
     // We now need to decide the masks for each CLSAG
     let clsag_len = clsags.len();
     let output_masks = tx.intent.sum_output_masks(&tx.key_images);
-    let mut rng = tx.intent.seeded_rng(b"multisig_pseudo_out_masks");
+    let mut rng = tx.intent.seeded_rng(
+      b"multisig_pseudo_out_masks",
+      &tx
+        .intent
+        .inputs
+        .iter()
+        .map(|input| input.commitment().calculate().compress().to_bytes())
+        .collect::<Vec<_>>()
+        .concat(),
+    );
     let mut sum_pseudo_outs = Scalar::ZERO;
     let mut to_sign = Vec::with_capacity(clsag_len);
     for (i, ((clsag_mask_send, clsag), commitments)) in clsags.into_iter().enumerate() {

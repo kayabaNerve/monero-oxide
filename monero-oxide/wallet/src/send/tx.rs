@@ -285,7 +285,10 @@ impl SignableTransactionWithKeyImages {
       encrypted_amounts.push(encrypted_amount);
     }
     let bulletproof = {
-      let mut bp_rng = self.intent.seeded_rng(b"bulletproof");
+      let mut bp_rng = self.intent.seeded_rng(
+        b"bulletproof",
+        &commitments.iter().map(CompressedPoint::to_bytes).collect::<Vec<_>>().concat(),
+      );
       (match self.intent.rct_type {
         RctType::ClsagBulletproof => Bulletproof::prove(&mut bp_rng, bp_commitments),
         RctType::ClsagBulletproofPlus => Bulletproof::prove_plus(&mut bp_rng, bp_commitments),

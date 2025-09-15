@@ -21,6 +21,7 @@ fn seeded_rng(
   dst: &'static [u8],
   outgoing_view_key: &[u8; 32],
   input_keys: Vec<EdwardsPoint>,
+  addendum: &[u8],
 ) -> ChaCha20Rng {
   // Apply the DST
   let mut transcript = Zeroizing::new(vec![
@@ -45,6 +46,9 @@ fn seeded_rng(
     transcript.extend(key.to_bytes());
   }
 
+  // Add the addendum
+  transcript.extend(&keccak256(addendum));
+
   let res = ChaCha20Rng::from_seed(keccak256(&transcript));
   transcript.zeroize();
   res
@@ -60,7 +64,7 @@ impl TransactionKeys {
   ///
   /// `input_keys` is the list of keys from the outputs spent within this transaction.
   pub fn new(outgoing_view_key: &Zeroizing<[u8; 32]>, input_keys: Vec<EdwardsPoint>) -> Self {
-    Self(seeded_rng(b"transaction_keys", outgoing_view_key, input_keys))
+    Self(seeded_rng(b"transaction_keys", outgoing_view_key, input_keys, &[]))
   }
 }
 impl Iterator for TransactionKeys {
@@ -75,8 +79,8 @@ impl SignableTransaction {
     self.inputs.iter().map(OutputWithDecoys::key).collect()
   }
 
-  pub(crate) fn seeded_rng(&self, dst: &'static [u8]) -> ChaCha20Rng {
-    seeded_rng(dst, &self.outgoing_view_key, self.input_keys())
+  pub(crate) fn seeded_rng(&self, dst: &'static [u8], addendum: &[u8]) -> ChaCha20Rng {
+    seeded_rng(dst, &self.outgoing_view_key, self.input_keys(), addendum)
   }
 
   fn has_payments_to_subaddresses(&self) -> bool {
