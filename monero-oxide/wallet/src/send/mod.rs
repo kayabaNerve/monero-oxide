@@ -395,7 +395,7 @@ impl SignableTransaction {
 
     // Shuffle the payments
     {
-      let mut rng = res.seeded_rng(b"shuffle_payments", &[]);
+      let mut rng = res.seeded_rng(b"shuffle_payments");
       res.payments.shuffle(&mut rng);
     }
 
