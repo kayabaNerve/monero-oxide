@@ -18,7 +18,8 @@
   This file contains all the code which is expected to exactly follow the `epee` specification,
   with the following exceptions:
   - We don't support the `Array` type (type 13) as it's unused and lacking documentation
-  - We may accept a _wider_ class of inputs than the `epee` library itself
+  - We may accept a _wider_ class of inputs than the `epee` library itself due to slight
+    differences in depth limits on nested objects
 
   We do not support:
   - Encoding objects, instead hand-rolling the few requests we have to make manually
@@ -36,8 +37,9 @@
   This module is usable on `core`, without `alloc`.
 */
 
+/// An error incurred when decoding.
 #[derive(Debug)]
-#[allow(dead_code)]
+#[allow(dead_code)] // dead_code ignores `Debug` but we want these fields _for_ `Debug`
 pub(super) enum EpeeError {
   /// The `epee`-encoded blob did not have the expected header.
   InvalidHeader,
@@ -56,33 +58,47 @@ pub(super) enum EpeeError {
 // epee header, an 8-byte magic and a version
 pub(crate) const HEADER: &[u8] = b"\x01\x11\x01\x01\x01\x01\x02\x01\x01";
 
-// The type of the field being read.
+/// The type of the field being read.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub(crate) enum Type {
+  /// An `i64`.
   Int64 = 1,
+  /// An `i32`.
   Int32 = 2,
+  /// An `i16`.
   Int16 = 3,
+  /// An `i8`.
   Int8 = 4,
+  /// A `u64`.
   Uint64 = 5,
+  /// A `u32`.
   Uint32 = 6,
+  /// A `u16`.
   Uint16 = 7,
+  /// A `u8`.
   Uint8 = 8,
+  /// A `f64`.
   Double = 9,
+  /// A length-prefixed collection of bytes.
   String = 10,
+  /// A `bool`.
   Bool = 11,
+  /// An object.
   Object = 12,
   // Array = 13, // Unused and unsupported
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// A bitflag for if the field represents an array.
+#[derive(Clone, Copy, Debug)]
 #[repr(u8)]
-pub(crate) enum Array {
+pub enum Array {
+  /// A unit type.
   Unit = 0,
+  /// An array.
   Array = 1 << 7,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum TypeOrEntry {
   // An epee-defined type
   Type(Type),
@@ -91,6 +107,7 @@ enum TypeOrEntry {
 }
 
 impl TypeOrEntry {
+  #[allow(clippy::wrong_self_convention)]
   fn to_u8(self) -> u8 {
     match self {
       TypeOrEntry::Type(kind) => kind as u8,
@@ -215,7 +232,8 @@ struct Stack {
   types: PackedTypes,
   len: usize,
 }
-const _ASSERT_KILOBYTE_STACK: [(); 1024 - core::mem::size_of::<Stack>()] = [(); _];
+#[cfg(test)]
+const _ASSERT_KIBIBYTE_STACK: [(); 1024 - core::mem::size_of::<Stack>()] = [(); _];
 
 impl Stack {
   fn new(initial_item: (TypeOrEntry, u64)) -> Self {
@@ -263,7 +281,8 @@ struct Seek<'a> {
   field_name: &'static str,
   stack: Stack,
 }
-const _ASSERT_KILOBYTE_SEEK: [(); 1024 - core::mem::size_of::<Seek>()] = [(); _];
+#[cfg(test)]
+const _ASSERT_KIBIBYTE_SEEK: [(); 1024 - core::mem::size_of::<Seek>()] = [(); _];
 
 impl<'a> Seek<'a> {
   fn new(
