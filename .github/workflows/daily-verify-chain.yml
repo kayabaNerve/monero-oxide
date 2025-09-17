@@ -18,9 +18,11 @@ jobs:
         run: |
           BLOCKS_ON_CHAIN=3500000
 
-          PER_DAY=$(( $BLOCKS_ON_CHAIN / 28 ))
-          DAY_OF_MONTH=$(( $(date +%d) - 1))
-          START=$(( PER_DAY * DAY_OF_MONTH ))
+          ROTATION_PERIOD=30
+          PER_DAY=$(( $BLOCKS_ON_CHAIN / $ROTATION_PERIOD ))
+
+          DAY_WITHIN_ROTATION_PERIOD=$((($(date +%s) / (24 * 60 * 60)) % $ROTATION_PERIOD))
+          START=$(( DAY_WITHIN_ROTATION_PERIOD * $PER_DAY ))
           END=$(( $START + PER_DAY ))
-          
+
           cargo run -p monero-oxide-verify-chain --release -- $START $END
