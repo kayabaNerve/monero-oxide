@@ -2,6 +2,7 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 
+use core::time::Duration;
 use std::collections::{HashSet, HashMap};
 
 use curve25519_dalek::EdwardsPoint;
@@ -287,7 +288,9 @@ async fn main() {
 
   let mut rpcs = vec![];
   for node in nodes {
-    if let Ok(node) = SimpleRequestRpc::new(node.clone()).await {
+    if let Ok(node) =
+      SimpleRequestRpc::with_custom_timeout(node.clone(), Duration::from_secs(60)).await
+    {
       rpcs.push(node);
     } else {
       println!("couldn't create SimpleRequestRpc connected to {node}");
