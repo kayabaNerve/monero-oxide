@@ -2,217 +2,260 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 
-use curve25519_dalek::scalar::Scalar;
+use std::collections::{HashSet, HashMap};
 
-use serde::Deserialize;
-use serde_json::json;
+use curve25519_dalek::EdwardsPoint;
 
 use monero_oxide::{
-  primitives::Commitment,
-  ringct::{RctPrunable, bulletproofs::BatchVerifier},
-  transaction::{Input, Transaction},
+  ringct::{
+    mlsag::{RingMatrix, Mlsag},
+    bulletproofs::BatchVerifier,
+    RctPrunable,
+  },
+  transaction::{Input, Pruned, TransactionPrefix, Transaction},
   block::Block,
   io::CompressedPoint,
 };
 
-use monero_rpc::{RpcError, Rpc};
+use monero_rpc::{RpcError, Rpc, DecoyRpc};
 use monero_simple_request_rpc::SimpleRequestRpc;
 
-use tokio::task::JoinHandle;
-
-async fn check_block(rpc: impl Rpc, block_i: usize) {
-  let hash = loop {
-    match rpc.get_block_hash(block_i).await {
-      Ok(hash) => break hash,
-      Err(RpcError::ConnectionError(e)) => {
-        println!("get_block_hash ConnectionError: {e}");
-        continue;
-      }
-      Err(e) => panic!("couldn't get block {block_i}'s hash: {e:?}"),
-    }
-  };
-
-  // TODO: Grab the JSON to also check it was deserialized correctly
-  #[derive(Deserialize, Debug)]
-  struct BlockResponse {
-    blob: String,
+/// Check the block's transactions, when pruned, behave as expected.
+///
+/// Returns the full list of transactions for the block.
+async fn check_pruned_transaction(
+  rpc: &impl Rpc,
+  block: &Block,
+) -> Result<Vec<Transaction>, RpcError> {
+  {
+    let pruned_miner_transaction = Transaction::<Pruned>::from(block.miner_transaction.clone());
+    let miner_transaction_hash = block.miner_transaction.hash();
+    assert_eq!(rpc.get_transaction(miner_transaction_hash).await?, block.miner_transaction,);
+    assert_eq!(rpc.get_pruned_transaction(miner_transaction_hash).await?, pruned_miner_transaction);
   }
-  let res: BlockResponse = loop {
-    match rpc.json_rpc_call("get_block", Some(json!({ "hash": hex::encode(hash) }))).await {
-      Ok(res) => break res,
-      Err(RpcError::ConnectionError(e)) => {
-        println!("get_block ConnectionError: {e}");
+  let full;
+  if !block.transactions.is_empty() {
+    full = rpc.get_transactions(&block.transactions).await?;
+    let pruned = rpc.get_pruned_transactions(&block.transactions).await?;
+    assert_eq!(full.len(), pruned.len());
+    for (tx, pruned) in full.iter().cloned().zip(pruned) {
+      assert_eq!(Transaction::<Pruned>::from(tx), pruned, "pruned TX differed");
+    }
+  } else {
+    full = vec![];
+  }
+  Ok(full)
+}
+
+/// Fetch all referenced outputs.
+async fn fetch_referenced_outputs(
+  rpc: &impl Rpc,
+  txs: &[Transaction],
+) -> Result<HashMap<(u64, u64), (CompressedPoint, EdwardsPoint)>, RpcError> {
+  let referenced = txs
+    .iter()
+    .flat_map(|tx| {
+      tx.prefix().inputs.iter().map(|input| match input {
+        Input::Gen(_) => panic!("non-miner transaction with Input::Gen"),
+        Input::ToKey { amount, key_offsets, .. } => {
+          // TODO
+          if amount.is_some() {
+            None?;
+          }
+
+          let mut accum = 0;
+          Some(
+            (if amount.is_none() { key_offsets.as_slice().iter() } else { [].as_slice().iter() })
+              .map(move |offset| {
+                accum += *offset;
+                accum
+              }),
+          )
+        }
+      })
+    })
+    .flatten()
+    .flatten()
+    .collect::<HashSet<u64>>()
+    .into_iter()
+    .collect::<Vec<_>>();
+  let outputs = rpc.get_outs(&referenced).await?;
+  Ok(
+    referenced
+      .into_iter()
+      .map(|index| (0, index))
+      .zip(outputs.into_iter().map(|info| (info.key.into(), info.commitment)))
+      .collect(),
+  )
+}
+
+/// Check the transactions' sanity.
+fn check_sanity(txs: &[Transaction]) {
+  for tx in txs {
+    match tx {
+      Transaction::V1 { prefix: _, signatures } => {
+        assert!(!signatures.is_empty(), "V1 transaction without signatures");
         continue;
       }
-      Err(e) => panic!("couldn't get block {block_i} via block.hash(): {e:?}"),
+      Transaction::V2 { prefix: _, proofs: None } => {
+        panic!("V2 non-miner transaction without proofs");
+      }
+      Transaction::V2 { prefix: _, proofs: Some(_) } => {}
     }
-  };
+  }
+}
 
-  let blob = hex::decode(res.blob).expect("node returned non-hex block");
-  let block = Block::read(&mut blob.as_slice())
-    .unwrap_or_else(|e| panic!("couldn't deserialize block {block_i}: {e}"));
-  assert_eq!(block.hash(), hash, "hash differs");
-  assert_eq!(block.serialize(), blob, "serialization differs");
-
-  let txs_len = 1 + block.transactions.len();
-
-  if !block.transactions.is_empty() {
-    // Test getting pruned transactions
-    loop {
-      match rpc.get_pruned_transactions(&block.transactions).await {
-        Ok(_) => break,
-        Err(RpcError::ConnectionError(e)) => {
-          println!("get_pruned_transactions ConnectionError: {e}");
+fn verify_mlsags(
+  outputs: &HashMap<(u64, u64), (CompressedPoint, EdwardsPoint)>,
+  prefix: &TransactionPrefix,
+  sig_hash: &[u8; 32],
+  mlsags: &[Mlsag],
+  pseudo_outs: &[CompressedPoint],
+) {
+  assert_eq!(prefix.inputs.len(), mlsags.len(), "distinct amount of inputs and MLSAGs");
+  assert_eq!(prefix.inputs.len(), pseudo_outs.len(), "distinct amount of inputs and pseudo-outs");
+  for (i, mlsag) in mlsags.iter().enumerate() {
+    match &prefix.inputs[i] {
+      Input::Gen(_) => panic!("non-miner transaction had `Input::Gen`"),
+      Input::ToKey { amount, key_offsets, key_image } => {
+        // TODO
+        if amount.is_some() {
           continue;
         }
-        Err(e) => panic!("couldn't call get_pruned_transactions: {e:?}"),
+
+        let mut accum = 0;
+        let outputs = key_offsets
+          .iter()
+          .map(|offset| {
+            accum += offset;
+            let output = outputs[&(amount.unwrap_or(0), accum)];
+            [output.0, output.1.compress().into()]
+          })
+          .collect::<Vec<_>>();
+        mlsag
+          .verify(
+            sig_hash,
+            &RingMatrix::individual(&outputs, pseudo_outs[i]).unwrap(),
+            &[*key_image],
+          )
+          .expect("failed to verify MLSAG");
       }
     }
+  }
+}
 
-    let txs = loop {
-      match rpc.get_transactions(&block.transactions).await {
-        Ok(txs) => break txs,
-        Err(RpcError::ConnectionError(e)) => {
-          println!("get_transactions ConnectionError: {e}");
-          continue;
-        }
-        Err(e) => panic!("couldn't call get_transactions: {e:?}"),
-      }
-    };
-
-    let mut batch = BatchVerifier::new();
-    for tx in txs {
-      match tx {
-        Transaction::V1 { prefix: _, signatures } => {
-          assert!(!signatures.is_empty());
-          continue;
-        }
-        Transaction::V2 { prefix: _, proofs: None } => {
-          panic!("proofs were empty in non-miner v2 transaction");
-        }
-        Transaction::V2 { ref prefix, proofs: Some(ref proofs) } => {
-          let sig_hash = tx.signature_hash().expect("no signature hash for TX with proofs");
-          // Verify all proofs we support proving for
-          // This is due to having debug_asserts calling verify within their proving, and CLSAG
-          // multisig explicitly calling verify as part of its signing process
-          // Accordingly, making sure our signature_hash algorithm is correct is great, and further
-          // making sure the verification functions are valid is appreciated
-          match &proofs.prunable {
-            RctPrunable::AggregateMlsagBorromean { .. } | RctPrunable::MlsagBorromean { .. } => {}
-            RctPrunable::MlsagBulletproofs { bulletproof, .. } |
-            RctPrunable::MlsagBulletproofsCompactAmount { bulletproof, .. } => {
-              assert!(bulletproof.batch_verify(
-                &mut rand_core::OsRng,
-                &mut batch,
-                &proofs.base.commitments
-              ));
-            }
-            RctPrunable::Clsag { bulletproof, clsags, pseudo_outs } => {
-              assert!(bulletproof.batch_verify(
-                &mut rand_core::OsRng,
-                &mut batch,
-                &proofs.base.commitments
-              ));
-
-              for (i, clsag) in clsags.iter().enumerate() {
-                let (amount, key_offsets, image) = match &prefix.inputs[i] {
-                  Input::Gen(_) => panic!("Input::Gen"),
-                  Input::ToKey { amount, key_offsets, key_image } => {
-                    (amount, key_offsets, key_image)
-                  }
-                };
-
-                let mut running_sum = 0;
-                let mut actual_indexes = vec![];
-                for offset in key_offsets {
-                  running_sum += offset;
-                  actual_indexes.push(running_sum);
-                }
-
-                async fn get_outs(
-                  rpc: &impl Rpc,
-                  amount: u64,
-                  indexes: &[u64],
-                ) -> Vec<[CompressedPoint; 2]> {
-                  #[derive(Deserialize, Debug)]
-                  struct Out {
-                    key: String,
-                    mask: String,
+fn check_ringct_membership_proofs(
+  txs: &[Transaction],
+  outputs: &HashMap<(u64, u64), (CompressedPoint, EdwardsPoint)>,
+) {
+  for tx in txs {
+    #[allow(clippy::single_match)]
+    match tx {
+      Transaction::V2 { prefix, proofs: Some(ref proofs) } => {
+        let sig_hash =
+          tx.signature_hash().expect("no signature hash for V2 transaction with proofs");
+        match &proofs.prunable {
+          RctPrunable::AggregateMlsagBorromean { .. } => {
+            // TODO
+          }
+          RctPrunable::MlsagBorromean { mlsags, .. } => {
+            let pseudo_outs = &proofs.base.pseudo_outs;
+            verify_mlsags(outputs, prefix, &sig_hash, mlsags, pseudo_outs);
+          }
+          RctPrunable::MlsagBulletproofs { mlsags, pseudo_outs, .. } |
+          RctPrunable::MlsagBulletproofsCompactAmount { mlsags, pseudo_outs, .. } => {
+            verify_mlsags(outputs, prefix, &sig_hash, mlsags, pseudo_outs);
+          }
+          RctPrunable::Clsag { clsags, pseudo_outs, .. } => {
+            assert_eq!(prefix.inputs.len(), clsags.len(), "distinct amount of inputs and CLSAGs");
+            assert_eq!(
+              prefix.inputs.len(),
+              pseudo_outs.len(),
+              "distinct amount of inputs and pseudo-outs"
+            );
+            for (i, clsag) in clsags.iter().enumerate() {
+              match &prefix.inputs[i] {
+                Input::Gen(_) => panic!("non-miner transaction had `Input::Gen`"),
+                Input::ToKey { amount, key_offsets, key_image } => {
+                  // TODO
+                  if amount.is_some() {
+                    continue;
                   }
 
-                  #[derive(Deserialize, Debug)]
-                  struct Outs {
-                    outs: Vec<Out>,
-                  }
-
-                  let outs: Outs = loop {
-                    match rpc
-                      .rpc_call(
-                        "get_outs",
-                        Some(json!({
-                          "get_txid": true,
-                          "outputs": indexes.iter().map(|o| json!({
-                            "amount": amount,
-                            "index": o
-                          })).collect::<Vec<_>>()
-                        })),
-                      )
-                      .await
-                    {
-                      Ok(outs) => break outs,
-                      Err(RpcError::ConnectionError(e)) => {
-                        println!("get_outs ConnectionError: {e}");
-                        continue;
-                      }
-                      Err(e) => panic!("couldn't connect to RPC to get outs: {e:?}"),
-                    }
-                  };
-
-                  let rpc_point = |point: &str| {
-                    CompressedPoint(
-                      hex::decode(point)
-                        .expect("invalid hex for ring member")
-                        .try_into()
-                        .expect("invalid point len for ring member"),
-                    )
-                  };
-
-                  outs
-                    .outs
+                  let mut accum = 0;
+                  let outputs = key_offsets
                     .iter()
-                    .map(|out| {
-                      let mask = rpc_point(&out.mask);
-                      if amount != 0 {
-                        assert_eq!(
-                          mask,
-                          CompressedPoint::from(
-                            Commitment::new(Scalar::from(1u8), amount).calculate().compress()
-                          )
-                        );
-                      }
-                      [rpc_point(&out.key), mask]
+                    .map(|offset| {
+                      accum += offset;
+                      let output = outputs[&(amount.unwrap_or(0), accum)];
+                      [output.0, output.1.compress().into()]
                     })
-                    .collect()
+                    .collect::<Vec<_>>();
+                  clsag
+                    .verify(outputs, key_image, &pseudo_outs[i], &sig_hash)
+                    .expect("failed to verify CLSAG");
                 }
-
-                clsag
-                  .verify(
-                    get_outs(&rpc, amount.unwrap_or(0), &actual_indexes).await,
-                    image,
-                    &pseudo_outs[i],
-                    &sig_hash,
-                  )
-                  .unwrap();
               }
             }
           }
         }
       }
+      _ => {}
     }
-    assert!(batch.verify());
+  }
+}
+
+/// Check the transactions' range proofs.
+fn check_range_proofs(txs: &[Transaction]) {
+  let mut batch = BatchVerifier::new();
+  for tx in txs {
+    match tx {
+      Transaction::V1 { .. } => {}
+      Transaction::V2 { prefix: _, proofs } => {
+        let Some(proofs) = proofs else { panic!("non-miner V2 transaction without proofs") };
+        match &proofs.prunable {
+          RctPrunable::AggregateMlsagBorromean { borromean, .. } |
+          RctPrunable::MlsagBorromean { borromean, .. } => {
+            assert_eq!(borromean.len(), proofs.base.commitments.len());
+            for (borromean, commitment) in borromean.iter().zip(&proofs.base.commitments) {
+              assert!(
+                borromean.verify(commitment),
+                "couldn't verify borromean range proof on mainnet"
+              );
+            }
+          }
+          RctPrunable::MlsagBulletproofs { bulletproof, .. } |
+          RctPrunable::MlsagBulletproofsCompactAmount { bulletproof, .. } |
+          RctPrunable::Clsag { bulletproof, .. } => {
+            assert!(bulletproof.batch_verify(
+              &mut rand_core::OsRng,
+              &mut batch,
+              &proofs.base.commitments
+            ));
+          }
+        }
+      }
+    }
+  }
+  assert!(batch.verify(), "couldn't verify range proofs on mainnet");
+}
+
+async fn check_block(rpc: &impl Rpc, block: &Block) -> Result<(), RpcError> {
+  let number = block.number().expect("on-chain block didn't have number");
+  if rpc.get_block_hash(number).await? != block.hash() {
+    panic!("calculated distinct block hash for {number}");
   }
 
-  println!("Deserialized, hashed, and reserialized {block_i} with {txs_len} TXs");
+  // TODO: This is IO bound
+  let txs = check_pruned_transaction(rpc, block).await?;
+  let outputs = fetch_referenced_outputs(rpc, &txs).await?;
+  // TODO: This is compute bound
+  check_sanity(&txs);
+  check_ringct_membership_proofs(&txs, &outputs);
+  check_range_proofs(&txs);
+  // TODO: After fetching one block's transactions, fetch the next while we do this block's compute
+
+  Ok(())
 }
 
 #[tokio::main]
@@ -220,17 +263,16 @@ async fn main() {
   let args = std::env::args().collect::<Vec<String>>();
 
   // Read start block as the first arg
-  let mut block_i =
+  let start_block =
     args.get(1).expect("no start block specified").parse::<usize>().expect("invalid start block");
-
-  // How many blocks to work on at once
-  let async_parallelism: usize =
-    args.get(2).unwrap_or(&"8".to_string()).parse::<usize>().expect("invalid parallelism argument");
+  // Read end block as the second arg
+  let end_block =
+    args.get(2).expect("no end block specified").parse::<usize>().expect("invalid end block");
 
   // Read further args as RPC URLs
   let default_nodes = vec![
-    "http://xmr-node-uk.cakewallet.com:18081".to_string(),
-    "http://xmr-node-eu.cakewallet.com:18081".to_string(),
+    "http://xmr-node.cakewallet.com:18081".to_string(),
+    "https://node.sethforprivacy.com".to_string(),
   ];
   let mut specified_nodes = vec![];
   {
@@ -243,46 +285,50 @@ async fn main() {
   }
   let nodes = if specified_nodes.is_empty() { default_nodes } else { specified_nodes };
 
-  let rpc = |url: String| async move {
-    SimpleRequestRpc::new(url.clone())
-      .await
-      .unwrap_or_else(|_| panic!("couldn't create SimpleRequestRpc connected to {url}"))
-  };
-  let main_rpc = rpc(nodes[0].clone()).await;
   let mut rpcs = vec![];
-  for i in 0 .. async_parallelism {
-    rpcs.push(rpc(nodes[i % nodes.len()].clone()).await);
+  for node in nodes {
+    if let Ok(node) = SimpleRequestRpc::new(node.clone()).await {
+      rpcs.push(node);
+    } else {
+      println!("couldn't create SimpleRequestRpc connected to {node}");
+    }
   }
 
-  let mut rpc_i = 0;
-  let mut handles: Vec<JoinHandle<()>> = vec![];
-  let mut height = 0;
-  loop {
-    let new_height = main_rpc.get_height().await.expect("couldn't call get_height");
-    if new_height == height {
-      break;
-    }
-    height = new_height;
+  let mut rpc = 0;
+  for number in start_block ..= end_block {
+    println!("Verifying block {number}");
 
-    while block_i < height {
-      if handles.len() >= async_parallelism {
-        // Guarantee one handle is complete
-        handles.swap_remove(0).await.unwrap();
+    let mut block = None;
+    for _ in 0 .. rpcs.len() {
+      // Rotate which RPC we use
+      rpc += 1;
+      let rpc = rpc % rpcs.len();
 
-        // Remove all of the finished handles
-        let mut i = 0;
-        while i < handles.len() {
-          if handles[i].is_finished() {
-            handles.swap_remove(i).await.unwrap();
-            continue;
-          }
-          i += 1;
+      // TODO: contiguous_blocks
+      match rpcs[rpc].get_block_by_number(number).await {
+        Ok(block_val) => {
+          block = Some(block_val);
+          break;
         }
+        Err(e) => println!("failed to fetch block {number} with RPC {rpc}: {e:?}"),
       }
+    }
+    let block = block.expect("failed to fetch block {number} from any RPC");
 
-      handles.push(tokio::spawn(check_block(rpcs[rpc_i].clone(), block_i)));
-      rpc_i = (rpc_i + 1) % rpcs.len();
-      block_i += 1;
+    let mut checked = false;
+    for _ in 0 .. rpcs.len() {
+      rpc += 1;
+      let rpc = rpc % rpcs.len();
+      match check_block(&rpcs[rpc], &block).await {
+        Ok(()) => {
+          checked = true;
+          break;
+        }
+        Err(e) => println!("failed to check block {number} with RPC {rpc}: {e:?}"),
+      }
+    }
+    if !checked {
+      panic!("failed to check block {number} with any RPC");
     }
   }
 }
