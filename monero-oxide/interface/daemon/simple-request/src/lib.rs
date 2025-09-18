@@ -122,7 +122,9 @@ impl SimpleRequestTransport {
         connection: Arc::new(Mutex::new((challenge, client))),
       }
     } else {
-      Authentication::Unauthenticated(Client::with_connection_pool())
+      Authentication::Unauthenticated(Client::with_connection_pool().map_err(|e| {
+        InterfaceError::InternalError(format!("couldn't create client with connection pool: {e:?}"))
+      })?)
     };
 
     Ok(MoneroDaemon::new(SimpleRequestTransport { authentication, url, request_timeout }))
