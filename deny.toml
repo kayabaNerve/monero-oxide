@@ -26,6 +26,7 @@ allow = [
   "Zlib",
   "Unicode-DFS-2016",
   # "OpenSSL",
+  "CDLA-Permissive-2.0",
 
   # Non-invasive copyleft
   # "MPL-2.0",
