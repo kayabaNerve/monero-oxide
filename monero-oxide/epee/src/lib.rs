@@ -3,9 +3,11 @@
 #![deny(missing_docs)]
 #![no_std]
 
+mod io;
 mod stack;
 mod parser;
 
+pub(crate) use io::*;
 pub(crate) use stack::*;
 pub use parser::*;
 
@@ -38,42 +40,6 @@ pub const HEADER: [u8; 8] = *b"\x01\x11\x01\x01\x01\x01\x02\x01";
 // https://github.com/monero-project/monero/blob/8d4c625713e3419573dfcc7119c8848f47cabbaa
 //  /contrib/epee/include/storages/portable_storage_base.h#L39
 pub const VERSION: u8 = 1;
-
-fn read_byte(reader: &mut &[u8]) -> Result<u8, EpeeError> {
-  #[allow(clippy::len_zero)]
-  if reader.len() < 1 {
-    Err(EpeeError::Short(1))?;
-  }
-  let byte = reader[0];
-  *reader = &reader[1 ..];
-  Ok(byte)
-}
-
-fn read_bytes<'a, const N: usize>(reader: &mut &'a [u8]) -> Result<&'a [u8], EpeeError> {
-  if reader.len() < N {
-    Err(EpeeError::Short(N))?;
-  }
-  let res = &reader[.. N];
-  *reader = &reader[N ..];
-  Ok(res)
-}
-
-// Read a VarInt
-fn read_varint(reader: &mut &[u8]) -> Result<u64, EpeeError> {
-  let vi_start = read_byte(reader)?;
-  let len = match vi_start & 0b11 {
-    0 => 1,
-    1 => 2,
-    2 => 4,
-    3 => 8,
-    _ => unreachable!(),
-  };
-  let mut vi = u64::from(vi_start >> 2);
-  for i in 1 .. len {
-    vi |= u64::from(read_byte(reader)?) << (((i - 1) * 8) + 6);
-  }
-  Ok(vi)
-}
 
 impl<'a> Seek<'a> {
   fn new(
