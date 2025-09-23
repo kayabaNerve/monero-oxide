@@ -24,6 +24,8 @@ pub enum EpeeError {
   Short(usize),
   /// Unrecognized type specified.
   UnrecognizedType,
+  /// An object defined a key of `""`.
+  EmptyKey,
   /// Array found when a unit was expected.
   ArrayWhenUnit,
   /// The blob had {0} trailing bytes.

@@ -2,9 +2,8 @@ use core::convert::TryFrom;
 
 use crate::{EpeeError, Stack, read_byte, read_bytes, read_varint};
 
-/// The type of the field being read.
+/// The EPEE-defined type of the field being read.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(u8)]
 pub enum Type {
   /// An `i64`.
   Int64 = 1,
@@ -33,7 +32,7 @@ pub enum Type {
   // Array = 13, // Unused and unsupported
 }
 
-/// A bitflag for if the field represents an array.
+/// A bitflag for if the field is actually an array.
 #[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum Array {
@@ -43,6 +42,11 @@ pub enum Array {
   Array = 1 << 7,
 }
 
+/*
+  An internal marker used to distinguish if we're reading an EPEE-defined field OR if we're reading
+  an entry within an section (object). This lets us collapse the definition of a section to an
+  array of entries, simplifying decoding.
+*/
 #[derive(Clone, Copy)]
 pub(crate) enum TypeOrEntry {
   // An epee-defined type
@@ -52,10 +56,13 @@ pub(crate) enum TypeOrEntry {
 }
 
 impl Type {
-  // Read a type specification, including its length
-  pub(crate) fn read(reader: &mut &[u8]) -> Result<(Self, u64), EpeeError> {
+  /// Read a type specification, including its length.
+  pub fn read(reader: &mut &[u8]) -> Result<(Self, u64), EpeeError> {
     let kind = read_byte(reader)?;
+
+    // Check if the array bit is set
     let array = kind & (Array::Array as u8);
+    // Clear the array bit
     let kind = kind & (!(Array::Array as u8));
 
     let kind = match kind {
@@ -74,15 +81,25 @@ impl Type {
       _ => Err(EpeeError::UnrecognizedType)?,
     };
 
+    // Flatten non-array values to an array of length one
+    /*
+      TODO: Will `epee` proper return an error if an array of length one is specified for a unit
+      type? This wouldn't break out definition of compatibility yet should be revisited.
+    */
     let len = if array != 0 { read_varint(reader)? } else { 1 };
 
     Ok((kind, len))
   }
 }
 
-// Read a entry's key
+/// Read a entry's key.
+// https://github.com/monero-project/monero/blob/8d4c625713e3419573dfcc7119c8848f47cabbaa
+//   /contrib/epee/include/storages/portable_storage_from_bin.h#143-L152
 fn read_key<'a>(reader: &mut &'a [u8]) -> Result<&'a [u8], EpeeError> {
   let len = usize::from(read_byte(reader)?);
+  if len == 0 {
+    Err(EpeeError::EmptyKey)?;
+  }
   if reader.len() < len {
     Err(EpeeError::Short(len))?;
   }
