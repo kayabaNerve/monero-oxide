@@ -5,17 +5,17 @@ use crate::EpeeError;
 /// Read a fixed amount of bytes from the slice.
 ///
 /// This will return `Ok(slice)` where `slice` is the expected length or `Err(_)`.
-pub(crate) fn read_bytes<'a, const N: usize>(reader: &mut &'a [u8]) -> Result<&'a [u8], EpeeError> {
-  if reader.len() < N {
-    Err(EpeeError::Short(N))?;
+pub(crate) fn read_bytes<'a>(reader: &mut &'a [u8], bytes: usize) -> Result<&'a [u8], EpeeError> {
+  if reader.len() < bytes {
+    Err(EpeeError::Short(bytes))?;
   }
-  let res = &reader[.. N];
-  *reader = &reader[N ..];
+  let res = &reader[.. bytes];
+  *reader = &reader[bytes ..];
   Ok(res)
 }
 
 pub(crate) fn read_byte(reader: &mut &[u8]) -> Result<u8, EpeeError> {
-  Ok(read_bytes::<1>(reader)?[0])
+  Ok(read_bytes(reader, 1)?[0])
 }
 
 /// Read a VarInt per EPEE's definition.
@@ -44,4 +44,15 @@ pub(crate) fn read_varint(reader: &mut &[u8]) -> Result<u64, EpeeError> {
   vi >>= 2;
 
   Ok(vi)
+}
+
+/// Read a string per EPEE's definition.
+pub(crate) fn read_str<'a>(reader: &mut &'a [u8]) -> Result<&'a [u8], EpeeError> {
+  let len = usize::try_from(read_varint(reader)?).map_err(|_| EpeeError::Short(usize::MAX))?;
+  if reader.len() < len {
+    Err(EpeeError::Short(len))?;
+  }
+  let res = &reader[.. len];
+  *reader = &reader[len ..];
+  Ok(res)
 }

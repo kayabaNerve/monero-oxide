@@ -1,6 +1,4 @@
-use core::convert::TryFrom;
-
-use crate::{EpeeError, Stack, read_byte, read_bytes, read_varint};
+use crate::{EpeeError, SnapshottedStack, read_byte, read_bytes, read_varint, read_str};
 
 /// The EPEE-defined type of the field being read.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -47,7 +45,7 @@ pub enum Array {
   an entry within an section (object). This lets us collapse the definition of a section to an
   array of entries, simplifying decoding.
 */
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TypeOrEntry {
   // An epee-defined type
   Type(Type),
@@ -108,100 +106,117 @@ fn read_key<'a>(reader: &mut &'a [u8]) -> Result<&'a [u8], EpeeError> {
   Ok(res)
 }
 
-/// An iterator which seeks to all values of desired `(type, name)`.
-pub(crate) struct Seek<'a> {
-  pub(crate) reader: &'a [u8],
-  pub(crate) kind: Type,
-  pub(crate) array: Array,
-  pub(crate) field_name: &'static str,
-  pub(crate) stack: Stack,
-}
-#[cfg(test)]
-const _ASSERT_KIBIBYTE_SEEK: [(); 1024 - core::mem::size_of::<Seek>()] =
-  [(); 1024 - core::mem::size_of::<Seek>()];
-
-impl<'a> Iterator for Seek<'a> {
-  type Item = Result<(u64, &'a [u8]), EpeeError>;
-  fn next(&mut self) -> Option<Self::Item> {
-    (|| -> Result<_, EpeeError> {
-      let mut result = None;
-
-      while let Some(kind) = self.stack.pop() {
-        match kind {
-          TypeOrEntry::Type(Type::Int64) => {
-            read_bytes::<{ core::mem::size_of::<i64>() }>(&mut self.reader)?;
-          }
-          TypeOrEntry::Type(Type::Int32) => {
-            read_bytes::<{ core::mem::size_of::<i32>() }>(&mut self.reader)?;
-          }
-          TypeOrEntry::Type(Type::Int16) => {
-            read_bytes::<{ core::mem::size_of::<i16>() }>(&mut self.reader)?;
-          }
-          TypeOrEntry::Type(Type::Int8) => {
-            read_bytes::<{ core::mem::size_of::<i8>() }>(&mut self.reader)?;
-          }
-          TypeOrEntry::Type(Type::Uint64) => {
-            read_bytes::<{ core::mem::size_of::<u64>() }>(&mut self.reader)?;
-          }
-          TypeOrEntry::Type(Type::Uint32) => {
-            read_bytes::<{ core::mem::size_of::<u32>() }>(&mut self.reader)?;
-          }
-          TypeOrEntry::Type(Type::Uint16) => {
-            read_bytes::<{ core::mem::size_of::<u16>() }>(&mut self.reader)?;
-          }
-          TypeOrEntry::Type(Type::Uint8) => {
-            read_bytes::<{ core::mem::size_of::<u8>() }>(&mut self.reader)?;
-          }
-          TypeOrEntry::Type(Type::Double) => {
-            read_bytes::<{ core::mem::size_of::<f64>() }>(&mut self.reader)?;
-          }
-          TypeOrEntry::Type(Type::String) => {
-            let len = usize::try_from(read_varint(&mut self.reader)?)
-              .map_err(|_| EpeeError::Short(usize::MAX))?;
-            if self.reader.len() < len {
-              Err(EpeeError::Short(len))?;
-            }
-            self.reader = &self.reader[len ..];
-          }
-          TypeOrEntry::Type(Type::Bool) => {
-            read_bytes::<{ core::mem::size_of::<bool>() }>(&mut self.reader)?;
-          }
-          TypeOrEntry::Type(Type::Object) => {
-            let amount_of_entries = read_varint(&mut self.reader)?;
-            self.stack.push(TypeOrEntry::Entry, amount_of_entries)?;
-          }
-          TypeOrEntry::Entry => {
-            let key = read_key(&mut self.reader)?;
-            let (kind, len) = Type::read(&mut self.reader)?;
-            let result_stack_depth = self.stack.depth();
-            self.stack.push(TypeOrEntry::Type(kind), len)?;
-            // If this is the requested `(name, type)`, yield it
-            if (key == self.field_name.as_bytes()) && (kind == self.kind) {
-              // Check if this was unexpectedly an array
-              // Note this is imperfect in that an array of length 1 will be accepted as a unit
-              if matches!(self.array, Array::Unit) && (len != 1) {
-                Err(EpeeError::ArrayWhenUnit)?;
-              }
-              result = Some(((len, self.reader), result_stack_depth));
-            }
-          }
-        }
-
-        if let Some(((epee_len, bytes), stack_depth)) = result {
-          if stack_depth == self.stack.depth() {
-            let remaining_bytes = self.reader.len();
-            let bytes_used_by_field = bytes.len() - remaining_bytes;
-            return Ok(Some((epee_len, &bytes[.. bytes_used_by_field])));
-          }
-        }
+impl<'a> SnapshottedStack<'a> {
+  /// Execute a single step of the decoding algorithm.
+  ///
+  /// Returns `Some((kind, len))` if an entry was read, or `None` otherwise. This also returns
+  /// `None` if the stack is empty.
+  pub(crate) fn single_step(
+    &mut self,
+    encoding: &mut &[u8],
+  ) -> Result<Option<(Type, u64)>, EpeeError> {
+    let Some(kind) = self.pop() else {
+      return Ok(None);
+    };
+    match kind {
+      TypeOrEntry::Type(Type::Int64) => {
+        read_bytes(encoding, core::mem::size_of::<i64>())?;
       }
-
-      if !self.reader.is_empty() {
-        Err(EpeeError::TrailingBytes(self.reader.len()))?;
+      TypeOrEntry::Type(Type::Int32) => {
+        read_bytes(encoding, core::mem::size_of::<i32>())?;
       }
+      TypeOrEntry::Type(Type::Int16) => {
+        read_bytes(encoding, core::mem::size_of::<i16>())?;
+      }
+      TypeOrEntry::Type(Type::Int8) => {
+        read_bytes(encoding, core::mem::size_of::<i8>())?;
+      }
+      TypeOrEntry::Type(Type::Uint64) => {
+        read_bytes(encoding, core::mem::size_of::<u64>())?;
+      }
+      TypeOrEntry::Type(Type::Uint32) => {
+        read_bytes(encoding, core::mem::size_of::<u32>())?;
+      }
+      TypeOrEntry::Type(Type::Uint16) => {
+        read_bytes(encoding, core::mem::size_of::<u16>())?;
+      }
+      TypeOrEntry::Type(Type::Uint8) => {
+        read_bytes(encoding, core::mem::size_of::<u8>())?;
+      }
+      TypeOrEntry::Type(Type::Double) => {
+        read_bytes(encoding, core::mem::size_of::<f64>())?;
+      }
+      TypeOrEntry::Type(Type::String) => {
+        read_str(encoding)?;
+      }
+      TypeOrEntry::Type(Type::Bool) => {
+        read_bytes(encoding, core::mem::size_of::<bool>())?;
+      }
+      TypeOrEntry::Type(Type::Object) => {
+        let amount_of_entries = read_varint(encoding)?;
+        self.push(TypeOrEntry::Entry, amount_of_entries)?;
+      }
+      TypeOrEntry::Entry => {
+        let _entry_key = read_key(encoding)?;
+        let (kind, len) = Type::read(encoding)?;
+        self.push(TypeOrEntry::Type(kind), len)?;
+        return Ok(Some((kind, len)));
+      }
+    }
+    Ok(None)
+  }
 
-      Ok(None)
-    })()
-    .transpose()
+  /// Step through the entirety of the next item.
+  ///
+  /// Returns `None` if the stack is empty.
+  pub(crate) fn step(&mut self, encoding: &mut &[u8]) -> Result<Option<()>, EpeeError> {
+    let Some((kind, len)) = self.peek() else { return Ok(None) };
+    let current_stack_depth = self.depth();
+    /*
+      We stop at the next item at the same depth, unless this is the last object in an
+      object/array, in which case the same depth of the stack is used for _both_ the item's
+      definition _and_ its innards (due to popping the item's definition, then pushing the
+      innards).
+    */
+    let stop_at_stack_depth = if ((kind, len.get()) == (TypeOrEntry::Entry, 1)) ||
+      (kind, len.get()) == (TypeOrEntry::Type(Type::Object), 1)
+    {
+      // We could peek at an item on the stack, therefore it has an item
+      current_stack_depth - 1
+    } else {
+      current_stack_depth
+    };
+
+    while {
+      self.single_step(encoding)?;
+      self.depth() != stop_at_stack_depth
+    } {}
+
+    Ok(Some(()))
+  }
+
+  pub(crate) fn entry(
+    &mut self,
+    encoding: &mut &[u8],
+    key: &str,
+  ) -> Result<Option<(Type, u64)>, EpeeError> {
+    let Some((kind, len)) = self.peek() else { return Ok(None) };
+    if kind != TypeOrEntry::Entry {
+      Err(EpeeError::TypeError)?;
+    }
+
+    // Iterate through the entries for one with a matching key
+    for _ in 0 .. len.get() {
+      /*
+        NOTE: EPEE would check no duplicate keys are present here, while we simply follow the first
+        instance.
+      */
+      if read_key(&mut *encoding).ok() == Some(key.as_bytes()) {
+        break;
+      }
+      self.step(encoding)?;
+    }
+
+    self.single_step(encoding)
   }
 }

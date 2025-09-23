@@ -13,7 +13,7 @@
 */
 use core::num::NonZero;
 
-use crate::{EpeeError, TypeOrEntry};
+use crate::{EpeeError, Type, TypeOrEntry};
 
 // https://github.com/monero-project/monero/blob/8d4c625713e3419573dfcc7119c8848f47cabbaa/
 //   contrib/epee/include/storages/portable_storage_from_bin.h#L42
@@ -43,7 +43,7 @@ const _ASSERT_SINGLE_BYTE_TYPE_OR_ENTRY: [(); 1 - core::mem::size_of::<TypeOrEnt
 /// A non-allocating `Vec`.
 ///
 /// This has a maximum depth premised on the bound for an EPEE's object depth.
-pub(crate) struct Stack {
+struct Stack {
   /*
     We represent items to decode as `(TypeOrEntry, u64)` so that if told to decode a vector with
     one billion entries, we don't have to allocate
@@ -63,7 +63,7 @@ pub(crate) struct Stack {
   /// This is analogous to the length of a `Vec`, yet we use the term `depth` to distinguish how it
   /// tracks the depth of an object, not the amount of items present (which would be a function of
   /// depth and width, as noted above).
-  depth: usize,
+  depth: u8,
 }
 
 /*
@@ -75,7 +75,7 @@ const _ASSERT_KIBIBYTE_STACK: [(); 1024 - core::mem::size_of::<Stack>()] =
   [(); 1024 - core::mem::size_of::<Stack>()];
 
 impl Stack {
-  pub(crate) fn new(initial_item: (TypeOrEntry, u64)) -> Self {
+  fn new(initial_item: (TypeOrEntry, u64)) -> Self {
     /*
       Zero-initialize the arrays.
 
@@ -103,13 +103,27 @@ impl Stack {
 
   /// The current stack depth.
   #[inline(always)]
-  pub(crate) fn depth(&self) -> usize {
-    self.depth
+  fn depth(&self) -> usize {
+    usize::from(self.depth)
+  }
+
+  /// Peek the current item on the stack.
+  fn peek(&self) -> Option<(TypeOrEntry, NonZero<u64>)> {
+    let i = self.depth().checked_sub(1)?;
+    Some((self.types[i], self.amounts[i]))
+  }
+
+  /// Peek the next item from the stack if it has at least the specified depth.
+  fn peek_with_minimum_depth(&self, depth: u8) -> Option<(TypeOrEntry, NonZero<u64>)> {
+    if self.depth < depth {
+      None?;
+    }
+    self.peek()
   }
 
   /// Pop the next item from the stack.
-  pub(crate) fn pop(&mut self) -> Option<TypeOrEntry> {
-    let i = self.depth.checked_sub(1)?;
+  fn pop(&mut self) -> Option<TypeOrEntry> {
+    let i = self.depth().checked_sub(1)?;
 
     let kind = self.types[i];
 
@@ -125,10 +139,18 @@ impl Stack {
     Some(kind)
   }
 
+  /// Pop the next item from the stack if it has at least the specified depth.
+  fn pop_with_minimum_depth(&mut self, depth: u8) -> Option<TypeOrEntry> {
+    if self.depth < depth {
+      None?;
+    }
+    self.pop()
+  }
+
   /// Push an item onto the stack.
-  pub(crate) fn push(&mut self, kind: TypeOrEntry, amount: u64) -> Result<(), EpeeError> {
+  fn push(&mut self, kind: TypeOrEntry, amount: u64) -> Result<(), EpeeError> {
     // Assert the maximum depth for an object
-    if self.depth == MAX_OBJECT_DEPTH {
+    if self.depth() == MAX_OBJECT_DEPTH {
       Err(EpeeError::DepthLimitExceeded)?;
     }
 
@@ -138,10 +160,155 @@ impl Stack {
     };
 
     // These will not panic due to our depth check at the start of the function
-    self.types[self.depth] = kind;
-    self.amounts[self.depth] = amount;
+    self.types[self.depth()] = kind;
+    self.amounts[self.depth()] = amount;
     self.depth += 1;
 
     Ok(())
+  }
+
+  /// Create a snapshot of the current stack.
+  fn snapshot(&self) -> Snapshot {
+    Snapshot {
+      tail: self.peek().unwrap_or((TypeOrEntry::Entry, NonZero::<u64>::MIN)),
+      depth: self.depth,
+    }
+  }
+}
+
+/// A snapshot of a stack.
+///
+/// A snapshot preserves the tail of the stack at the time of its creation. This allows quickly
+/// reverting a stack to its snapshot so long as no elements before the tail have been mutated.
+#[derive(Clone, Copy)]
+struct Snapshot {
+  tail: (TypeOrEntry, NonZero<u64>),
+  depth: u8,
+}
+
+/// A stack which has had a snapshot taken.
+pub(crate) struct SnapshottedStack<'a> {
+  stack: &'a mut Stack,
+  snapshot: Snapshot,
+}
+
+impl<'a> SnapshottedStack<'a> {
+  /// Associate a stack with a snapshot.
+  ///
+  /// The caller is responsible for ensuring these are related and that no elements before the tail
+  /// as of when the snapshot was taken have been mutated. The methods on this struct help to
+  /// ensure that.
+  fn associate(stack: &'a mut Stack, snapshot: Snapshot) -> Self {
+    Self { stack, snapshot }
+  }
+
+  /// The depth of the stack.
+  pub(crate) fn depth(&self) -> usize {
+    usize::from(self.stack.depth)
+  }
+
+  /// Push an element onto the stack.
+  pub(crate) fn push(&mut self, kind: TypeOrEntry, amount: u64) -> Result<(), EpeeError> {
+    self.stack.push(kind, amount)
+  }
+
+  /// Peek the next item on the stack.
+  ///
+  /// This will return `None` if `pop` would return `None`.
+  pub(crate) fn peek(&self) -> Option<(TypeOrEntry, NonZero<u64>)> {
+    self.stack.peek_with_minimum_depth(self.snapshot.depth)
+  }
+
+  /// Pop the next item from the stack.
+  ///
+  /// This will return `None` if the stack is empty or if this would mutate an element preceding
+  /// the snapshot.
+  pub(crate) fn pop(&mut self) -> Option<TypeOrEntry> {
+    self.stack.pop_with_minimum_depth(self.snapshot.depth)
+  }
+}
+
+/// An index into an EPEE object.
+///
+/// Due to how this library implements a lazy decoding strategy, to find a field is to advance to
+/// the field, preventing reading two fields within the same object _unless_ they're read in order
+/// (when EPEE is an unordered encoding). We solve this by taking snapshots of the stack before
+/// each index, allowing us to reset the stack after each index operation.
+///
+/// The index uses a single stack across all operations to ensure a fixed amount of memory is
+/// consumed.
+pub(crate) struct Index<'a> {
+  stack: Stack,
+  encoding: &'a [u8],
+  snapshot_types: [TypeOrEntry; MAX_OBJECT_DEPTH],
+  snapshot_amounts: [NonZero<u64>; MAX_OBJECT_DEPTH],
+  snapshot_depths: [u8; MAX_OBJECT_DEPTH],
+  snapshot_encoding_locations: [usize; MAX_OBJECT_DEPTH],
+  depth: u8,
+}
+
+#[cfg(test)]
+const _ASSERT_THREE_KIBIBYTE_INDEX: [(); (3 * 1024) - core::mem::size_of::<Index>()] =
+  [(); (3 * 1024) - core::mem::size_of::<Index>()];
+
+impl<'a> Index<'a> {
+  /// Create a new index for a root-level object.
+  pub(crate) fn root_object(encoding: &'a [u8]) -> Self {
+    let stack = Stack::new((TypeOrEntry::Type(Type::Object), 1));
+
+    let snapshot = stack.snapshot();
+    Self {
+      stack,
+      encoding,
+      snapshot_types: [snapshot.tail.0; MAX_OBJECT_DEPTH],
+      snapshot_amounts: [snapshot.tail.1; MAX_OBJECT_DEPTH],
+      snapshot_depths: [snapshot.depth; MAX_OBJECT_DEPTH],
+      snapshot_encoding_locations: [0; MAX_OBJECT_DEPTH],
+      depth: 1,
+    }
+  }
+
+  /// Advance the index.
+  ///
+  /// This SHOULD be done with distinct containers as the amount of snapshots is limited by the
+  /// maximum depth of an object. Accordingly, creating multiple snapshots at the same depth will
+  /// lead to exhaustion before the actual depth limit is reached.
+  pub(crate) fn advance<'b>(
+    &'b mut self,
+    current_encoding_len: usize,
+  ) -> Result<SnapshottedStack<'b>, EpeeError> {
+    let snapshot = self.stack.snapshot();
+    let depth = usize::from(self.depth);
+    if depth == MAX_OBJECT_DEPTH {
+      Err(EpeeError::DepthLimitExceeded)?;
+    }
+    self.snapshot_types[depth] = snapshot.tail.0;
+    self.snapshot_amounts[depth] = snapshot.tail.1;
+    self.snapshot_depths[depth] = snapshot.depth;
+    self.snapshot_encoding_locations[depth] =
+      self.encoding.len().saturating_sub(current_encoding_len);
+    self.depth += 1;
+    Ok(SnapshottedStack::associate(&mut self.stack, snapshot))
+  }
+
+  /// Revert the index.
+  ///
+  /// Returns the encoding claimed to be the current state when the index was advanced.
+  ///
+  /// Has undefined, yet memory-safe/panic-free, behavior if no snapshot is present.
+  pub(crate) fn revert(&mut self) -> &'a [u8] {
+    // Decrement the snapshot depth
+    self.depth = self.depth.saturating_sub(1);
+    let depth = usize::from(self.depth);
+
+    // Revert the stack
+    let stack_depth = self.snapshot_depths[depth];
+    self.stack.depth = stack_depth;
+    let stack_depth = usize::from(stack_depth);
+    self.stack.types[stack_depth - 1] = self.snapshot_types[depth];
+    self.stack.amounts[stack_depth - 1] = self.snapshot_amounts[depth];
+
+    // Return the prior encoding
+    &self.encoding[self.snapshot_encoding_locations[depth] ..]
   }
 }

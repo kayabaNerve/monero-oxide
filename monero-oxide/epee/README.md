@@ -18,17 +18,15 @@ At this time, we do not support:
 - Encoding objects
 - Decoding objects into typed data structures
 
-Instead, we support iterating through `epee`-encoded values and finding all
-instances of a field. This lets the caller jump to the binary blob representing
-an encoded value, and decode it themselves, without us actually deserializing
-the entire object. If we were to do that, we'd presumably require something
-akin to `serde_json::Value` or a proc macro. This is sufficient for basic
-needs, much simpler, and should be trivial to verify it won't panic/face
-various exhaustion attacks. This library is implemented without recursion.
+Instead, we support indexing `epee`-encoded values and decoding individual
+fields in a manner comparable to `serde_json::Value` (albeit without
+allocating, recursing, or using a proc macro). This is sufficient for basic
+needs, much simpler, and should be trivial to verify won't panic/face various
+exhaustion attacks compared to more complex implementations.
 
 Because of this, we are also able to support no-`std` and no-`alloc`, without
-any dependencies other than `core`, while only consuming approximately a
-kibibyte of memory on the stack.
+any dependencies other than `core`, while only consuming approximately three
+kibibytes of memory on the stack.
 
 For a more functional library, please check out
 [`cuprate-epee-encoding`](
