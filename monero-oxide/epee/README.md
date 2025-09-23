@@ -5,14 +5,16 @@ any official documentation. The best specification is available [here](
   https://github.com/jeffro256/serde_epee/tree/cbebe75475fb2c6073f7b2e058c88ceb2531de17PORTABLE_STORAGE.md
 ).
 
-This library implements the `epee` 'portable storage' encoding, with the
-following exceptions:
-- We don't support the `Array` type (type 13) as it's unused and lacking
-  documentation
-- We may accept a _wider_ class of inputs than the `epee` library itself due to
-  slight differences in depth limits on nested objects
+This library implements the `epee` 'portable storage' encoding (itself referred
+to as EPEE throughout this library), with the following exceptions:
+- We don't support the `Array` type (type 13) as it's unused in practice and
+  lacking documentation
+- We may accept a _wider_ class of inputs than the `epee` library itself. Our
+  definition of compatibility is explicitly if we can decode anything encoded
+  by the `epee` library and all encodings we produce may be decoded by the
+  `epee` library
 
-We do not support:
+At this time, we do not support:
 - Encoding objects
 - Decoding objects into typed data structures
 
