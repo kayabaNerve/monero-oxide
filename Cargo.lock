@@ -878,6 +878,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "monero-epee"
+version = "0.1.0"
+
+[[package]]
 name = "monero-generators"
 version = "0.4.0"
 dependencies = [
