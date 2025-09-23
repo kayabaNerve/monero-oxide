@@ -82,7 +82,7 @@ impl Type {
     // Flatten non-array values to an array of length one
     /*
       TODO: Will `epee` proper return an error if an array of length one is specified for a unit
-      type? This wouldn't break out definition of compatibility yet should be revisited.
+      type? This wouldn't break our definition of compatibility yet should be revisited.
     */
     let len = if array != 0 { read_varint(reader)? } else { 1 };
 
@@ -209,7 +209,8 @@ impl<'a> SnapshottedStack<'a> {
     for _ in 0 .. len.get() {
       /*
         NOTE: EPEE would check no duplicate keys are present here, while we simply follow the first
-        instance.
+        instance. This is allowed by our definition of compatibility, and such a check could
+        presumably only be implemented with a `O(n^2)` pass or allocating, hence its omission.
       */
       if read_key(&mut *encoding).ok() == Some(key.as_bytes()) {
         break;

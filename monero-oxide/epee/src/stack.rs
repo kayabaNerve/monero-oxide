@@ -108,6 +108,7 @@ impl Stack {
   }
 
   /// Peek the current item on the stack.
+  #[inline(always)]
   fn peek(&self) -> Option<(TypeOrEntry, NonZero<u64>)> {
     let i = self.depth().checked_sub(1)?;
     Some((self.types[i], self.amounts[i]))
@@ -140,6 +141,7 @@ impl Stack {
   }
 
   /// Pop the next item from the stack if it has at least the specified depth.
+  #[inline(always)]
   fn pop_with_minimum_depth(&mut self, depth: u8) -> Option<TypeOrEntry> {
     if self.depth < depth {
       None?;
@@ -168,6 +170,7 @@ impl Stack {
   }
 
   /// Create a snapshot of the current stack.
+  #[inline(always)]
   fn snapshot(&self) -> Snapshot {
     Snapshot {
       tail: self.peek().unwrap_or((TypeOrEntry::Entry, NonZero::<u64>::MIN)),
@@ -198,16 +201,19 @@ impl<'a> SnapshottedStack<'a> {
   /// The caller is responsible for ensuring these are related and that no elements before the tail
   /// as of when the snapshot was taken have been mutated. The methods on this struct help to
   /// ensure that.
+  #[inline(always)]
   fn associate(stack: &'a mut Stack, snapshot: Snapshot) -> Self {
     Self { stack, snapshot }
   }
 
   /// The depth of the stack.
+  #[inline(always)]
   pub(crate) fn depth(&self) -> usize {
     usize::from(self.stack.depth)
   }
 
   /// Push an element onto the stack.
+  #[inline(always)]
   pub(crate) fn push(&mut self, kind: TypeOrEntry, amount: u64) -> Result<(), EpeeError> {
     self.stack.push(kind, amount)
   }
@@ -215,6 +221,7 @@ impl<'a> SnapshottedStack<'a> {
   /// Peek the next item on the stack.
   ///
   /// This will return `None` if `pop` would return `None`.
+  #[inline(always)]
   pub(crate) fn peek(&self) -> Option<(TypeOrEntry, NonZero<u64>)> {
     self.stack.peek_with_minimum_depth(self.snapshot.depth)
   }
@@ -223,6 +230,7 @@ impl<'a> SnapshottedStack<'a> {
   ///
   /// This will return `None` if the stack is empty or if this would mutate an element preceding
   /// the snapshot.
+  #[inline(always)]
   pub(crate) fn pop(&mut self) -> Option<TypeOrEntry> {
     self.stack.pop_with_minimum_depth(self.snapshot.depth)
   }

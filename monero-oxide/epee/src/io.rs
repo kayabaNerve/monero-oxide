@@ -5,6 +5,7 @@ use crate::EpeeError;
 /// Read a fixed amount of bytes from the slice.
 ///
 /// This will return `Ok(slice)` where `slice` is the expected length or `Err(_)`.
+#[inline(always)]
 pub(crate) fn read_bytes<'a>(reader: &mut &'a [u8], bytes: usize) -> Result<&'a [u8], EpeeError> {
   if reader.len() < bytes {
     Err(EpeeError::Short(bytes))?;
@@ -14,6 +15,7 @@ pub(crate) fn read_bytes<'a>(reader: &mut &'a [u8], bytes: usize) -> Result<&'a 
   Ok(res)
 }
 
+#[inline(always)]
 pub(crate) fn read_byte(reader: &mut &[u8]) -> Result<u8, EpeeError> {
   Ok(read_bytes(reader, 1)?[0])
 }
@@ -47,6 +49,7 @@ pub(crate) fn read_varint(reader: &mut &[u8]) -> Result<u64, EpeeError> {
 }
 
 /// Read a string per EPEE's definition.
+#[inline(always)]
 pub(crate) fn read_str<'a>(reader: &mut &'a [u8]) -> Result<&'a [u8], EpeeError> {
   let len = usize::try_from(read_varint(reader)?).map_err(|_| EpeeError::Short(usize::MAX))?;
   if reader.len() < len {

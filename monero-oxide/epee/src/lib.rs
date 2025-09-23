@@ -54,6 +54,7 @@ pub struct EpeeEntry<'a> {
   len: u64,
 }
 impl<'a> Drop for EpeeEntry<'a> {
+  #[inline(always)]
   fn drop(&mut self) {
     let prior_encoding_state = self.root.index.revert();
     self.root.current_encoding_state = prior_encoding_state;
@@ -102,12 +103,14 @@ impl<'a> Epee<'a> {
 
 impl<'a> EpeeEntry<'a> {
   /// The type of object this entry represents.
+  #[inline(always)]
   pub fn kind(&self) -> Type {
     self.kind
   }
 
   /// The amount of items present within this entry.
   #[allow(clippy::len_without_is_empty)]
+  #[inline(always)]
   pub fn len(&self) -> u64 {
     self.len
   }
@@ -146,6 +149,7 @@ impl<'a> EpeeEntry<'a> {
     Ok(Some(EpeeEntry { root: self.root, kind: self.kind, len: 1 }))
   }
 
+  #[inline(always)]
   fn as_primitive<T>(&self, kind: Type) -> Result<&[u8], EpeeError> {
     if (self.kind != kind) || (self.len != 1) {
       Err(EpeeError::TypeError)?;
@@ -154,51 +158,61 @@ impl<'a> EpeeEntry<'a> {
   }
 
   /// Get the current item as an `i64`.
+  #[inline(always)]
   pub fn as_i64(&self) -> Result<i64, EpeeError> {
     Ok(i64::from_le_bytes(self.as_primitive::<i64>(Type::Int64)?.try_into().unwrap()))
   }
 
   /// Get the current item as an `i32`.
+  #[inline(always)]
   pub fn as_i32(&self) -> Result<i32, EpeeError> {
     Ok(i32::from_le_bytes(self.as_primitive::<i32>(Type::Int32)?.try_into().unwrap()))
   }
 
   /// Get the current item as an `i16`.
+  #[inline(always)]
   pub fn as_i16(&self) -> Result<i16, EpeeError> {
     Ok(i16::from_le_bytes(self.as_primitive::<i16>(Type::Int16)?.try_into().unwrap()))
   }
 
   /// Get the current item as an `i8`.
+  #[inline(always)]
   pub fn as_i8(&self) -> Result<i8, EpeeError> {
     Ok(i8::from_le_bytes(self.as_primitive::<i8>(Type::Int8)?.try_into().unwrap()))
   }
 
   /// Get the current item as a `u64`.
+  #[inline(always)]
   pub fn as_u64(&self) -> Result<u64, EpeeError> {
     Ok(u64::from_le_bytes(self.as_primitive::<u64>(Type::Uint64)?.try_into().unwrap()))
   }
 
   /// Get the current item as a `u32`.
+  #[inline(always)]
   pub fn as_u32(&self) -> Result<u32, EpeeError> {
     Ok(u32::from_le_bytes(self.as_primitive::<u32>(Type::Uint32)?.try_into().unwrap()))
   }
 
   /// Get the current item as a `u16`.
+  #[inline(always)]
   pub fn as_u16(&self) -> Result<u16, EpeeError> {
     Ok(u16::from_le_bytes(self.as_primitive::<u16>(Type::Uint16)?.try_into().unwrap()))
   }
 
   /// Get the current item as a `u8`.
+  #[inline(always)]
   pub fn as_u8(&self) -> Result<u8, EpeeError> {
     Ok(self.as_primitive::<u8>(Type::Uint8)?[0])
   }
 
   /// Get the current item as an `f64`.
+  #[inline(always)]
   pub fn as_f64(&self) -> Result<f64, EpeeError> {
     Ok(f64::from_le_bytes(self.as_primitive::<f64>(Type::Double)?.try_into().unwrap()))
   }
 
   /// Get the current item as a 'string' (represented as a `&[u8]`).
+  #[inline(always)]
   pub fn as_str(&self) -> Result<&[u8], EpeeError> {
     if (self.kind != Type::String) || (self.len != 1) {
       Err(EpeeError::TypeError)?;
@@ -209,6 +223,7 @@ impl<'a> EpeeEntry<'a> {
   /// Get the current item as a 'string' (represented as a `&[u8]`) of a specific length.
   ///
   /// This will error if the result is not actually the expected length.
+  #[inline(always)]
   pub fn as_fixed_len_str(&self, len: usize) -> Result<&[u8], EpeeError> {
     let str = self.as_str()?;
     if str.len() != len {
@@ -218,6 +233,7 @@ impl<'a> EpeeEntry<'a> {
   }
 
   /// Get the current item as a `bool`.
+  #[inline(always)]
   pub fn as_bool(&self) -> Result<bool, EpeeError> {
     Ok(self.as_primitive::<bool>(Type::Bool)?[0] != 0)
   }
