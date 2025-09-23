@@ -265,6 +265,12 @@ impl Extra {
   /// Applications SHOULD include arbitrary data indistinguishable from random, of a popular length
   /// (such as padded to the next power of two or the maximum length per chunk) IF arbitrary data
   /// is included at all.
+  ///
+  /// For applications where indistinguishability from 'regular' Monero transactions is required,
+  /// steganography should be considered. Steganography is somewhat-frowned upon however due to it
+  /// bloating the Monero blockchain however and efficient methods are likely specific to
+  /// individual hard forks. They may also have their own privacy implications, which is why no
+  /// methods of stegnography are supported outright by `monero-wallet`.
   pub fn arbitrary_data(&self) -> Vec<Vec<u8>> {
     // Only parse arbitrary data from the amount of extra data accepted under the relay rule
     let serialized = self.serialize();
