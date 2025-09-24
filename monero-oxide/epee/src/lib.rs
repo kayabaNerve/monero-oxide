@@ -50,14 +50,17 @@ pub struct Epee<'a> {
 /// An item with an EPEE-encoded object.
 pub struct EpeeEntry<'a> {
   root: &'a mut Epee<'a>,
+  revert_on_drop: bool,
   kind: Type,
   len: u64,
 }
 impl<'a> Drop for EpeeEntry<'a> {
   #[inline(always)]
   fn drop(&mut self) {
-    let prior_encoding_state = self.root.index.revert();
-    self.root.current_encoding_state = prior_encoding_state;
+    if self.revert_on_drop {
+      let prior_encoding_state = self.root.index.revert();
+      self.root.current_encoding_state = prior_encoding_state;
+    }
   }
 }
 
@@ -97,7 +100,45 @@ impl<'a> Epee<'a> {
     }) else {
       return Ok(None);
     };
-    Ok(Some(EpeeEntry { root: self, kind, len }))
+    Ok(Some(EpeeEntry { root: self, revert_on_drop: true, kind, len }))
+  }
+}
+
+/// An iterator over an array.
+pub struct ArrayIterator<'a> {
+  root: &'a mut Epee<'a>,
+  kind: Type,
+  len: u64,
+  advance: bool,
+}
+impl<'a> Drop for ArrayIterator<'a> {
+  #[inline(always)]
+  fn drop(&mut self) {
+    let prior_encoding_state = self.root.index.revert();
+    self.root.current_encoding_state = prior_encoding_state;
+  }
+}
+
+impl<'a> ArrayIterator<'a> {
+  /// The next item within the array.
+  ///
+  /// This is approximate to `Iterator::next` yet each item maintains a mutable reference to the
+  /// iterator. Accordingly, we cannot use `Iterator::next` which requires items not borrow from
+  /// the iterator.
+  #[allow(clippy::should_implement_trait)]
+  pub fn next(&'a mut self) -> Option<Result<EpeeEntry<'a>, EpeeError>> {
+    // If we've prior iterated, advance the decoder past the prior yielded item
+    if self.advance {
+      match self.root.index.snapshotted_stack().step(&mut self.root.current_encoding_state) {
+        Ok(_) => {}
+        Err(e) => return Some(Err(e)),
+      }
+    }
+
+    let res = EpeeEntry { root: self.root, revert_on_drop: false, kind: self.kind, len: 1 };
+    self.len = self.len.checked_sub(1)?;
+    self.advance = true;
+    Some(Ok(res))
   }
 }
 
@@ -133,20 +174,17 @@ impl<'a> EpeeEntry<'a> {
     }) else {
       return Ok(None);
     };
-    Ok(Some(EpeeEntry { root: self.root, kind, len }))
+    Ok(Some(EpeeEntry { root: self.root, revert_on_drop: true, kind, len }))
   }
 
-  /// Get an entry within this array.
-  pub fn index(&'a mut self, index: u64) -> Result<Option<EpeeEntry<'a>>, EpeeError> {
-    if index >= self.len {
-      return Ok(None);
-    }
-
-    let mut snapshotted_stack = self.root.index.advance(self.root.current_encoding_state.len())?;
-    for _ in 0 .. index {
-      snapshotted_stack.step(&mut self.root.current_encoding_state)?;
-    }
-    Ok(Some(EpeeEntry { root: self.root, kind: self.kind, len: 1 }))
+  /// Get an iterator of all items within this container.
+  ///
+  /// If you want to index a specific item, you may use `.iterate()?.nth(i)?`. An `index` method
+  /// isn't provided as each index operation is of O(n) complexity and single indexes SHOULD NOT be
+  /// used. Only exposing `iterate` attempts to make this clear to the user.
+  pub fn iterate(&'a mut self) -> Result<ArrayIterator<'a>, EpeeError> {
+    let _snapshotted_stack = self.root.index.advance(self.root.current_encoding_state.len())?;
+    Ok(ArrayIterator { root: self.root, kind: self.kind, len: self.len, advance: false })
   }
 
   #[inline(always)]

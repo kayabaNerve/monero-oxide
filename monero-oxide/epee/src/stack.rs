@@ -299,6 +299,28 @@ impl<'a> Index<'a> {
     Ok(SnapshottedStack::associate(&mut self.stack, snapshot))
   }
 
+  /// Fetch the most recent snapshot.
+  ///
+  /// Returns garbage, but doesn't panic, if there is no snapshot,
+  fn last_snapshot(&self) -> Snapshot {
+    let depth = usize::from(self.depth.saturating_sub(1));
+    Snapshot {
+      tail: (self.snapshot_types[depth], self.snapshot_amounts[depth]),
+      depth: self.snapshot_depths[depth],
+    }
+  }
+
+  /// Obtain a `SnapshottedStack` from the most recent snapshot.
+  ///
+  /// `SnapshottedStack` cannot live simultaneously with a borrowed index due to both maintaining a
+  /// mutable reference to the `Stack`. This function allows a `SnapshottedStack` to be dropped, so
+  /// a mutable reference to the `Index` may be preserved, yet a `SnapshottedStack` may still be
+  /// acquired later.
+  pub(crate) fn snapshotted_stack<'b>(&'b mut self) -> SnapshottedStack<'b> {
+    let snapshot = self.last_snapshot();
+    SnapshottedStack::associate(&mut self.stack, snapshot)
+  }
+
   /// Revert the index.
   ///
   /// Returns the encoding claimed to be the current state when the index was advanced.
