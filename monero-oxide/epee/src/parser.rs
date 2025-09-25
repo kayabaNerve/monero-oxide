@@ -179,11 +179,14 @@ impl Stack {
     &mut self,
     encoding: &mut B,
   ) -> Result<Option<()>, EpeeError> {
-    let Some((kind, len)) = self.peek() else { return Ok(None) };
+    let Some((_kind, len)) = self.peek() else { return Ok(None) };
+
     let current_stack_depth = self.depth();
+    // Read until the next item within this array
     let stop_at_stack_depth = if len.get() > 1 {
       current_stack_depth
     } else {
+      // Read until we've popped this item entirely
       // We could peek at an item on the stack, therefore it has an item
       current_stack_depth - 1
     };
