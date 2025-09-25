@@ -77,9 +77,10 @@ impl<'a> FieldIterator<'a> {
   /// iterator. Accordingly, we cannot use `Iterator::next` which requires items not borrow from
   /// the iterator.
   #[allow(clippy::should_implement_trait)]
-  pub fn next<'b>(&'b mut self) -> Option<Result<(&'b [u8], EpeeEntry<'b>), EpeeError>>
+  pub fn next<'b, 'c>(&'c mut self) -> Option<Result<(&'b [u8], EpeeEntry<'b>), EpeeError>>
   where
-    'a: 'b,
+    'a: 'b + 'c,
+    'c: 'b,
   {
     // If we've prior iterated, advance the decoder past the prior yielded item
     if self.advance {
@@ -104,7 +105,7 @@ impl<'a> FieldIterator<'a> {
       EpeeEntry::<'b> {
         // See `Index::shorten_lifetime`
         current_encoding_state: unsafe {
-          core::mem::transmute::<&'b mut &'a [u8], &'b mut &'b [u8]>(
+          core::mem::transmute::<&'c mut &'a [u8], &'b mut &'b [u8]>(
             &mut self.current_encoding_state,
           )
         },
@@ -183,9 +184,10 @@ impl<'a> ArrayIterator<'a> {
   /// iterator. Accordingly, we cannot use `Iterator::next` which requires items not borrow from
   /// the iterator.
   #[allow(clippy::should_implement_trait)]
-  pub fn next<'b>(&'b mut self) -> Option<Result<EpeeEntry<'b>, EpeeError>>
+  pub fn next<'b, 'c>(&'c mut self) -> Option<Result<EpeeEntry<'b>, EpeeError>>
   where
-    'a: 'b,
+    'a: 'b + 'c,
+    'c: 'b,
   {
     // If we've prior iterated, advance the decoder past the prior yielded item
     if self.advance {
@@ -200,7 +202,7 @@ impl<'a> ArrayIterator<'a> {
     Some(Ok(EpeeEntry::<'b> {
       // See `Index::shorten_lifetime`
       current_encoding_state: unsafe {
-        core::mem::transmute::<&'b mut &'a [u8], &'b mut &'b [u8]>(&mut self.current_encoding_state)
+        core::mem::transmute::<&'c mut &'a [u8], &'b mut &'b [u8]>(&mut self.current_encoding_state)
       },
       index: self.index.shorten_lifetime(),
       kind: self.kind,
