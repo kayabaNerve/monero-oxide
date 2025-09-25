@@ -1,5 +1,3 @@
-use core::fmt::Display;
-
 #[allow(unused_imports)]
 use std_shims::prelude::*;
 
@@ -9,88 +7,25 @@ use monero_oxide::{
   block::Block,
 };
 
+use monero_epee::{EpeeError as OriginalEpeeError, EpeeEntry, Epee};
+pub(crate) use monero_epee::{HEADER, Type, Array};
+
 use crate::{InterfaceError, RingCtOutputInformation};
 
-mod compliant;
-use compliant::{EpeeError, read_varint, seek_all};
-pub(crate) use compliant::{HEADER, Type, Array};
+pub(crate) const VERSION: u8 = 1;
 
+struct EpeeError(OriginalEpeeError);
 impl From<EpeeError> for InterfaceError {
   fn from(err: EpeeError) -> InterfaceError {
-    InterfaceError::InvalidInterface(format!("EpeeError::{err:?}"))
+    InterfaceError::InvalidInterface(format!("EpeeError::{:?}", err.0))
   }
-}
-
-/// Seek the _only_ instance of a field with the desired `(type, name)`.
-///
-/// This yields the length of the item _as an `epee` value_ and a slice for the bytes of the
-/// `epee`-encoded item, or `None` if no instances were found. This will validate the resulting
-/// item is complete to the claimed length.
-///
-/// Errors if multiple instances of the field are found.
-fn seek_once<'a>(
-  reader: &'a [u8],
-  kind: Type,
-  array: Array,
-  field_name: &'static str,
-) -> Result<Option<(u64, &'a [u8])>, InterfaceError> {
-  let mut iter = seek_all(reader, kind, array, field_name)?;
-  let result = iter.next().transpose()?;
-  // Check no other instances exist
-  if iter.next().is_some() {
-    Err(InterfaceError::InvalidInterface(
-      "field was present multiple times within `epee`-encoded value".to_string(),
-    ))?;
-  }
-  Ok(result)
-}
-
-/// A helper to access the data within an `epee` string.
-///
-/// If `expected_len = Some(_)`, the length of the string is checked to align.
-fn decapsulate_string(
-  mut string: &[u8],
-  expected_len: Option<usize>,
-) -> Result<&[u8], InterfaceError> {
-  let declared_len = read_varint(&mut string)?;
-  if declared_len != u64::try_from(string.len()).expect("byte buffer had length exceeding 2**64?") {
-    Err(InterfaceError::InvalidInterface(format!(
-      "string with declared length of {declared_len} had {} bytes",
-      string.len()
-    )))?;
-  }
-  if let Some(expected_len) = expected_len {
-    if string.len() != expected_len {
-      Err(InterfaceError::InvalidInterface(format!(
-        "string had length {} when {expected_len} was expected",
-        string.len()
-      )))?;
-    }
-  }
-  Ok(string)
-}
-
-fn decapsulate_thirty_two_byte_array_from_string(
-  string: &[u8],
-) -> Result<[u8; 32], InterfaceError> {
-  Ok(
-    decapsulate_string(string, Some(32))?
-      .try_into()
-      .expect("32-byte string couldn't be converted to 32-byte array"),
-  )
 }
 
 /// Read a `Vec<u64>` from a `epee`-encoded buffer.
 ///
 /// This assumes the claimed length is actually present within the byte buffer. This will be the
-/// case for an array yielded by `Seek::next` or buffers from `decapsulate_string(_, Some(_))`.
-fn read_u64_array_from_epee<L: Copy + TryInto<usize> + Display>(
-  len: L,
-  mut epee: &[u8],
-) -> Result<Vec<u64>, InterfaceError> {
-  let len: usize = len.try_into().map_err(|_| {
-    InterfaceError::InvalidInterface(format!("array's length exceeded `usize::MAX`: {len}"))
-  })?;
+/// case for an array encoded within a length-checked string
+fn read_u64_array_from_epee(len: usize, mut epee: &[u8]) -> Result<Vec<u64>, InterfaceError> {
   // This is safe to pre-allocate due to the byte buffer being prior-checked to have this many items
   let mut res = Vec::with_capacity(len);
   for _ in 0 .. len {
@@ -103,26 +38,75 @@ fn read_u64_array_from_epee<L: Copy + TryInto<usize> + Display>(
   Ok(res)
 }
 
+/*
+  `EpeeEntry` must live for less time than its iterator, yet this makes it very tricky to work
+  with. If we wrote a function which takes an iterator, then returns an entry, the entry's
+  lifetime _must_ outlive the function (because it's returned from the function). At the same time,
+  this prevents the iterator from being iterated within the function's body over because it's
+  mutably borrowed for a lifetime exceeding the function.
+
+  The solution, however ugly, is to handle the field _inside_ the iteration over the fields. We use
+  the following macro to generate the code for this.
+*/
+macro_rules! optional_field {
+  ($fields: ident, $field: literal, $body: expr) => {
+    loop {
+      let Some(entry) = $fields.next() else { break Ok::<_, EpeeError>(None) };
+      let entry = match entry {
+        Ok(entry) => entry,
+        Err(e) => Err(EpeeError(e))?,
+      };
+      if entry.0 == $field.as_bytes() {
+        break Ok(Some($body(entry.1).map_err(EpeeError)?));
+      }
+    }
+  };
+}
+macro_rules! field {
+  ($fields: ident, $field: literal, $body: expr) => {
+    optional_field!($fields, $field, $body)?.ok_or_else(|| {
+      InterfaceError::InvalidInterface(format!("expected field {} but it wasn't present", $field))
+    })
+  };
+}
+
+/// A wrapper to call `to_fixed_len_str` via, since `field` assumes the body only takes a single
+/// argument.
+// Unfortunately, callers cannot simply use a lambda due to needing to define these lifetimes.
+struct FixedLenStr(usize);
+impl FixedLenStr {
+  #[allow(clippy::wrong_self_convention)]
+  fn to_fixed_len_str<'encoding, 'parent>(
+    self,
+    entry: EpeeEntry<'encoding, 'parent, &'encoding [u8]>,
+  ) -> Result<&'encoding [u8], monero_epee::EpeeError> {
+    entry.to_fixed_len_str(self.0)
+  }
+}
+
 /// Check the `status` field within an `epee`-encoded object.
 pub(crate) fn check_status(epee: &[u8]) -> Result<(), InterfaceError> {
-  if seek_once(epee, Type::String, Array::Unit, "status")? != Some((1, &[2 << 2, b'O', b'K'])) {
-    Err(InterfaceError::InvalidInterface("epee `status` wasn't \"OK\"".to_string()))?;
+  let mut epee = Epee::new(epee).map_err(EpeeError)?;
+  let mut epee = epee.fields().map_err(EpeeError)?;
+  let status = field!(epee, "status", EpeeEntry::to_str)?;
+  if status != b"OK" {
+    return Err(InterfaceError::InvalidInterface("epee `status` wasn't \"OK\"".to_string()));
   }
   Ok(())
 }
 
 /// Extract the `start_height` field from the response to `get_output_distribution.bin`.
-pub(crate) fn extract_start_height(distributions: &[u8]) -> Result<usize, InterfaceError> {
-  let Some((_epee_len, mut distributions)) =
-    seek_once(distributions, Type::Uint64, Array::Unit, "start_height")?
-  else {
-    Err(InterfaceError::InvalidInterface(
-      "distribution response was missing `start_height`".to_string(),
-    ))?
-  };
-  let start_height = read_u64(&mut distributions).map_err(|e| {
-    InterfaceError::InvalidInterface(format!("`start_height` was incorrectly encoded: {e:?}"))
-  })?;
+///
+/// This assumes only a single distribution was requested by the caller.
+pub(crate) fn extract_start_height(epee: &[u8]) -> Result<usize, InterfaceError> {
+  let mut epee = Epee::new(epee).map_err(EpeeError)?;
+  let mut epee = epee.fields().map_err(EpeeError)?;
+  /*
+    `distributions` is technically an array, but we assume only one distribution was requested,
+    which allows us to treat it as a unit value and immediately access its fields.
+  */
+  let mut distributions = field!(epee, "distributions", EpeeEntry::fields)?;
+  let start_height = field!(distributions, "start_height", EpeeEntry::to_u64)?;
   usize::try_from(start_height).map_err(|_| {
     InterfaceError::InvalidInterface("`start_height` did not fit within a `usize`".to_string())
   })
@@ -130,80 +114,91 @@ pub(crate) fn extract_start_height(distributions: &[u8]) -> Result<usize, Interf
 
 /// Extract the `distribution` field from the response to `get_output_distribution.bin`.
 ///
-/// This assumes only a single distribution was requested by the user.
+/// This assumes only a single distribution was requested by the caller.
 pub(crate) fn extract_distribution(
   epee: &[u8],
   expected_len: usize,
 ) -> Result<Vec<u64>, InterfaceError> {
-  let Some((_epee_len, epee)) = seek_once(epee, Type::String, Array::Unit, "distribution")? else {
-    return Ok(vec![]);
-  };
+  let mut epee = Epee::new(epee).map_err(EpeeError)?;
+  let mut epee = epee.fields().map_err(EpeeError)?;
+  let mut distributions = field!(epee, "distributions", EpeeEntry::fields)?;
 
-  let Some(expected_byte_len) = expected_len.checked_mul(8) else {
-    Err(InterfaceError::InternalError(
-      "requested a longer distribution than whose byte-length is representable".to_string(),
-    ))?
-  };
-  let epee = decapsulate_string(epee, Some(expected_byte_len))?;
-  read_u64_array_from_epee(expected_len, epee)
+  let fixed_len_str = FixedLenStr(expected_len.checked_mul(8).ok_or_else(|| {
+    InterfaceError::InternalError(
+      "requested a distribution whose byte length doesn't fit within a `usize`".to_string(),
+    )
+  })?);
+  let distribution =
+    field!(distributions, "distribution", |value| fixed_len_str.to_fixed_len_str(value))?;
+  read_u64_array_from_epee(expected_len, distribution)
 }
 
 /// Accumulate a set of outs from `get_outs.bin`.
 pub(crate) fn accumulate_outs(
-  outs: &[u8],
+  epee: &[u8],
   amount: usize,
   res: &mut Vec<RingCtOutputInformation>,
 ) -> Result<(), InterfaceError> {
   let start = res.len();
 
-  // Create iterators for each of the fields within each out's struct
-  let mut block_numbers = seek_all(outs, Type::Uint64, Array::Unit, "height")?;
-  let mut keys = seek_all(outs, Type::String, Array::Unit, "key")?;
-  let mut commitments = seek_all(outs, Type::String, Array::Unit, "mask")?;
-  let mut transactions = seek_all(outs, Type::String, Array::Unit, "txid")?;
-  let mut unlocked = seek_all(outs, Type::Bool, Array::Unit, "unlocked")?;
+  let mut epee = Epee::new(epee).map_err(EpeeError)?;
+  let mut epee = epee.fields().map_err(EpeeError)?;
+  let mut outs = field!(epee, "outs", EpeeEntry::iterate)?;
+  while let Some(out) = outs.next() {
+    let mut out = out.map_err(EpeeError)?.fields().map_err(EpeeError)?;
 
-  for ((((block_number, key), commitment), transaction), unlocked) in (&mut block_numbers)
-    .zip(&mut keys)
-    .zip(&mut commitments)
-    .zip(&mut transactions)
-    .zip(&mut unlocked)
-    .take(amount)
-  {
-    let block_number = read_u64(&mut block_number?.1).map_err(|e| {
-      InterfaceError::InvalidInterface(format!(
-        "`epee` yielded `Uint64` yet couldn't read `Uint64` from it: {e:?}"
-      ))
-    })?;
+    let mut block_number = None;
+    let mut key = None;
+    let mut commitment = None;
+    let mut transaction = None;
+    let mut unlocked = None;
+
+    while let Some(out) = out.next() {
+      let (item_key, value) = out.map_err(EpeeError)?;
+      match item_key {
+        b"height" => block_number = Some(value.to_u64().map_err(EpeeError)?),
+        b"key" => {
+          key = Some(CompressedPoint(
+            value.to_fixed_len_str(32).map_err(EpeeError)?.try_into().unwrap(),
+          ))
+        }
+        b"mask" => {
+          commitment = Some(CompressedPoint(
+            value.to_fixed_len_str(32).map_err(EpeeError)?.try_into().unwrap(),
+          ))
+        }
+        b"txid" => {
+          transaction = Some(value.to_fixed_len_str(32).map_err(EpeeError)?.try_into().unwrap())
+        }
+        b"unlocked" => unlocked = Some(value.to_bool().map_err(EpeeError)?),
+        _ => continue,
+      }
+    }
+
+    let Some((block_number, key, commitment, transaction, unlocked)) =
+      (|| Some((block_number?, key?, commitment?, transaction?, unlocked?)))()
+    else {
+      Err(InterfaceError::InvalidInterface(
+        "missing field in output from `get_outs.bin`".to_string(),
+      ))?
+    };
+
     let block_number = usize::try_from(block_number).map_err(|_| {
       InterfaceError::InvalidInterface(
-        "out `height` wasn't representable within a `usize`".to_string(),
+        "`get_outs.bin` returned an block number not representable within a `usize`".to_string(),
       )
     })?;
-
-    let key = CompressedPoint(decapsulate_thirty_two_byte_array_from_string(key?.1)?);
-    let commitment = CompressedPoint(decapsulate_thirty_two_byte_array_from_string(commitment?.1)?)
-      .decompress()
-      .ok_or_else(|| {
-        InterfaceError::InvalidInterface("`get_outs` returned an invalid commitment".to_string())
-      })?;
-    let transaction = decapsulate_thirty_two_byte_array_from_string(transaction?.1)?;
-    let unlocked = compliant::read_bool(&mut unlocked?.1)?;
+    let commitment = commitment.decompress().ok_or_else(|| {
+      InterfaceError::InvalidInterface("`get_outs.bin` returned an invalid commitment".to_string())
+    })?;
 
     res.push(RingCtOutputInformation { block_number, key, commitment, transaction, unlocked });
   }
 
   if res.len() != (start + amount) {
-    Err(InterfaceError::InvalidInterface("`get_outs` had less outs than expected".to_string()))?;
-  }
-
-  if block_numbers.next().is_some() ||
-    keys.next().is_some() ||
-    commitments.next().is_some() ||
-    transactions.next().is_some() ||
-    unlocked.next().is_some()
-  {
-    Err(InterfaceError::InvalidInterface("`get_outs` unexpectedly had more outs".to_string()))?;
+    Err(InterfaceError::InvalidInterface(
+      "`get_outs.bin` had a distinct amount of outs than expected".to_string(),
+    ))?;
   }
 
   Ok(())
@@ -212,57 +207,67 @@ pub(crate) fn accumulate_outs(
 pub(crate) fn extract_blocks_from_blocks_bin(
   blocks_bin: &[u8],
 ) -> Result<impl use<'_> + Iterator<Item = Result<Block, InterfaceError>>, InterfaceError> {
-  let blocks = seek_all(blocks_bin, Type::String, Array::Unit, "block")?;
+  let mut epee = Epee::new(blocks_bin).map_err(EpeeError)?;
+  let mut epee = epee.fields().map_err(EpeeError)?;
+  let Some(mut blocks) = optional_field!(epee, "blocks", EpeeEntry::iterate)? else {
+    return Ok(vec![].into_iter());
+  };
 
-  Ok(blocks.map(|block| {
-    Block::read(&mut decapsulate_string(block?.1, None)?)
-      .map_err(|_| InterfaceError::InvalidInterface("invalid block".to_string()))
-  }))
+  let mut res = vec![];
+  while let Some(block) = blocks.next() {
+    let mut block = block.map_err(EpeeError)?.fields().map_err(EpeeError)?;
+    let mut block = field!(block, "block", EpeeEntry::to_str)?;
+    res.push(
+      Block::read(&mut block)
+        .map_err(|e| InterfaceError::InvalidInterface(format!("invalid block: {e}"))),
+    );
+    if !block.is_empty() {
+      Err(InterfaceError::InvalidInterface("block had extraneous bytes after it".to_string()))?;
+    }
+  }
+  Ok(res.into_iter())
 }
 
 pub(crate) fn extract_txs_from_blocks_bin(
   blocks_bin: &[u8],
 ) -> Result<impl use<'_> + Iterator<Item = Result<Transaction, InterfaceError>>, InterfaceError> {
-  let mut txs = seek_all(blocks_bin, Type::String, Array::Array, "txs")?;
+  let mut epee = Epee::new(blocks_bin).map_err(EpeeError)?;
+  let mut epee = epee.fields().map_err(EpeeError)?;
+  let Some(mut blocks) = optional_field!(epee, "blocks", EpeeEntry::iterate)? else {
+    return Ok(vec![].into_iter());
+  };
 
-  Ok(
-    core::iter::from_fn(move || {
-      Some(txs.next()?.map_err(InterfaceError::from).and_then(|(_epee_len, mut txs)| {
-        let mut res = vec![];
-        while !txs.is_empty() {
-          let tx_len = read_varint(&mut txs)?;
-          let start_len = txs.len();
-          res.push(Transaction::read(&mut txs).map_err(|e| {
-            InterfaceError::InvalidInterface(format!(
-              "blocks.bin contains invalid transaction: {e:?}"
-            ))
-          }));
-          if u64::try_from(start_len - txs.len())
-            .expect("couldn't convert difference in buffer lengths to `u64`?") !=
-            tx_len
-          {
-            Err(InterfaceError::InvalidInterface(
-              "`epee` string for transaction was of different length than the transaction itself"
-                .to_string(),
-            ))?;
-          }
-        }
-        Ok(res)
-      }))
-    })
-    .flat_map(|vec_txs: Result<Vec<Result<Transaction, InterfaceError>>, InterfaceError>| {
-      let (txs, err) = match vec_txs {
-        Ok(txs) => (txs, None),
-        Err(e) => (vec![], Some(Err(e))),
-      };
-      core::iter::from_fn(move || err.clone()).chain(txs)
-    }),
-  )
+  let mut res = vec![];
+  while let Some(block) = blocks.next() {
+    let mut block = block.map_err(EpeeError)?.fields().map_err(EpeeError)?;
+    let mut transactions = field!(block, "txs", EpeeEntry::iterate)?;
+    while let Some(transaction) = transactions.next() {
+      let transaction = transaction.map_err(EpeeError)?;
+      let mut transaction = transaction.to_str().map_err(EpeeError)?;
+      res.push(
+        Transaction::read(&mut transaction)
+          .map_err(|e| InterfaceError::InvalidInterface(format!("invalid transaction: {e}"))),
+      );
+      if !transaction.is_empty() {
+        Err(InterfaceError::InvalidInterface(
+          "transaction had extraneous bytes after it".to_string(),
+        ))?;
+      }
+    }
+  }
+  Ok(res.into_iter())
 }
 
 pub(crate) fn extract_output_indexes(epee: &[u8]) -> Result<Vec<u64>, InterfaceError> {
-  let Some((len, epee)) = seek_once(epee, Type::Uint64, Array::Array, "o_indexes")? else {
+  let mut epee = Epee::new(epee).map_err(EpeeError)?;
+  let mut epee = epee.fields().map_err(EpeeError)?;
+  let Some(mut indexes) = optional_field!(epee, "o_indexes", EpeeEntry::iterate)? else {
     return Ok(vec![]);
   };
-  read_u64_array_from_epee(len, epee)
+
+  let mut res = vec![];
+  while let Some(index) = indexes.next() {
+    res.push(index.map_err(EpeeError)?.to_u64().map_err(EpeeError)?);
+  }
+  Ok(res)
 }

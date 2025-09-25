@@ -87,6 +87,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
       expected_request_header_len + 8 + (BLOCKS_PER_REQUEST.min(requested_blocks) * 8);
     let mut request = Vec::with_capacity(expected_request_len);
     request.extend(epee::HEADER);
+    request.push(epee::VERSION);
     request.push(1 << 2);
 
     request.push(u8::try_from("heights".len()).unwrap());
@@ -365,7 +366,8 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
   ) -> impl Send + Future<Output = Result<Vec<u64>, InterfaceError>> {
     async move {
       let request = [
-        epee::HEADER,
+        epee::HEADER.as_slice(),
+        &[epee::VERSION],
         &[1u8 << 2],
         &[u8::try_from("txid".len()).unwrap()],
         "txid".as_bytes(),
@@ -402,6 +404,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
         expected_request_header_len + 8 + (indexes.len().min(MAX_OUTS) * 25);
       let mut request = Vec::with_capacity(expected_request_len);
       request.extend(epee::HEADER);
+      request.push(epee::VERSION);
       request.push(1 << 2);
       request.push(u8::try_from("outputs".len()).unwrap());
       request.extend("outputs".as_bytes());
@@ -488,7 +491,8 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
       let zero_zero_case = (from == 0) && (to == 0);
 
       let request = [
-        epee::HEADER,
+        epee::HEADER.as_slice(),
+        &[epee::VERSION],
         &[5u8 << 2],
         &[u8::try_from("from_height".len()).unwrap()],
         "from_height".as_bytes(),
