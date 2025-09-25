@@ -1,4 +1,4 @@
-use crate::{EpeeError, Stack, read_byte, read_bytes, read_varint, read_str};
+use crate::{EpeeError, Stack, io::*};
 
 /// The EPEE-defined type of the field being read.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -55,8 +55,8 @@ pub(crate) enum TypeOrEntry {
 
 impl Type {
   /// Read a type specification, including its length.
-  pub fn read(reader: &mut &[u8]) -> Result<(Self, u64), EpeeError> {
-    let kind = read_byte(reader)?;
+  pub fn read<'encoding>(reader: &mut impl BytesLike<'encoding>) -> Result<(Self, u64), EpeeError> {
+    let kind = reader.read_byte()?;
 
     // Check if the array bit is set
     let array = kind & (Array::Array as u8);
@@ -93,17 +93,12 @@ impl Type {
 /// Read a entry's key.
 // https://github.com/monero-project/monero/blob/8d4c625713e3419573dfcc7119c8848f47cabbaa
 //   /contrib/epee/include/storages/portable_storage_from_bin.h#143-L152
-fn read_key<'encoding>(reader: &mut &'encoding [u8]) -> Result<&'encoding [u8], EpeeError> {
-  let len = usize::from(read_byte(reader)?);
+fn read_key<'encoding, B: BytesLike<'encoding>>(reader: &mut B) -> Result<B, EpeeError> {
+  let len = usize::from(reader.read_byte()?);
   if len == 0 {
     Err(EpeeError::EmptyKey)?;
   }
-  if reader.len() < len {
-    Err(EpeeError::Short(len))?;
-  }
-  let res = &reader[.. len];
-  *reader = &reader[len ..];
-  Ok(res)
+  reader.read_bytes(len)
 }
 
 impl Stack {
@@ -112,46 +107,46 @@ impl Stack {
   /// Returns `Some((key, kind, len))` if an entry was read, or `None` otherwise. This also returns
   /// `None` if the stack is empty.
   #[allow(clippy::type_complexity)]
-  pub(crate) fn single_step<'encoding>(
+  pub(crate) fn single_step<'encoding, B: BytesLike<'encoding>>(
     &mut self,
-    encoding: &mut &'encoding [u8],
-  ) -> Result<Option<(&'encoding [u8], Type, u64)>, EpeeError> {
+    encoding: &mut B,
+  ) -> Result<Option<(B, Type, u64)>, EpeeError> {
     let Some(kind) = self.pop() else {
       return Ok(None);
     };
     match kind {
       TypeOrEntry::Type(Type::Int64) => {
-        read_bytes(encoding, core::mem::size_of::<i64>())?;
+        encoding.advance::<{ core::mem::size_of::<i64>() }>()?;
       }
       TypeOrEntry::Type(Type::Int32) => {
-        read_bytes(encoding, core::mem::size_of::<i32>())?;
+        encoding.advance::<{ core::mem::size_of::<i32>() }>()?;
       }
       TypeOrEntry::Type(Type::Int16) => {
-        read_bytes(encoding, core::mem::size_of::<i16>())?;
+        encoding.advance::<{ core::mem::size_of::<i16>() }>()?;
       }
       TypeOrEntry::Type(Type::Int8) => {
-        read_bytes(encoding, core::mem::size_of::<i8>())?;
+        encoding.advance::<{ core::mem::size_of::<i8>() }>()?;
       }
       TypeOrEntry::Type(Type::Uint64) => {
-        read_bytes(encoding, core::mem::size_of::<u64>())?;
+        encoding.advance::<{ core::mem::size_of::<u64>() }>()?;
       }
       TypeOrEntry::Type(Type::Uint32) => {
-        read_bytes(encoding, core::mem::size_of::<u32>())?;
+        encoding.advance::<{ core::mem::size_of::<u32>() }>()?;
       }
       TypeOrEntry::Type(Type::Uint16) => {
-        read_bytes(encoding, core::mem::size_of::<u16>())?;
+        encoding.advance::<{ core::mem::size_of::<u16>() }>()?;
       }
       TypeOrEntry::Type(Type::Uint8) => {
-        read_bytes(encoding, core::mem::size_of::<u8>())?;
+        encoding.advance::<{ core::mem::size_of::<u8>() }>()?;
       }
       TypeOrEntry::Type(Type::Double) => {
-        read_bytes(encoding, core::mem::size_of::<f64>())?;
+        encoding.advance::<{ core::mem::size_of::<f64>() }>()?;
       }
       TypeOrEntry::Type(Type::String) => {
         read_str(encoding)?;
       }
       TypeOrEntry::Type(Type::Bool) => {
-        read_bytes(encoding, core::mem::size_of::<bool>())?;
+        encoding.advance::<{ core::mem::size_of::<bool>() }>()?;
       }
       TypeOrEntry::Type(Type::Object) => {
         let amount_of_entries = read_varint(encoding)?;
@@ -170,7 +165,10 @@ impl Stack {
   /// Step through the entirety of the next item.
   ///
   /// Returns `None` if the stack is empty.
-  pub(crate) fn step(&mut self, encoding: &mut &[u8]) -> Result<Option<()>, EpeeError> {
+  pub(crate) fn step<'encoding, B: BytesLike<'encoding>>(
+    &mut self,
+    encoding: &mut B,
+  ) -> Result<Option<()>, EpeeError> {
     let Some((kind, len)) = self.peek() else { return Ok(None) };
     let current_stack_depth = self.depth();
     /*
