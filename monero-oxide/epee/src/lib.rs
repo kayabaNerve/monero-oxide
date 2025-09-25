@@ -160,6 +160,16 @@ impl<'encoding, B: BytesLike<'encoding>> Epee<'encoding, B> {
   }
 }
 
+/// ```rust,compile_fail
+///  let mut epee = Epee::new([].as_slice()).unwrap();
+///  {
+///    let fields = epee.fields().unwrap();
+///    drop(fields);
+///  }
+///  let _fields = epee.fields().unwrap();
+/// ```
+const _FIELDS_CANNOT_BE_CALLED_TWICE: () = ();
+
 /// An iterator over an array.
 pub struct ArrayIterator<'encoding, 'parent, B: BytesLike<'encoding>> {
   root: &'parent mut Epee<'encoding, B>,
