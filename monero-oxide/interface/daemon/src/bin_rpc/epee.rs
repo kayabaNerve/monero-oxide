@@ -240,7 +240,9 @@ pub(crate) fn extract_txs_from_blocks_bin(
   let mut res = vec![];
   while let Some(block) = blocks.next() {
     let mut block = block.map_err(EpeeError)?.fields().map_err(EpeeError)?;
-    let mut transactions = field!(block, "txs", EpeeEntry::iterate)?;
+    let Some(mut transactions) = optional_field!(block, "txs", EpeeEntry::iterate)? else {
+      continue;
+    };
     while let Some(transaction) = transactions.next() {
       let transaction = transaction.map_err(EpeeError)?;
       let mut transaction = transaction.to_str().map_err(EpeeError)?;
