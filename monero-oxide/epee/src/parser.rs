@@ -109,12 +109,13 @@ fn read_key<'a>(reader: &mut &'a [u8]) -> Result<&'a [u8], EpeeError> {
 impl<'a> SnapshottedStack<'a> {
   /// Execute a single step of the decoding algorithm.
   ///
-  /// Returns `Some((kind, len))` if an entry was read, or `None` otherwise. This also returns
+  /// Returns `Some((key, kind, len))` if an entry was read, or `None` otherwise. This also returns
   /// `None` if the stack is empty.
-  pub(crate) fn single_step(
+  #[allow(clippy::type_complexity)]
+  pub(crate) fn single_step<'b>(
     &mut self,
-    encoding: &mut &[u8],
-  ) -> Result<Option<(Type, u64)>, EpeeError> {
+    encoding: &mut &'b [u8],
+  ) -> Result<Option<(&'b [u8], Type, u64)>, EpeeError> {
     let Some(kind) = self.pop() else {
       return Ok(None);
     };
@@ -157,10 +158,10 @@ impl<'a> SnapshottedStack<'a> {
         self.push(TypeOrEntry::Entry, amount_of_entries)?;
       }
       TypeOrEntry::Entry => {
-        let _entry_key = read_key(encoding)?;
+        let key = read_key(encoding)?;
         let (kind, len) = Type::read(encoding)?;
         self.push(TypeOrEntry::Type(kind), len)?;
-        return Ok(Some((kind, len)));
+        return Ok(Some((key, kind, len)));
       }
     }
     Ok(None)
@@ -193,31 +194,5 @@ impl<'a> SnapshottedStack<'a> {
     } {}
 
     Ok(Some(()))
-  }
-
-  pub(crate) fn entry(
-    &mut self,
-    encoding: &mut &[u8],
-    key: &str,
-  ) -> Result<Option<(Type, u64)>, EpeeError> {
-    let Some((kind, len)) = self.peek() else { return Ok(None) };
-    if kind != TypeOrEntry::Entry {
-      Err(EpeeError::TypeError)?;
-    }
-
-    // Iterate through the entries for one with a matching key
-    for _ in 0 .. len.get() {
-      /*
-        NOTE: EPEE would check no duplicate keys are present here, while we simply follow the first
-        instance. This is allowed by our definition of compatibility, and such a check could
-        presumably only be implemented with a `O(n^2)` pass or allocating, hence its omission.
-      */
-      if read_key(&mut *encoding).ok() == Some(key.as_bytes()) {
-        break;
-      }
-      self.step(encoding)?;
-    }
-
-    self.single_step(encoding)
   }
 }

@@ -50,17 +50,55 @@ pub struct Epee<'a> {
 /// An item with an EPEE-encoded object.
 pub struct EpeeEntry<'a> {
   root: &'a mut Epee<'a>,
-  revert_on_drop: bool,
   kind: Type,
   len: u64,
 }
-impl<'a> Drop for EpeeEntry<'a> {
+
+/// An iterator over fields.
+pub struct FieldIterator<'a> {
+  root: &'a mut Epee<'a>,
+  len: u64,
+  advance: bool,
+}
+impl<'a> Drop for FieldIterator<'a> {
   #[inline(always)]
   fn drop(&mut self) {
-    if self.revert_on_drop {
-      let prior_encoding_state = self.root.index.revert();
-      self.root.current_encoding_state = prior_encoding_state;
+    let prior_encoding_state = self.root.index.revert();
+    self.root.current_encoding_state = prior_encoding_state;
+  }
+}
+
+impl<'a> FieldIterator<'a> {
+  /// The next entry (key, value) within the object.
+  ///
+  /// This is approximate to `Iterator::next` yet each item maintains a mutable reference to the
+  /// iterator. Accordingly, we cannot use `Iterator::next` which requires items not borrow from
+  /// the iterator.
+  #[allow(clippy::should_implement_trait)]
+  pub fn next(&'a mut self) -> Option<Result<(&'a [u8], EpeeEntry<'a>), EpeeError>> {
+    // If we've prior iterated, advance the decoder past the prior yielded item
+    if self.advance {
+      match self.root.index.snapshotted_stack().step(&mut self.root.current_encoding_state) {
+        Ok(_) => {}
+        Err(e) => return Some(Err(e)),
+      }
     }
+
+    self.len = self.len.checked_sub(1)?;
+    let (key, kind, len) = match self
+      .root
+      .index
+      .snapshotted_stack()
+      .single_step(&mut self.root.current_encoding_state)
+    {
+      Ok(Some((key, kind, len))) => (key, kind, len),
+      // This should be unreachable as the stack shouldn't be empty if our iterator has a non-zero
+      // length
+      Ok(None) => None?,
+      Err(e) => return Some(Err(e)),
+    };
+
+    Some(Ok((key, EpeeEntry { root: self.root, kind, len })))
   }
 }
 
@@ -83,24 +121,23 @@ impl<'a> Epee<'a> {
     Ok(Epee { current_encoding_state: encoding, index: Index::root_object(encoding) })
   }
 
-  /// Get a field within this object.
+  /// Iterate over the fields within this object.
   ///
-  /// This takes a mutable reference to `self` _but_ `self` will be identical once the returned
-  /// object is dropped. The mutable reference to `self` is solely taken to reuse its stack for the
-  /// duration of the indexing.
-  pub fn field(&'a mut self, key: &str) -> Result<Option<EpeeEntry<'a>>, EpeeError> {
-    let Some((kind, len)) = ({
+  /// This takes a mutable reference to `self` _but_ `self` will be functionally identical once the
+  /// returned object is dropped. The mutable reference to `self` is solely taken to reuse its
+  /// stack for the duration of the indexing.
+  pub fn fields(&'a mut self) -> Result<FieldIterator<'a>, EpeeError> {
+    let len = read_varint(&mut &*self.current_encoding_state)?;
+
+    {
       let mut encoding = self.current_encoding_state;
       let mut snapshotted_stack = self.index.advance(self.current_encoding_state.len())?;
       // Read past the `Type::Object` this was constructed with into `[Type::Entry; n]`
       snapshotted_stack.single_step(&mut encoding)?;
-      let res = snapshotted_stack.entry(&mut encoding, key)?;
       self.current_encoding_state = encoding;
-      res
-    }) else {
-      return Ok(None);
     };
-    Ok(Some(EpeeEntry { root: self, revert_on_drop: true, kind, len }))
+
+    Ok(FieldIterator { root: self, len, advance: false })
   }
 }
 
@@ -135,7 +172,7 @@ impl<'a> ArrayIterator<'a> {
       }
     }
 
-    let res = EpeeEntry { root: self.root, revert_on_drop: false, kind: self.kind, len: 1 };
+    let res = EpeeEntry { root: self.root, kind: self.kind, len: 1 };
     self.len = self.len.checked_sub(1)?;
     self.advance = true;
     Some(Ok(res))
@@ -156,25 +193,28 @@ impl<'a> EpeeEntry<'a> {
     self.len
   }
 
-  /// Get a field within this object, if it's a single object.
+  /// Iterate over the fields within this object.
   ///
-  /// This takes a mutable reference to `self` _but_ `self` will be identical once the returned
-  /// object is dropped. The mutable reference to `self` is solely taken to reuse its stack for the
-  /// duration of the indexing.
-  pub fn field(&'a mut self, key: &str) -> Result<Option<EpeeEntry<'a>>, EpeeError> {
+  /// This takes a mutable reference to `self` _but_ `self` will be functionally identical once the
+  /// returned object is dropped. The mutable reference to `self` is solely taken to reuse its
+  /// stack for the duration of the indexing.
+  pub fn fields(&'a mut self) -> Result<FieldIterator<'a>, EpeeError> {
     if (self.kind != Type::Object) || (self.len != 1) {
       Err(EpeeError::TypeError)?;
     }
 
-    let Some((kind, len)) = ({
+    let len = read_varint(&mut &*self.root.current_encoding_state)?;
+
+    {
+      let mut encoding = self.root.current_encoding_state;
       let mut snapshotted_stack =
         self.root.index.advance(self.root.current_encoding_state.len())?;
-      snapshotted_stack.single_step(&mut self.root.current_encoding_state)?;
-      snapshotted_stack.entry(&mut self.root.current_encoding_state, key)?
-    }) else {
-      return Ok(None);
-    };
-    Ok(Some(EpeeEntry { root: self.root, revert_on_drop: true, kind, len }))
+      // Read past the `Type::Object` this was constructed with into `[Type::Entry; n]`
+      snapshotted_stack.single_step(&mut encoding)?;
+      self.root.current_encoding_state = encoding;
+    }
+
+    Ok(FieldIterator { root: self.root, len, advance: false })
   }
 
   /// Get an iterator of all items within this container.
