@@ -134,7 +134,7 @@ impl<'encoding> Epee<'encoding> {
   /// Iterate over the fields within this object.
   ///
   /// This takes a mutable reference as `Epee` may only be iterated over once at any time.
-  /// Future calls to `fields` will be safe and behave identically however.
+  /// Future calls to `Epee::fields` will be safe and behave identically however.
   pub fn fields<'this>(&'this mut self) -> Result<FieldIterator<'encoding, 'this>, EpeeError> {
     // Reset the current state.
     self.current_encoding_state = self.original_encoding;
