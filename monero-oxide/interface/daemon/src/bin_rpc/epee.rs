@@ -219,7 +219,7 @@ pub(crate) fn extract_blocks_from_blocks_bin(
     let mut block = field!(block, "block", EpeeEntry::to_str)?;
     res.push(
       Block::read(&mut block)
-        .map_err(|e| InterfaceError::InvalidInterface(format!("invalid block: {e}"))),
+        .map_err(|e| InterfaceError::InvalidInterface(format!("invalid block: {e:?}"))),
     );
     if !block.is_empty() {
       Err(InterfaceError::InvalidInterface("block had extraneous bytes after it".to_string()))?;
@@ -246,7 +246,7 @@ pub(crate) fn extract_txs_from_blocks_bin(
       let mut transaction = transaction.to_str().map_err(EpeeError)?;
       res.push(
         Transaction::read(&mut transaction)
-          .map_err(|e| InterfaceError::InvalidInterface(format!("invalid transaction: {e}"))),
+          .map_err(|e| InterfaceError::InvalidInterface(format!("invalid transaction: {e:?}"))),
       );
       if !transaction.is_empty() {
         Err(InterfaceError::InvalidInterface(
