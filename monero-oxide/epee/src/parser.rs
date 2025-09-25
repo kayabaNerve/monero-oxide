@@ -181,19 +181,11 @@ impl Stack {
   ) -> Result<Option<()>, EpeeError> {
     let Some((kind, len)) = self.peek() else { return Ok(None) };
     let current_stack_depth = self.depth();
-    /*
-      We stop at the next item at the same depth, unless this is the last object in an
-      object/array, in which case the same depth of the stack is used for _both_ the item's
-      definition _and_ its innards (due to popping the item's definition, then pushing the
-      innards).
-    */
-    let stop_at_stack_depth = if ((kind, len.get()) == (TypeOrEntry::Entry, 1)) ||
-      (kind, len.get()) == (TypeOrEntry::Type(Type::Object), 1)
-    {
+    let stop_at_stack_depth = if len.get() > 1 {
+      current_stack_depth
+    } else {
       // We could peek at an item on the stack, therefore it has an item
       current_stack_depth - 1
-    } else {
-      current_stack_depth
     };
 
     while {

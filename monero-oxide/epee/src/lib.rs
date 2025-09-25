@@ -66,7 +66,9 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> Drop for EpeeEntry<'encoding, 
   #[inline(always)]
   fn drop(&mut self) {
     if let Some(root) = self.root.take() {
-      root.error = root.error.or_else(|| root.stack.step(&mut root.current_encoding_state).err());
+      for _ in 0 .. self.len {
+        root.error = root.error.or_else(|| root.stack.step(&mut root.current_encoding_state).err());
+      }
     }
   }
 }
@@ -264,6 +266,7 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> EpeeEntry<'encoding, 'parent, 
     }
 
     let root = self.root.take().ok_or(EpeeError::InternalError)?;
+    root.stack.pop();
     root.current_encoding_state.read_into_slice(slice)?;
     Ok(slice)
   }
@@ -339,6 +342,7 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> EpeeEntry<'encoding, 'parent, 
     }
 
     let root = self.root.take().ok_or(EpeeError::InternalError)?;
+    root.stack.pop();
     read_str(&mut root.current_encoding_state)
   }
 
