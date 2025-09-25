@@ -116,6 +116,13 @@ pub struct Output {
 }
 
 impl Output {
+  /// An upper bound on the size of an output as of the latest supported hard fork.
+  ///
+  /// This is not the upper bound on the size of an output throughout the lifetime of the entire
+  /// Monero protocol. It is solely used as a hint when working with bytes. This is not guaranteed
+  /// to be a minimal bound.
+  pub const SIZE_UPPER_BOUND: usize = 9 + 1 + 32 + 1;
+
   /// Write the Output.
   pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
     write_varint(&self.amount.unwrap_or(0), w)?;

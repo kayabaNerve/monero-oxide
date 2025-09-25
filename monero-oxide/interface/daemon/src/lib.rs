@@ -15,7 +15,7 @@ use alloc::{
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
-use monero_oxide::transaction::{MAX_NON_MINER_TRANSACTION_SIZE, Input, Pruned, Transaction};
+use monero_oxide::transaction::{MAX_NON_MINER_TRANSACTION_SIZE, Input, Output, Pruned, Transaction};
 use monero_address::Address;
 
 use monero_interface::*;
@@ -30,14 +30,13 @@ const MAX_RPC_RESPONSE_SIZE: usize = 100 * 1024 * 1024;
 const BASE_RESPONSE_SIZE: usize = u16::MAX as usize;
 const BYTE_FACTOR_IN_JSON_RESPONSE_SIZE: usize = 8;
 
-/*
-  Monero doesn't have a size limit on miner transactions and accordingly doesn't have a size limit
-  on transactions, yet we would like _a_ bound (even if absurd) to limit a malicious remote node
-  from sending a gigantic HTTP response and wasting our bandwidth.
-
-  We consider the bound for a miner transaction as 300 KB, which is thousands of outputs and an
-  entire Monero block (at its default block size limit).
-*/
+const fn const_min(a: usize, b: usize) -> usize {
+  if a < b {
+    a
+  } else {
+    b
+  }
+}
 const fn const_max(a: usize, b: usize) -> usize {
   if a > b {
     a
@@ -45,7 +44,23 @@ const fn const_max(a: usize, b: usize) -> usize {
     b
   }
 }
-const TRANSACTION_SIZE_BOUND: usize = const_max(300_000, MAX_NON_MINER_TRANSACTION_SIZE);
+
+/*
+  Monero doesn't have a size limit on miner transactions and accordingly doesn't have a size limit
+  on transactions, yet we would like _a_ bound (even if absurd) to limit a malicious remote node
+  from sending a gigantic HTTP response and wasting our bandwidth.
+
+  We use the bounds intended with the FCMP++ hard fork _now_ (as they should be absurd, exceeding
+  the entire default block size) to determine a bound (despite the fact these bounds aren't in
+  force yet).
+
+  https://github.com/seraphis-migration/monero/pull/104
+*/
+const MINER_TRANSACTION_OUTPUT_BOUND: usize = 10_000;
+const MINER_TRANSACTION_SIZE_BOUND: usize =
+  2048 + (MINER_TRANSACTION_OUTPUT_BOUND * Output::SIZE_UPPER_BOUND);
+const TRANSACTION_SIZE_BOUND: usize =
+  const_max(MINER_TRANSACTION_SIZE_BOUND, MAX_NON_MINER_TRANSACTION_SIZE);
 
 fn rpc_hex(value: &str) -> Result<Vec<u8>, InterfaceError> {
   hex::decode(value)
@@ -246,10 +261,19 @@ impl<T: HttpTransport> ProvidesBlockchainMeta for MoneroDaemon<T> {
 mod provides_transaction {
   use super::*;
 
-  // Monero errors if more than 100 is requested unless using a non-restricted RPC
-  // https://github.com/monero-project/monero/blob/cc73fe71162d564ffda8e549b79a350bca53c454
-  //   /src/rpc/core_rpc_server.cpp#L75
-  const TXS_PER_REQUEST: usize = 100;
+  /*
+    Monero errors if more than 100 is requested unless using a non-restricted RPC.
+
+    https://github.com/monero-project/monero/blob/cc73fe71162d564ffda8e549b79a350bca53c454
+      /src/rpc/core_rpc_server.cpp#L75
+  */
+  const TRANSACTIONS_PER_REQUEST_LIMIT: usize = 100;
+  // And of course, the response limit also applies here
+  const TRANSACTIONS_PER_RESPONSE_LIMIT: usize =
+    (MAX_RPC_RESPONSE_SIZE - BASE_RESPONSE_SIZE).div_ceil(TRANSACTION_SIZE_BOUND);
+
+  const TRANSACTIONS_LIMIT: usize =
+    const_min(TRANSACTIONS_PER_REQUEST_LIMIT, TRANSACTIONS_PER_RESPONSE_LIMIT);
 
   #[derive(Debug, Deserialize)]
   struct TransactionResponse {
@@ -275,7 +299,7 @@ mod provides_transaction {
         let mut hashes_hex = hashes.iter().map(hex::encode).collect::<Vec<_>>();
         let mut all_txs = Vec::with_capacity(hashes.len());
         while !hashes_hex.is_empty() {
-          let this_count = TXS_PER_REQUEST.min(hashes_hex.len());
+          let this_count = TRANSACTIONS_LIMIT.min(hashes_hex.len());
 
           let txs: TransactionsResponse = self
             .rpc_call(
@@ -342,7 +366,7 @@ mod provides_transaction {
         let mut hashes_hex = hashes.iter().map(hex::encode).collect::<Vec<_>>();
         let mut all_txs = Vec::with_capacity(hashes.len());
         while !hashes_hex.is_empty() {
-          let this_count = TXS_PER_REQUEST.min(hashes_hex.len());
+          let this_count = TRANSACTIONS_LIMIT.min(hashes_hex.len());
 
           let txs: TransactionsResponse = self
             .rpc_call(
