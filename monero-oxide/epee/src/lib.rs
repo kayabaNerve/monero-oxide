@@ -79,7 +79,7 @@ impl<'a> FieldIterator<'a> {
   #[allow(clippy::should_implement_trait)]
   pub fn next<'b, 'c>(&'c mut self) -> Option<Result<(&'b [u8], EpeeEntry<'b>), EpeeError>>
   where
-    'a: 'b + 'c,
+    'a: 'b,
     'c: 'b,
   {
     // If we've prior iterated, advance the decoder past the prior yielded item
@@ -186,7 +186,7 @@ impl<'a> ArrayIterator<'a> {
   #[allow(clippy::should_implement_trait)]
   pub fn next<'b, 'c>(&'c mut self) -> Option<Result<EpeeEntry<'b>, EpeeError>>
   where
-    'a: 'b + 'c,
+    'a: 'b,
     'c: 'b,
   {
     // If we've prior iterated, advance the decoder past the prior yielded item
