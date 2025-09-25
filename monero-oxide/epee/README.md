@@ -25,8 +25,8 @@ needs, much simpler, and should be trivial to verify won't panic/face various
 exhaustion attacks compared to more complex implementations.
 
 Because of this, we are also able to support no-`std` and no-`alloc`, without
-any dependencies other than `core`, while only consuming approximately three
-kibibytes of memory on the stack.
+any dependencies other than `core`, while only consuming approximately one
+kibibyte of memory on the stack.
 
 For a more functional library, please check out
 [`cuprate-epee-encoding`](
