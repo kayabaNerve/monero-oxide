@@ -35,9 +35,8 @@ const fn const_max(a: usize, b: usize) -> usize {
 pub const INPUTS_UPPER_BOUND: usize =
   const_max(MAX_MINER_TRANSACTION_INPUTS, MAX_NON_MINER_TRANSACTION_INPUTS);
 
-const NON_MINER_TRANSACTION_OUTPUT_SIZE_LOWER_BOUND: usize = 32;
 const MAX_NON_MINER_TRANSACTION_OUTPUTS: usize =
-  MAX_NON_MINER_TRANSACTION_SIZE / NON_MINER_TRANSACTION_OUTPUT_SIZE_LOWER_BOUND;
+  MAX_NON_MINER_TRANSACTION_SIZE / Output::SIZE_LOWER_BOUND;
 
 /// An input in the Monero protocol.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -116,6 +115,13 @@ pub struct Output {
 }
 
 impl Output {
+  /// A lower bound on the size of an output as of the latest supported hard fork.
+  ///
+  /// This is not the lower bound on the size of an output throughout the lifetime of the entire
+  /// Monero protocol. It is solely used as a hint when working with bytes. This is not guaranteed
+  /// to be a maximal bound.
+  pub const SIZE_LOWER_BOUND: usize = 1 + 32;
+
   /// An upper bound on the size of an output as of the latest supported hard fork.
   ///
   /// This is not the upper bound on the size of an output throughout the lifetime of the entire

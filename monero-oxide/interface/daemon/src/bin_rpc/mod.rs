@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use monero_oxide::{
-  transaction::{Timelock, Transaction},
+  transaction::{Output, Timelock, Transaction},
   block::Block,
   DEFAULT_LOCK_WINDOW,
 };
@@ -396,7 +396,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
       ]
       .concat();
 
-      const OUTPUTS_AMOUNT_BOUND: usize = TRANSACTION_SIZE_BOUND.div_ceil(32);
+      const OUTPUTS_AMOUNT_BOUND: usize = TRANSACTION_SIZE_BOUND.div_ceil(Output::SIZE_LOWER_BOUND);
       let epee = self
         .bin_call(
           "get_o_indexes.bin",
