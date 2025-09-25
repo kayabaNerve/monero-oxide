@@ -24,7 +24,7 @@ async fn test_blockchain() {
 
   let current_block_number = rpc.latest_block_number().await.unwrap();
   let latest_block = rpc.block_by_number(current_block_number).await.unwrap();
-  assert_eq!(latest_block.number().unwrap(), current_block_number);
+  assert_eq!(latest_block.number(), current_block_number);
   assert!(rpc.block_by_number(current_block_number + 1).await.is_err());
 
   let (hashes, number) = rpc
@@ -59,7 +59,7 @@ async fn test_blockchain() {
     .zip(number ..= new_number)
   {
     assert_eq!(block.hash(), hash);
-    assert_eq!(block.number().unwrap(), number);
+    assert_eq!(block.number(), number);
     assert_eq!(rpc.block_hash(number).await.unwrap(), hash);
   }
 }

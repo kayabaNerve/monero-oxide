@@ -131,9 +131,17 @@ impl<T: HttpTransport> MoneroDaemon<T> {
       // request limit by up to 50%
       const TARGET: usize = (MAX_RPC_RESPONSE_SIZE * 4) / 5;
       if res.len() < TARGET {
-        let fifty_percent_more = request_limit + (request_limit / 2);
-        let proportional = TARGET / res.len().div_ceil(request_limit);
-        request_limit = fifty_percent_more.min(proportional).min(BLOCKS_PER_REQUEST_LIMIT_U64);
+        let fifty_percent_more =
+          (request_limit + (request_limit / 2)).min(BLOCKS_PER_REQUEST_LIMIT_U64);
+        // Safe due to bounding between `1 ..= BLOCKS_PER_REQUEST_LIMIT` which is representable as
+        // a `usize`
+        #[allow(clippy::cast_possible_truncation)]
+        let request_limit_usize = request_limit as usize;
+        let proportional =
+          (TARGET / res.len().div_ceil(request_limit_usize)).min(BLOCKS_PER_REQUEST_LIMIT);
+        // Safe due to bounding with `min`
+        let proportional = proportional as u64;
+        request_limit = fifty_percent_more.min(proportional);
       }
       // If this is more than the targetted amount of the response size limit, halve the current
       // request limit
@@ -306,7 +314,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
           self,
           &mut next_ringct_output_index,
           &mut output_index_for_first_ringct_output,
-          &block.miner_transaction,
+          block.miner_transaction(),
         )
         .await?;
 

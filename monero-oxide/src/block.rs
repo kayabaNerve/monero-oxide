@@ -73,28 +73,73 @@ pub struct Block {
   /// The block's header.
   pub header: BlockHeader,
   /// The miner's transaction.
-  pub miner_transaction: Transaction,
+  miner_transaction: Transaction,
   /// The transactions within this block.
   pub transactions: Vec<[u8; 32]>,
 }
 
 impl Block {
-  /// The zero-indexed position of this block within the blockchain.
+  /// The maximum amount of transactions a block may have, including the miner transaction.
+  /*
+    Definition of maximum amount of transaction:
+    https://github.com/monero-project/monero
+      /blob/8d4c625713e3419573dfcc7119c8848f47cabbaa/src/cryptonote_config.h#L42
+
+    Limitation of the amount of transactions within the `transactions` field:
+    https://github.com/monero-project/monero
+      /blob/8d4c625713e3419573dfcc7119c8848f47cabbaa/src/cryptonote_basic/cryptonote_basic.h#L571
+
+    This would mean the actual limit is `0x10000000 + 1`, including the miner transaction, except:
+    https://github.com/monero-project/monero
+      /blob/8d4c625713e3419573dfcc7119c8848f47cabbaa/src/crypto/tree-hash.c#L55
+
+    calculation of the Merkle tree representing all transactions will fail if this many
+    transactions is consumed by the `transactions` field alone.
+  */
+  pub const MAX_TRANSACTIONS: usize = 0x10000000;
+
+  /// Construct a new `Block`.
   ///
-  /// This information comes from the Block's miner transaction. If the miner transaction isn't
-  /// structed as expected, this will return None. This will return Some for any Block which would
-  /// pass the consensus rules.
-  // https://github.com/monero-project/monero/blob/a1dc85c5373a30f14aaf7dcfdd95f5a7375d3623
-  //   /src/cryptonote_core/blockchain.cpp#L1365-L1382
-  pub fn number(&self) -> Option<usize> {
+  /// This MAY apply miscellaneous consensus rules as useful for the sanity of working with this
+  /// type. The result is not guaranteed to follow all Monero consensus rules or any specific set
+  /// of consensus rules.
+  pub fn new(
+    header: BlockHeader,
+    miner_transaction: Transaction,
+    transactions: Vec<[u8; 32]>,
+  ) -> Option<Block> {
+    // Check this correctly defines the block's number
+    // https://github.com/monero-project/monero/blob/a1dc85c5373a30f14aaf7dcfdd95f5a7375d3623
+    //   /src/cryptonote_core/blockchain.cpp#L1365-L1382
+    {
+      let inputs = &miner_transaction.prefix().inputs;
+      if inputs.len() != 1 {
+        None?;
+      }
+      match inputs[0] {
+        Input::Gen(_number) => {}
+        _ => None?,
+      }
+    }
+
+    Some(Block { header, miner_transaction, transactions })
+  }
+
+  /// The zero-indexed position of this block within the blockchain.
+  pub fn number(&self) -> usize {
     match &self.miner_transaction {
       Transaction::V1 { prefix, .. } | Transaction::V2 { prefix, .. } => {
         match prefix.inputs.first() {
-          Some(Input::Gen(number)) => Some(*number),
-          _ => None,
+          Some(Input::Gen(number)) => *number,
+          _ => panic!("invalid miner transaction accepted into block"),
         }
       }
     }
+  }
+
+  /// The block's miner's transaction.
+  pub fn miner_transaction(&self) -> &Transaction {
+    &self.miner_transaction
   }
 
   /// Write the Block.
@@ -156,13 +201,22 @@ impl Block {
   }
 
   /// Read a Block.
+  ///
+  /// This MAY error if miscellaneous Monero conseusus rules are broken, as useful when
+  /// deserializing. The result is not guaranteed to follow all Monero consensus rules or any
+  /// specific set of consensus rules.
   pub fn read<R: Read>(r: &mut R) -> io::Result<Block> {
-    Ok(Block {
-      header: BlockHeader::read(r)?,
-      miner_transaction: Transaction::read(r)?,
-      transactions: (0_usize .. read_varint(r)?)
-        .map(|_| read_bytes(r))
-        .collect::<Result<_, _>>()?,
-    })
+    let header = BlockHeader::read(r)?;
+
+    let miner_transaction = Transaction::read(r)?;
+
+    let transactions: usize = read_varint(r)?;
+    if transactions >= Self::MAX_TRANSACTIONS {
+      Err(io::Error::other("amount of transaction exceeds limit"))?;
+    }
+    let transactions = (0 .. transactions).map(|_| read_bytes(r)).collect::<Result<_, _>>()?;
+
+    Block::new(header, miner_transaction, transactions)
+      .ok_or_else(|| io::Error::other("block failed sanity checks"))
   }
 }

@@ -72,8 +72,8 @@ pub trait ExpandToScannableBlock: ProvidesTransactions + ProvidesOutputs {
 
       // Get the index for the first output
       let mut output_index_for_first_ringct_output = None;
-      let miner_tx_hash = block.miner_transaction.hash();
-      let miner_tx = Transaction::<Pruned>::from(block.miner_transaction.clone());
+      let miner_tx_hash = block.miner_transaction().hash();
+      let miner_tx = Transaction::<Pruned>::from(block.miner_transaction().clone());
       for (hash, tx) in core::iter::once((&miner_tx_hash, &miner_tx))
         .chain(block.transactions.iter().zip(&transactions))
       {

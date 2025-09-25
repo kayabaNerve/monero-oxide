@@ -362,9 +362,13 @@ impl SignableTransaction {
   /// the outgoing view key will be able to identify a transaction produced with this methodology,
   /// and the data within it. Accordingly, it must be treated as a private key.
   ///
+  /// If one `outgoing_view_key` is reused across two transactions which share keys in their
+  /// inputs, such transactions being mutually incompatible with each other on that premise, some
+  /// ephemeral secrets MAY be reused causing adverse effects. Do NOT reuse an `outgoing_view_key`
+  /// across incompatible transactions accordingly.
+  ///
   /// `data` represents arbitrary data which will be embedded into the transaction's `extra` field.
-  /// The embedding occurs using an `ExtraField::Nonce` with a custom marker byte (as to not
-  /// conflict with a payment ID).
+  /// Please see `Extra::arbitrary_data` for the full impacts of this.
   pub fn new(
     rct_type: RctType,
     outgoing_view_key: Zeroizing<[u8; 32]>,

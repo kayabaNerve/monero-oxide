@@ -328,7 +328,7 @@ macro_rules! test {
             let block = rpc.expand_to_scannable_block(block).await.unwrap();
             assert_eq!(rpc.scannable_block(block.block.hash()).await.unwrap(), block);
             assert_eq!(
-              rpc.scannable_block_by_number(block.block.number().unwrap()).await.unwrap(),
+              rpc.scannable_block_by_number(block.block.number()).await.unwrap(),
               block,
             );
             let tx = rpc.transaction(signed.hash()).await.unwrap();
@@ -359,7 +359,7 @@ macro_rules! test {
             let block = rpc.expand_to_scannable_block(block).await.unwrap();
             assert_eq!(rpc.scannable_block(block.block.hash()).await.unwrap(), block);
             assert_eq!(
-              rpc.scannable_block_by_number(block.block.number().unwrap()).await.unwrap(),
+              rpc.scannable_block_by_number(block.block.number()).await.unwrap(),
               block,
             );
             let tx = rpc.transaction(signed.hash()).await.unwrap();
@@ -388,7 +388,7 @@ macro_rules! test {
                 rpc.expand_to_scannable_block(rpc.block_by_number(i).await.unwrap()).await.unwrap(),
                 chain[i],
               );
-              assert_eq!(chain[i].block.number().unwrap(), i);
+              assert_eq!(chain[i].block.number(), i);
             }
           }
         }

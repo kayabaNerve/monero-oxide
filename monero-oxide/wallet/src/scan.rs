@@ -245,7 +245,7 @@ impl InternalScanner {
             additional_timelock: tx.prefix().additional_timelock,
             subaddress,
             payment_id,
-            arbitrary_data: extra.data(),
+            arbitrary_data: extra.arbitrary_data(),
           },
         });
 
@@ -278,8 +278,8 @@ impl InternalScanner {
 
     // We obtain all TXs in full
     let mut txs_with_hashes = vec![(
-      block.miner_transaction.hash(),
-      Transaction::<Pruned>::from(block.miner_transaction.clone()),
+      block.miner_transaction().hash(),
+      Transaction::<Pruned>::from(block.miner_transaction().clone()),
     )];
     for (hash, tx) in block.transactions.iter().zip(transactions) {
       txs_with_hashes.push((*hash, tx));

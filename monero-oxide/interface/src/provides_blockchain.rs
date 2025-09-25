@@ -119,7 +119,7 @@ pub trait ProvidesBlockchain: ProvidesBlockchainMeta {
 
   /// Get a list of blocks by their hashes.
   ///
-  /// The blocks will be validated to be the requested blocks with well-formed numbers.
+  /// The blocks will be validated to be the requested blocks
   fn blocks(
     &self,
     hashes: &[[u8; 32]],
@@ -127,7 +127,7 @@ pub trait ProvidesBlockchain: ProvidesBlockchainMeta {
 
   /// Get a block by its hash.
   ///
-  /// The block will be validated to be the requested block with a well-formed number.
+  /// The block will be validated to be the requested block.
   fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, InterfaceError>>;
 
   /// Get a block by its number.
@@ -157,18 +157,12 @@ pub(crate) fn sanity_check_contiguous_blocks<'a>(
 ) -> Result<(), InterfaceError> {
   let mut parent = None;
   for (number, block) in range.zip(blocks) {
-    match block.number() {
-      Some(actual_number) => {
-        if actual_number != number {
-          Err(InterfaceError::InvalidInterface(format!(
-            "requested block #{number}, received #{actual_number}"
-          )))?;
-        }
-      }
-      None => Err(InterfaceError::InvalidInterface(format!(
-        "interface returned a block with an invalid miner transaction for #{number}",
-      )))?,
-    };
+    if block.number() != number {
+      Err(InterfaceError::InvalidInterface(format!(
+        "requested block #{number}, received #{}",
+        block.number()
+      )))?;
+    }
 
     let block_hash = block.hash();
     if let Some(parent) = parent.or((number == 0).then_some([0; 32])) {
@@ -191,13 +185,6 @@ pub(crate) fn sanity_check_block_by_hash(
   hash: &[u8; 32],
   block: &Block,
 ) -> Result<(), InterfaceError> {
-  if block.number().is_none() {
-    Err(InterfaceError::InvalidInterface(format!(
-      "interface returned a block with an invalid miner transaction for {}",
-      hex::encode(hash),
-    )))?;
-  }
-
   let actual_hash = block.hash();
   if &actual_hash != hash {
     Err(InterfaceError::InvalidInterface(format!(
@@ -224,18 +211,12 @@ pub(crate) fn sanity_check_block_by_number(
   number: usize,
   block: &Block,
 ) -> Result<(), InterfaceError> {
-  match block.number() {
-    Some(actual_number) => {
-      if actual_number != number {
-        Err(InterfaceError::InvalidInterface(format!(
-          "requested block #{number}, received #{actual_number}"
-        )))?;
-      }
-    }
-    None => Err(InterfaceError::InvalidInterface(format!(
-      "interface returned a block with an invalid miner transaction for #{number}",
-    )))?,
-  };
+  if block.number() != number {
+    Err(InterfaceError::InvalidInterface(format!(
+      "requested block #{number}, received #{}",
+      block.number()
+    )))?;
+  }
   Ok(())
 }
 
