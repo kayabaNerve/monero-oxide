@@ -22,6 +22,11 @@ use monero_interface::*;
 
 mod bin_rpc;
 
+// https://github.com/monero-project/monero/blob/b591866fcfed400bc89631686655aa769ec5f2dd
+//   /contrib/epee/include/net/abstract_tcp_server2.h#L68
+const MAX_RPC_RESPONSE_SIZE: usize = 100 * 1024 * 1024;
+
+// These are our own constants used for determining our own bounds on response sizes
 const BASE_RESPONSE_SIZE: usize = u16::MAX as usize;
 const BYTE_FACTOR_IN_JSON_RESPONSE_SIZE: usize = 8;
 
@@ -143,7 +148,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
             } else {
               vec![]
             },
-            self.response_size_limits.then_some(response_size_limit),
+            self.response_size_limits.then_some(response_size_limit.max(MAX_RPC_RESPONSE_SIZE)),
           )
           .await?;
       let res_str = std_shims::str::from_utf8(&res)
