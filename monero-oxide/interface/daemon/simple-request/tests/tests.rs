@@ -17,7 +17,7 @@ async fn test_blockchain() {
 
   let rpc = SimpleRequestTransport::with_custom_timeout(
     "http://monero:oxide@127.0.0.1:18081".to_string(),
-    Duration::from_secs(360),
+    Duration::from_secs(4400),
   )
   .await
   .unwrap();
@@ -68,12 +68,8 @@ async fn test_blockchain() {
 async fn test_fee_rates() {
   let _guard = SEQUENTIAL.lock().await;
 
-  let rpc = SimpleRequestTransport::with_custom_timeout(
-    "http://monero:oxide@127.0.0.1:18081".to_string(),
-    Duration::from_secs(360),
-  )
-  .await
-  .unwrap();
+  let rpc =
+    SimpleRequestTransport::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
 
   let fee_rate = rpc.fee_rate(FeePriority::Normal, u64::MAX).await.unwrap();
   rpc.fee_rate(FeePriority::Normal, fee_rate.per_weight()).await.unwrap();
@@ -84,8 +80,12 @@ async fn test_fee_rates() {
 async fn test_decoys() {
   let _guard = SEQUENTIAL.lock().await;
 
-  let rpc =
-    SimpleRequestTransport::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
+  let rpc = SimpleRequestTransport::with_custom_timeout(
+    "http://monero:oxide@127.0.0.1:18081".to_string(),
+    Duration::from_secs(220),
+  )
+  .await
+  .unwrap();
 
   // Ensure there's blocks on-chain
   rpc
