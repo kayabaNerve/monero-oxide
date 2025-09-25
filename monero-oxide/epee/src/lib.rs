@@ -49,22 +49,24 @@ pub struct Epee<'a> {
 
 /// An item with an EPEE-encoded object.
 pub struct EpeeEntry<'a> {
-  root: &'a mut Epee<'a>,
+  current_encoding_state: &'a mut &'a [u8],
+  index: &'a mut Index<'a>,
   kind: Type,
   len: u64,
 }
 
 /// An iterator over fields.
 pub struct FieldIterator<'a> {
-  root: &'a mut Epee<'a>,
+  current_encoding_state: &'a mut &'a [u8],
+  index: &'a mut Index<'a>,
   len: u64,
   advance: bool,
 }
 impl<'a> Drop for FieldIterator<'a> {
   #[inline(always)]
   fn drop(&mut self) {
-    let prior_encoding_state = self.root.index.revert();
-    self.root.current_encoding_state = prior_encoding_state;
+    let prior_encoding_state = self.index.revert();
+    *self.current_encoding_state = prior_encoding_state;
   }
 }
 
@@ -75,30 +77,42 @@ impl<'a> FieldIterator<'a> {
   /// iterator. Accordingly, we cannot use `Iterator::next` which requires items not borrow from
   /// the iterator.
   #[allow(clippy::should_implement_trait)]
-  pub fn next(&'a mut self) -> Option<Result<(&'a [u8], EpeeEntry<'a>), EpeeError>> {
+  pub fn next<'b>(&'a mut self) -> Option<Result<(&'b [u8], EpeeEntry<'b>), EpeeError>>
+  where
+    'a: 'b,
+  {
     // If we've prior iterated, advance the decoder past the prior yielded item
     if self.advance {
-      match self.root.index.snapshotted_stack().step(&mut self.root.current_encoding_state) {
+      match self.index.snapshotted_stack().step(self.current_encoding_state) {
         Ok(_) => {}
         Err(e) => return Some(Err(e)),
       }
     }
 
     self.len = self.len.checked_sub(1)?;
-    let (key, kind, len) = match self
-      .root
-      .index
-      .snapshotted_stack()
-      .single_step(&mut self.root.current_encoding_state)
-    {
-      Ok(Some((key, kind, len))) => (key, kind, len),
-      // This should be unreachable as the stack shouldn't be empty if our iterator has a non-zero
-      // length
-      Ok(None) => None?,
-      Err(e) => return Some(Err(e)),
-    };
+    let (key, kind, len) =
+      match self.index.snapshotted_stack().single_step(self.current_encoding_state) {
+        Ok(Some((key, kind, len))) => (key, kind, len),
+        // This should be unreachable as the stack shouldn't be empty if our iterator has a non-zero
+        // length
+        Ok(None) => None?,
+        Err(e) => return Some(Err(e)),
+      };
 
-    Some(Ok((key, EpeeEntry { root: self.root, kind, len })))
+    Some(Ok((
+      key,
+      EpeeEntry::<'b> {
+        // See `Index::shorten_lifetime`
+        current_encoding_state: unsafe {
+          core::mem::transmute::<&'a mut &'a [u8], &'b mut &'b [u8]>(
+            &mut self.current_encoding_state,
+          )
+        },
+        index: self.index.shorten_lifetime(),
+        kind,
+        len,
+      },
+    )))
   }
 }
 
@@ -130,20 +144,26 @@ impl<'a> Epee<'a> {
     let len = read_varint(&mut &*self.current_encoding_state)?;
 
     {
-      let mut encoding = self.current_encoding_state;
-      let mut snapshotted_stack = self.index.advance(self.current_encoding_state.len())?;
+      let encoding = &mut &*self.current_encoding_state;
+      let mut snapshotted_stack = self.index.advance(encoding.len())?;
       // Read past the `Type::Object` this was constructed with into `[Type::Entry; n]`
-      snapshotted_stack.single_step(&mut encoding)?;
+      snapshotted_stack.single_step(encoding)?;
       self.current_encoding_state = encoding;
     };
 
-    Ok(FieldIterator { root: self, len, advance: false })
+    Ok(FieldIterator {
+      current_encoding_state: &mut self.current_encoding_state,
+      index: &mut self.index,
+      len,
+      advance: false,
+    })
   }
 }
 
 /// An iterator over an array.
 pub struct ArrayIterator<'a> {
-  root: &'a mut Epee<'a>,
+  current_encoding_state: &'a mut &'a [u8],
+  index: &'a mut Index<'a>,
   kind: Type,
   len: u64,
   advance: bool,
@@ -151,8 +171,8 @@ pub struct ArrayIterator<'a> {
 impl<'a> Drop for ArrayIterator<'a> {
   #[inline(always)]
   fn drop(&mut self) {
-    let prior_encoding_state = self.root.index.revert();
-    self.root.current_encoding_state = prior_encoding_state;
+    let prior_encoding_state = self.index.revert();
+    *self.current_encoding_state = prior_encoding_state;
   }
 }
 
@@ -163,19 +183,29 @@ impl<'a> ArrayIterator<'a> {
   /// iterator. Accordingly, we cannot use `Iterator::next` which requires items not borrow from
   /// the iterator.
   #[allow(clippy::should_implement_trait)]
-  pub fn next(&'a mut self) -> Option<Result<EpeeEntry<'a>, EpeeError>> {
+  pub fn next<'b>(&'a mut self) -> Option<Result<EpeeEntry<'b>, EpeeError>>
+  where
+    'a: 'b,
+  {
     // If we've prior iterated, advance the decoder past the prior yielded item
     if self.advance {
-      match self.root.index.snapshotted_stack().step(&mut self.root.current_encoding_state) {
+      match self.index.snapshotted_stack().step(self.current_encoding_state) {
         Ok(_) => {}
         Err(e) => return Some(Err(e)),
       }
     }
 
-    let res = EpeeEntry { root: self.root, kind: self.kind, len: 1 };
     self.len = self.len.checked_sub(1)?;
     self.advance = true;
-    Some(Ok(res))
+    Some(Ok(EpeeEntry::<'b> {
+      // See `Index::shorten_lifetime`
+      current_encoding_state: unsafe {
+        core::mem::transmute::<&'a mut &'a [u8], &'b mut &'b [u8]>(&mut self.current_encoding_state)
+      },
+      index: self.index.shorten_lifetime(),
+      kind: self.kind,
+      len: 1,
+    }))
   }
 }
 
@@ -203,18 +233,22 @@ impl<'a> EpeeEntry<'a> {
       Err(EpeeError::TypeError)?;
     }
 
-    let len = read_varint(&mut &*self.root.current_encoding_state)?;
+    let len = read_varint(&mut &**self.current_encoding_state)?;
 
     {
-      let mut encoding = self.root.current_encoding_state;
-      let mut snapshotted_stack =
-        self.root.index.advance(self.root.current_encoding_state.len())?;
+      let encoding = &mut *self.current_encoding_state;
+      let mut snapshotted_stack = self.index.advance(encoding.len())?;
       // Read past the `Type::Object` this was constructed with into `[Type::Entry; n]`
-      snapshotted_stack.single_step(&mut encoding)?;
-      self.root.current_encoding_state = encoding;
-    }
+      snapshotted_stack.single_step(encoding)?;
+      self.current_encoding_state = encoding;
+    };
 
-    Ok(FieldIterator { root: self.root, len, advance: false })
+    Ok(FieldIterator {
+      current_encoding_state: self.current_encoding_state,
+      index: self.index,
+      len,
+      advance: false,
+    })
   }
 
   /// Get an iterator of all items within this container.
@@ -223,8 +257,14 @@ impl<'a> EpeeEntry<'a> {
   /// isn't provided as each index operation is of O(n) complexity and single indexes SHOULD NOT be
   /// used. Only exposing `iterate` attempts to make this clear to the user.
   pub fn iterate(&'a mut self) -> Result<ArrayIterator<'a>, EpeeError> {
-    let _snapshotted_stack = self.root.index.advance(self.root.current_encoding_state.len())?;
-    Ok(ArrayIterator { root: self.root, kind: self.kind, len: self.len, advance: false })
+    let _snapshotted_stack = self.index.advance(self.current_encoding_state.len())?;
+    Ok(ArrayIterator {
+      current_encoding_state: self.current_encoding_state,
+      index: self.index,
+      kind: self.kind,
+      len: self.len,
+      advance: false,
+    })
   }
 
   #[inline(always)]
@@ -232,7 +272,7 @@ impl<'a> EpeeEntry<'a> {
     if (self.kind != kind) || (self.len != 1) {
       Err(EpeeError::TypeError)?;
     }
-    read_bytes(&mut &*self.root.current_encoding_state, core::mem::size_of::<T>())
+    read_bytes(&mut &**self.current_encoding_state, core::mem::size_of::<T>())
   }
 
   /// Get the current item as an `i64`.
@@ -295,7 +335,7 @@ impl<'a> EpeeEntry<'a> {
     if (self.kind != Type::String) || (self.len != 1) {
       Err(EpeeError::TypeError)?;
     }
-    read_str(&mut &*self.root.current_encoding_state)
+    read_str(&mut &**self.current_encoding_state)
   }
 
   /// Get the current item as a 'string' (represented as a `&[u8]`) of a specific length.

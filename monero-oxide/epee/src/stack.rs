@@ -260,6 +260,26 @@ const _ASSERT_THREE_KIBIBYTE_INDEX: [(); (3 * 1024) - core::mem::size_of::<Index
   [(); (3 * 1024) - core::mem::size_of::<Index>()];
 
 impl<'a> Index<'a> {
+  pub(crate) fn shorten_lifetime<'b>(&mut self) -> &mut Index<'b>
+  where
+    'a: 'b,
+  {
+    /*
+      This would appear safe, as the lifetime is shorter, but it actually isn't. This allows
+      writing an encoding with lifetime `'b` into the `&mut Index<'b>` _which is a mutable
+      reference to an `Index` with lifetime `'a`_.
+
+      This is fine within our context, and only our context, due to always using a global `'a`
+      for the encoding for an `Epee` object. All references written are actually references with
+      this `'a` lifetime.
+
+      The only reason we have this code here is because we need to allow `EpeeEntry` to have
+      shorter lifetimes than their parents. Else, we can't drop `EpeeEntry` and continue to use
+      `Epee` because they're declared with equivalent lifetimes.
+    */
+    unsafe { core::mem::transmute(self) }
+  }
+
   /// Create a new index for a root-level object.
   pub(crate) fn root_object(encoding: &'a [u8]) -> Self {
     let stack = Stack::new((TypeOrEntry::Type(Type::Object), 1));
