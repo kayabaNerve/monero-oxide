@@ -17,6 +17,8 @@ pub use parser::*;
 /// An error incurred when decoding.
 #[derive(Clone, Copy, Debug)]
 pub enum EpeeError {
+  /// An unexpected state was reached while decoding.
+  InternalError,
   /// The blob did not have the expected header.
   InvalidHeader,
   /// The blob did not have the expected version.
@@ -100,10 +102,9 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> FieldIterator<'encoding, 'pare
     self.len = self.len.checked_sub(1)?;
     let (key, kind, len) = match self.root.stack.single_step(&mut self.root.current_encoding_state)
     {
-      Ok(Some((key, kind, len))) => (key, kind, len),
-      // This should be unreachable as the stack shouldn't be empty if our iterator has a non-zero
-      // length
-      Ok(None) => None?,
+      Ok(Some(SingleStepResult::Entry { key, kind, len })) => (key, kind, len),
+      // A `FieldIterator` was constructed incorrectly or some other internal error
+      Ok(_) => return Some(Err(EpeeError::InternalError)),
       Err(e) => return Some(Err(e)),
     };
 
@@ -150,9 +151,11 @@ impl<'encoding, B: BytesLike<'encoding>> Epee<'encoding, B> {
     self.stack.reset();
     self.error = None;
 
-    let len = read_varint(&mut self.current_encoding_state.clone())?;
     // Read past the `Type::Object` this was constructed with into `[Type::Entry; n]`
-    self.stack.single_step(&mut self.current_encoding_state)?;
+    let len = match self.stack.single_step(&mut self.current_encoding_state)? {
+      Some(TypeOrEntry::Object { fields }) => fields,
+      _ => Err(EpeeError::InternalError)?,
+    };
     Ok(FieldIterator { root: self, len })
   }
 }
@@ -210,8 +213,7 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> EpeeEntry<'encoding, 'parent, 
 
   /// Iterate over the fields within this object.
   pub fn fields(mut self) -> Result<FieldIterator<'encoding, 'parent, B>, EpeeError> {
-    let root =
-      self.root.take().expect("root was None despite only taking in methods which consume `self`");
+    let root = self.root.take().ok_or(EpeeError::InternalError)?;
 
     if let Some(err) = root.error {
       Err(err)?;
@@ -221,9 +223,11 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> EpeeEntry<'encoding, 'parent, 
       Err(EpeeError::TypeError)?;
     }
 
-    let len = read_varint(&mut root.current_encoding_state.clone())?;
     // Read past the `Type::Object` this was constructed with into `[Type::Entry; n]`
-    root.stack.single_step(&mut root.current_encoding_state)?;
+    let len = match root.stack.single_step(&mut root.current_encoding_state)? {
+      Some(TypeOrEntry::Object { fields }) => fields,
+      _ => Err(EpeeError::InternalError)?,
+    };
     Ok(FieldIterator { root, len })
   }
 
@@ -233,8 +237,7 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> EpeeEntry<'encoding, 'parent, 
   /// isn't provided as each index operation is of O(n) complexity and single indexes SHOULD NOT be
   /// used. Only exposing `iterate` attempts to make this clear to the user.
   pub fn iterate(mut self) -> Result<ArrayIterator<'encoding, 'parent, B>, EpeeError> {
-    let root =
-      self.root.take().expect("root was None despite only taking in methods which consume `self`");
+    let root = self.root.take().ok_or(EpeeError::InternalError)?;
 
     if let Some(err) = root.error {
       Err(err)?;
@@ -253,10 +256,7 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> EpeeEntry<'encoding, 'parent, 
       Err(EpeeError::TypeError)?;
     }
 
-    let root = self
-      .root
-      .as_ref()
-      .expect("root was None despite only taking in methods which consume `self`");
+    let root = self.root.as_ref().ok_or(EpeeError::InternalError)?;
     root.current_encoding_state.clone().read_into_slice(slice)?;
     Ok(slice)
   }
@@ -331,10 +331,7 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> EpeeEntry<'encoding, 'parent, 
       Err(EpeeError::TypeError)?;
     }
 
-    let root = self
-      .root
-      .as_ref()
-      .expect("root was None despite only taking in methods which consume `self`");
+    let root = self.root.as_ref().ok_or(EpeeError::InternalError)?;
     read_str(&mut root.current_encoding_state.clone())
   }
 

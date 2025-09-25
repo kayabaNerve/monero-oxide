@@ -1,3 +1,5 @@
+use core::marker::PhantomData;
+
 use crate::{EpeeError, Stack, io::*};
 
 /// The EPEE-defined type of the field being read.
@@ -101,16 +103,23 @@ fn read_key<'encoding, B: BytesLike<'encoding>>(reader: &mut B) -> Result<B, Epe
   reader.read_bytes(len)
 }
 
+/// The result from a single step of the decoder.
+pub(crate) enum SingleStepResult<'encoding, B: BytesLike<'encoding>> {
+  Object { fields: u64 },
+  Entry { key: B, kind: Type, len: u64 },
+  // One of these have to have `PhantomData`, why not `Unit` which we never match on?
+  Unit(PhantomData<&'encoding ()>),
+}
+
 impl Stack {
   /// Execute a single step of the decoding algorithm.
   ///
   /// Returns `Some((key, kind, len))` if an entry was read, or `None` otherwise. This also returns
   /// `None` if the stack is empty.
-  #[allow(clippy::type_complexity)]
   pub(crate) fn single_step<'encoding, B: BytesLike<'encoding>>(
     &mut self,
     encoding: &mut B,
-  ) -> Result<Option<(B, Type, u64)>, EpeeError> {
+  ) -> Result<Option<SingleStepResult<'encoding, B>>, EpeeError> {
     let Some(kind) = self.pop() else {
       return Ok(None);
     };
@@ -149,17 +158,18 @@ impl Stack {
         encoding.advance::<{ core::mem::size_of::<bool>() }>()?;
       }
       TypeOrEntry::Type(Type::Object) => {
-        let amount_of_entries = read_varint(encoding)?;
-        self.push(TypeOrEntry::Entry, amount_of_entries)?;
+        let fields = read_varint(encoding)?;
+        self.push(TypeOrEntry::Entry, fields)?;
+        return Ok(Some(SingleStepResult::Object { fields }));
       }
       TypeOrEntry::Entry => {
         let key = read_key(encoding)?;
         let (kind, len) = Type::read(encoding)?;
         self.push(TypeOrEntry::Type(kind), len)?;
-        return Ok(Some((key, kind, len)));
+        return Ok(Some(SingleStepResult::Entry { key, kind, len }));
       }
     }
-    Ok(None)
+    Ok(Some(SingleStepResult::Unit(PhantomData)))
   }
 
   /// Step through the entirety of the next item.
