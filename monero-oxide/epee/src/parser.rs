@@ -93,7 +93,7 @@ impl Type {
 /// Read a entry's key.
 // https://github.com/monero-project/monero/blob/8d4c625713e3419573dfcc7119c8848f47cabbaa
 //   /contrib/epee/include/storages/portable_storage_from_bin.h#143-L152
-fn read_key<'a>(reader: &mut &'a [u8]) -> Result<&'a [u8], EpeeError> {
+fn read_key<'encoding>(reader: &mut &'encoding [u8]) -> Result<&'encoding [u8], EpeeError> {
   let len = usize::from(read_byte(reader)?);
   if len == 0 {
     Err(EpeeError::EmptyKey)?;
@@ -112,10 +112,10 @@ impl Stack {
   /// Returns `Some((key, kind, len))` if an entry was read, or `None` otherwise. This also returns
   /// `None` if the stack is empty.
   #[allow(clippy::type_complexity)]
-  pub(crate) fn single_step<'a>(
+  pub(crate) fn single_step<'encoding>(
     &mut self,
-    encoding: &mut &'a [u8],
-  ) -> Result<Option<(&'a [u8], Type, u64)>, EpeeError> {
+    encoding: &mut &'encoding [u8],
+  ) -> Result<Option<(&'encoding [u8], Type, u64)>, EpeeError> {
     let Some(kind) = self.pop() else {
       return Ok(None);
     };

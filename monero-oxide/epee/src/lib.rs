@@ -42,37 +42,38 @@ pub const HEADER: [u8; 8] = *b"\x01\x11\x01\x01\x01\x01\x02\x01";
 pub const VERSION: u8 = 1;
 
 /// A decoder for an EPEE-encoded object.
-pub struct Epee<'a> {
-  current_encoding_state: &'a [u8],
+pub struct Epee<'encoding> {
+  original_encoding: &'encoding [u8],
+  current_encoding_state: &'encoding [u8],
   stack: Stack,
   error: Option<EpeeError>,
 }
 
 /// An item with an EPEE-encoded object.
-pub struct EpeeEntry<'a> {
-  root: &'a mut Epee<'a>,
+pub struct EpeeEntry<'encoding, 'parent> {
+  root: Option<&'parent mut Epee<'encoding>>,
   kind: Type,
   len: u64,
 }
 
 // When this entry is dropped, advance the decoder past it
-impl<'a> Drop for EpeeEntry<'a> {
+impl<'encoding, 'parent> Drop for EpeeEntry<'encoding, 'parent> {
   #[inline(always)]
   fn drop(&mut self) {
-    self.root.error =
-      self.root.error.or_else(|| self.root.stack.step(&mut self.root.current_encoding_state).err());
+    if let Some(root) = self.root.take() {
+      root.error = root.error.or_else(|| root.stack.step(&mut root.current_encoding_state).err());
+    }
   }
 }
 
 /// An iterator over fields.
-pub struct FieldIterator<'a> {
-  root: &'a mut Epee<'a>,
+pub struct FieldIterator<'encoding, 'parent> {
+  root: &'parent mut Epee<'encoding>,
   len: u64,
-  advance: bool,
 }
 
-// When this object is dropped, advance the decoder past it
-impl<'a> Drop for FieldIterator<'a> {
+// When this object is dropped, advance the decoder past the unread items
+impl<'encoding, 'parent> Drop for FieldIterator<'encoding, 'parent> {
   #[inline(always)]
   fn drop(&mut self) {
     for _ in 0 .. self.len {
@@ -84,22 +85,14 @@ impl<'a> Drop for FieldIterator<'a> {
   }
 }
 
-impl<'a> FieldIterator<'a> {
+impl<'encoding, 'parent> FieldIterator<'encoding, 'parent> {
   /// The next entry (key, value) within the object.
   ///
   /// This is approximate to `Iterator::next` yet each item maintains a mutable reference to the
   /// iterator. Accordingly, we cannot use `Iterator::next` which requires items not borrow from
   /// the iterator.
   #[allow(clippy::should_implement_trait)]
-  pub fn next(&'a mut self) -> Option<Result<(&'a [u8], EpeeEntry<'a>), EpeeError>> {
-    // If we've prior iterated, advance the decoder past the prior yielded item
-    if self.advance {
-      match self.root.stack.step(&mut self.root.current_encoding_state) {
-        Ok(_) => {}
-        Err(e) => return Some(Err(e)),
-      }
-    }
-
+  pub fn next(&mut self) -> Option<Result<(&'encoding [u8], EpeeEntry<'encoding, '_>), EpeeError>> {
     self.len = self.len.checked_sub(1)?;
     let (key, kind, len) = match self.root.stack.single_step(&mut self.root.current_encoding_state)
     {
@@ -110,13 +103,13 @@ impl<'a> FieldIterator<'a> {
       Err(e) => return Some(Err(e)),
     };
 
-    Some(Ok((key, EpeeEntry { root: self.root, kind, len })))
+    Some(Ok((key, EpeeEntry { root: Some(self.root), kind, len })))
   }
 }
 
-impl<'a> Epee<'a> {
+impl<'encoding> Epee<'encoding> {
   /// Create a new view of an encoding.
-  pub fn new(mut encoding: &'a [u8]) -> Result<Self, EpeeError> {
+  pub fn new(mut encoding: &'encoding [u8]) -> Result<Self, EpeeError> {
     // Check the header
     if read_bytes(&mut encoding, HEADER.len()).ok() != Some(HEADER.as_slice()) {
       Err(EpeeError::InvalidHeader)?;
@@ -130,32 +123,40 @@ impl<'a> Epee<'a> {
       }
     }
 
-    Ok(Epee { current_encoding_state: encoding, stack: Stack::root_object(), error: None })
+    Ok(Epee {
+      original_encoding: encoding,
+      current_encoding_state: encoding,
+      stack: Stack::root_object(),
+      error: None,
+    })
   }
 
   /// Iterate over the fields within this object.
   ///
-  /// This takes a mutable reference to `self` _but_ `self` will be functionally identical once the
-  /// returned object is dropped. The mutable reference to `self` is solely taken to reuse its
-  /// stack for the duration of the indexing.
-  pub fn fields(&'a mut self) -> Result<FieldIterator<'a>, EpeeError> {
+  /// This takes a mutable reference as `Epee` may only be iterated over once at any time.
+  /// Future calls to `fields` will be safe and behave identically however.
+  pub fn fields<'this>(&'this mut self) -> Result<FieldIterator<'encoding, 'this>, EpeeError> {
+    // Reset the current state.
+    self.current_encoding_state = self.original_encoding;
+    self.stack.reset();
+    self.error = None;
+
     let len = read_varint(&mut &*self.current_encoding_state)?;
     // Read past the `Type::Object` this was constructed with into `[Type::Entry; n]`
     self.stack.single_step(&mut self.current_encoding_state)?;
-    Ok(FieldIterator { root: self, len, advance: false })
+    Ok(FieldIterator { root: self, len })
   }
 }
 
 /// An iterator over an array.
-pub struct ArrayIterator<'a> {
-  root: &'a mut Epee<'a>,
+pub struct ArrayIterator<'encoding, 'parent> {
+  root: &'parent mut Epee<'encoding>,
   kind: Type,
   len: u64,
-  advance: bool,
 }
 
-// When this array is dropped, advance the decoder past it
-impl<'a> Drop for ArrayIterator<'a> {
+// When this array is dropped, advance the decoder past the unread items
+impl<'encoding, 'parent> Drop for ArrayIterator<'encoding, 'parent> {
   #[inline(always)]
   fn drop(&mut self) {
     for _ in 0 .. self.len {
@@ -167,34 +168,24 @@ impl<'a> Drop for ArrayIterator<'a> {
   }
 }
 
-impl<'a> ArrayIterator<'a> {
+impl<'encoding, 'parent> ArrayIterator<'encoding, 'parent> {
   /// The next item within the array.
   ///
   /// This is approximate to `Iterator::next` yet each item maintains a mutable reference to the
   /// iterator. Accordingly, we cannot use `Iterator::next` which requires items not borrow from
   /// the iterator.
   #[allow(clippy::should_implement_trait)]
-  pub fn next(&'a mut self) -> Option<Result<EpeeEntry<'a>, EpeeError>> {
+  pub fn next(&mut self) -> Option<Result<EpeeEntry<'encoding, '_>, EpeeError>> {
     if let Some(err) = self.root.error {
       return Some(Err(err));
     }
 
-    // If we've prior iterated, advance the decoder past the prior yielded item
-    if self.advance {
-      match self.root.stack.step(&mut self.root.current_encoding_state) {
-        Ok(_) => {}
-        Err(e) => return Some(Err(e)),
-      }
-    }
-
-    let res = EpeeEntry { root: self.root, kind: self.kind, len: 1 };
     self.len = self.len.checked_sub(1)?;
-    self.advance = true;
-    Some(Ok(res))
+    Some(Ok(EpeeEntry { root: Some(self.root), kind: self.kind, len: 1 }))
   }
 }
 
-impl<'a> EpeeEntry<'a> {
+impl<'encoding, 'parent> EpeeEntry<'encoding, 'parent> {
   /// The type of object this entry represents.
   #[inline(always)]
   pub fn kind(&self) -> Type {
@@ -209,12 +200,11 @@ impl<'a> EpeeEntry<'a> {
   }
 
   /// Iterate over the fields within this object.
-  ///
-  /// This takes a mutable reference to `self` _but_ `self` will be functionally identical once the
-  /// returned object is dropped. The mutable reference to `self` is solely taken to reuse its
-  /// stack for the duration of the indexing.
-  pub fn fields(&'a mut self) -> Result<FieldIterator<'a>, EpeeError> {
-    if let Some(err) = self.root.error {
+  pub fn fields(mut self) -> Result<FieldIterator<'encoding, 'parent>, EpeeError> {
+    let root =
+      self.root.take().expect("root was None despite only taking in methods which consume `self`");
+
+    if let Some(err) = root.error {
       Err(err)?;
     }
 
@@ -222,10 +212,10 @@ impl<'a> EpeeEntry<'a> {
       Err(EpeeError::TypeError)?;
     }
 
-    let len = read_varint(&mut &*self.root.current_encoding_state)?;
+    let len = read_varint(&mut &*root.current_encoding_state)?;
     // Read past the `Type::Object` this was constructed with into `[Type::Entry; n]`
-    self.root.stack.single_step(&mut self.root.current_encoding_state)?;
-    Ok(FieldIterator { root: self.root, len, advance: false })
+    root.stack.single_step(&mut root.current_encoding_state)?;
+    Ok(FieldIterator { root, len })
   }
 
   /// Get an iterator of all items within this container.
@@ -233,12 +223,15 @@ impl<'a> EpeeEntry<'a> {
   /// If you want to index a specific item, you may use `.iterate()?.nth(i)?`. An `index` method
   /// isn't provided as each index operation is of O(n) complexity and single indexes SHOULD NOT be
   /// used. Only exposing `iterate` attempts to make this clear to the user.
-  pub fn iterate(&'a mut self) -> Result<ArrayIterator<'a>, EpeeError> {
-    if let Some(err) = self.root.error {
+  pub fn iterate(mut self) -> Result<ArrayIterator<'encoding, 'parent>, EpeeError> {
+    let root =
+      self.root.take().expect("root was None despite only taking in methods which consume `self`");
+
+    if let Some(err) = root.error {
       Err(err)?;
     }
 
-    Ok(ArrayIterator { root: self.root, kind: self.kind, len: self.len, advance: false })
+    Ok(ArrayIterator { root, kind: self.kind, len: self.len })
   }
 
   #[inline(always)]
@@ -246,7 +239,12 @@ impl<'a> EpeeEntry<'a> {
     if (self.kind != kind) || (self.len != 1) {
       Err(EpeeError::TypeError)?;
     }
-    read_bytes(&mut &*self.root.current_encoding_state, core::mem::size_of::<T>())
+
+    let root = self
+      .root
+      .as_ref()
+      .expect("root was None despite only taking in methods which consume `self`");
+    read_bytes(&mut &*root.current_encoding_state, core::mem::size_of::<T>())
   }
 
   /// Get the current item as an `i64`.
@@ -309,7 +307,12 @@ impl<'a> EpeeEntry<'a> {
     if (self.kind != Type::String) || (self.len != 1) {
       Err(EpeeError::TypeError)?;
     }
-    read_str(&mut &*self.root.current_encoding_state)
+
+    let root = self
+      .root
+      .as_ref()
+      .expect("root was None despite only taking in methods which consume `self`");
+    read_str(&mut &*root.current_encoding_state)
   }
 
   /// Get the current item as a 'string' (represented as a `&[u8]`) of a specific length.

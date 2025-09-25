@@ -75,6 +75,8 @@ const _ASSERT_KIBIBYTE_STACK: [(); 1024 - core::mem::size_of::<Stack>()] =
   [(); 1024 - core::mem::size_of::<Stack>()];
 
 impl Stack {
+  /// Create a new stack to use with decoding the root object.
+  #[inline(always)]
   pub(crate) fn root_object() -> Self {
     /*
       Zero-initialize the arrays.
@@ -83,14 +85,23 @@ impl Stack {
       avoid `unsafe` code here for a minor performance benefit. Because we require `amounts` to be
       non-zero, we use `NonZero::MIN`.
     */
-    let mut types = [TypeOrEntry::Entry; MAX_OBJECT_DEPTH];
-    let mut amounts = [NonZero::<u64>::MIN; MAX_OBJECT_DEPTH];
+    let types = [TypeOrEntry::Entry; MAX_OBJECT_DEPTH];
+    let amounts = [NonZero::<u64>::MIN; MAX_OBJECT_DEPTH];
 
-    // Set the initial item
-    types[0] = TypeOrEntry::Type(Type::Object);
-    amounts[0] = NonZero::<u64>::MIN; // 1
+    let mut res = Self { types, amounts, depth: 1 };
+    res.reset();
+    res
+  }
 
-    Self { types, amounts, depth: 1 }
+  /// Reset the stack to its initial value.
+  ///
+  /// This solely resets the first value in each array and the depth. All items past the depth have
+  /// undefined values as they're expected to be overwritten before the depth is increased.
+  #[inline(always)]
+  pub(crate) fn reset(&mut self) {
+    self.types[0] = TypeOrEntry::Type(Type::Object);
+    self.amounts[0] = NonZero::<u64>::MIN; // 1
+    self.depth = 1;
   }
 
   /// The current stack depth.
