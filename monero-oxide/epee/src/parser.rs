@@ -1,4 +1,4 @@
-use crate::{EpeeError, SnapshottedStack, read_byte, read_bytes, read_varint, read_str};
+use crate::{EpeeError, Stack, read_byte, read_bytes, read_varint, read_str};
 
 /// The EPEE-defined type of the field being read.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -106,16 +106,16 @@ fn read_key<'a>(reader: &mut &'a [u8]) -> Result<&'a [u8], EpeeError> {
   Ok(res)
 }
 
-impl<'a> SnapshottedStack<'a> {
+impl Stack {
   /// Execute a single step of the decoding algorithm.
   ///
   /// Returns `Some((key, kind, len))` if an entry was read, or `None` otherwise. This also returns
   /// `None` if the stack is empty.
   #[allow(clippy::type_complexity)]
-  pub(crate) fn single_step<'b>(
+  pub(crate) fn single_step<'a>(
     &mut self,
-    encoding: &mut &'b [u8],
-  ) -> Result<Option<(&'b [u8], Type, u64)>, EpeeError> {
+    encoding: &mut &'a [u8],
+  ) -> Result<Option<(&'a [u8], Type, u64)>, EpeeError> {
     let Some(kind) = self.pop() else {
       return Ok(None);
     };
