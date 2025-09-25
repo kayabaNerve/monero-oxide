@@ -85,23 +85,13 @@ impl Stack {
       avoid `unsafe` code here for a minor performance benefit. Because we require `amounts` to be
       non-zero, we use `NonZero::MIN`.
     */
-    let types = [TypeOrEntry::Entry; MAX_OBJECT_DEPTH];
-    let amounts = [NonZero::<u64>::MIN; MAX_OBJECT_DEPTH];
+    let mut types = [TypeOrEntry::Entry; MAX_OBJECT_DEPTH];
+    let mut amounts = [NonZero::<u64>::MIN; MAX_OBJECT_DEPTH];
 
-    let mut res = Self { types, amounts, depth: 1 };
-    res.reset();
-    res
-  }
+    types[0] = TypeOrEntry::Type(Type::Object);
+    amounts[0] = NonZero::<u64>::MIN; // 1
 
-  /// Reset the stack to its initial value.
-  ///
-  /// This solely resets the first value in each array and the depth. All items past the depth have
-  /// undefined values as they're expected to be overwritten before the depth is increased.
-  #[inline(always)]
-  pub(crate) fn reset(&mut self) {
-    self.types[0] = TypeOrEntry::Type(Type::Object);
-    self.amounts[0] = NonZero::<u64>::MIN; // 1
-    self.depth = 1;
+    Self { types, amounts, depth: 1 }
   }
 
   /// The current stack depth.

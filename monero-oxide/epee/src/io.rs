@@ -3,10 +3,8 @@
 use crate::EpeeError;
 
 /// An item which is like a `&[u8]`.
-///
-/// This DOES NOT bound `Copy` but MUST be cheap to clone.
 #[allow(clippy::len_without_is_empty)]
-pub trait BytesLike<'encoding>: Clone {
+pub trait BytesLike<'encoding>: Sized {
   /// The length of the current item.
   // This is only used for `as_fixed_len_str`.
   fn len(&self) -> usize;

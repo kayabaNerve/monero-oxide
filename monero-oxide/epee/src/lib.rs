@@ -48,7 +48,6 @@ pub const VERSION: u8 = 1;
 
 /// A decoder for an EPEE-encoded object.
 pub struct Epee<'encoding, B: BytesLike<'encoding>> {
-  original_encoding: B,
   current_encoding_state: B,
   stack: Stack,
   error: Option<EpeeError>,
@@ -133,7 +132,6 @@ impl<'encoding, B: BytesLike<'encoding>> Epee<'encoding, B> {
     }
 
     Ok(Epee {
-      original_encoding: encoding.clone(),
       current_encoding_state: encoding,
       stack: Stack::root_object(),
       error: None,
@@ -143,17 +141,19 @@ impl<'encoding, B: BytesLike<'encoding>> Epee<'encoding, B> {
 
   /// Iterate over the fields within this object.
   ///
-  /// This takes a mutable reference as `Epee` may only be iterated over once at any time.
-  /// Future calls to `Epee::fields` will be safe and behave identically however.
-  pub fn fields<'this>(&'this mut self) -> Result<FieldIterator<'encoding, 'this, B>, EpeeError> {
-    // Reset the current state.
-    self.current_encoding_state = self.original_encoding.clone();
-    self.stack.reset();
-    self.error = None;
-
+  /// This takes a mutable reference as `Epee` is the owned object representing the decoder's
+  /// state. However, this is not eligible to be called against after consumption. That is why the
+  /// mutable reference has an _equivalent_ lifetime to the encoding the decoder is premised on.
+  /// This prevents any code which invokes this method twice from compiling as the first call will
+  /// always be considered as continually borrowing `self`, even when its returned value is
+  /// dropped.
+  ///
+  /// If the caller can somehow call this method twice for a given `Epee`, know the behavior is
+  /// completely undefined.
+  pub fn fields(&'encoding mut self) -> Result<FieldIterator<'encoding, 'encoding, B>, EpeeError> {
     // Read past the `Type::Object` this was constructed with into `[Type::Entry; n]`
     let len = match self.stack.single_step(&mut self.current_encoding_state)? {
-      Some(TypeOrEntry::Object { fields }) => fields,
+      Some(SingleStepResult::Object { fields }) => fields,
       _ => Err(EpeeError::InternalError)?,
     };
     Ok(FieldIterator { root: self, len })
@@ -225,7 +225,7 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> EpeeEntry<'encoding, 'parent, 
 
     // Read past the `Type::Object` this was constructed with into `[Type::Entry; n]`
     let len = match root.stack.single_step(&mut root.current_encoding_state)? {
-      Some(TypeOrEntry::Object { fields }) => fields,
+      Some(SingleStepResult::Object { fields }) => fields,
       _ => Err(EpeeError::InternalError)?,
     };
     Ok(FieldIterator { root, len })
@@ -246,101 +246,98 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> EpeeEntry<'encoding, 'parent, 
     Ok(ArrayIterator { root, kind: self.kind, len: self.len })
   }
 
+  #[allow(clippy::wrong_self_convention)]
   #[inline(always)]
-  fn as_primitive<'slice>(
-    &self,
-    kind: Type,
-    slice: &'slice mut [u8],
-  ) -> Result<&'slice mut [u8], EpeeError> {
+  fn to_primitive(mut self, kind: Type, slice: &mut [u8]) -> Result<&mut [u8], EpeeError> {
     if (self.kind != kind) || (self.len != 1) {
       Err(EpeeError::TypeError)?;
     }
 
-    let root = self.root.as_ref().ok_or(EpeeError::InternalError)?;
-    root.current_encoding_state.clone().read_into_slice(slice)?;
+    let root = self.root.take().ok_or(EpeeError::InternalError)?;
+    root.current_encoding_state.read_into_slice(slice)?;
     Ok(slice)
   }
 
   /// Get the current item as an `i64`.
   #[inline(always)]
-  pub fn as_i64(&self) -> Result<i64, EpeeError> {
+  pub fn to_i64(self) -> Result<i64, EpeeError> {
     let mut buf = [0; core::mem::size_of::<i64>()];
-    Ok(i64::from_le_bytes(self.as_primitive(Type::Int64, &mut buf)?.try_into().unwrap()))
+    Ok(i64::from_le_bytes(self.to_primitive(Type::Int64, &mut buf)?.try_into().unwrap()))
   }
 
   /// Get the current item as an `i32`.
   #[inline(always)]
-  pub fn as_i32(&self) -> Result<i32, EpeeError> {
+  pub fn to_i32(self) -> Result<i32, EpeeError> {
     let mut buf = [0; core::mem::size_of::<i32>()];
-    Ok(i32::from_le_bytes(self.as_primitive(Type::Int32, &mut buf)?.try_into().unwrap()))
+    Ok(i32::from_le_bytes(self.to_primitive(Type::Int32, &mut buf)?.try_into().unwrap()))
   }
 
   /// Get the current item as an `i16`.
   #[inline(always)]
-  pub fn as_i16(&self) -> Result<i16, EpeeError> {
+  pub fn to_i16(self) -> Result<i16, EpeeError> {
     let mut buf = [0; core::mem::size_of::<i16>()];
-    Ok(i16::from_le_bytes(self.as_primitive(Type::Int16, &mut buf)?.try_into().unwrap()))
+    Ok(i16::from_le_bytes(self.to_primitive(Type::Int16, &mut buf)?.try_into().unwrap()))
   }
 
   /// Get the current item as an `i8`.
   #[inline(always)]
-  pub fn as_i8(&self) -> Result<i8, EpeeError> {
+  pub fn to_i8(self) -> Result<i8, EpeeError> {
     let mut buf = [0; core::mem::size_of::<i8>()];
-    Ok(i8::from_le_bytes(self.as_primitive(Type::Int8, &mut buf)?.try_into().unwrap()))
+    Ok(i8::from_le_bytes(self.to_primitive(Type::Int8, &mut buf)?.try_into().unwrap()))
   }
 
   /// Get the current item as a `u64`.
   #[inline(always)]
-  pub fn as_u64(&self) -> Result<u64, EpeeError> {
+  pub fn to_u64(self) -> Result<u64, EpeeError> {
     let mut buf = [0; core::mem::size_of::<u64>()];
-    Ok(u64::from_le_bytes(self.as_primitive(Type::Uint64, &mut buf)?.try_into().unwrap()))
+    Ok(u64::from_le_bytes(self.to_primitive(Type::Uint64, &mut buf)?.try_into().unwrap()))
   }
 
   /// Get the current item as a `u32`.
   #[inline(always)]
-  pub fn as_u32(&self) -> Result<u32, EpeeError> {
+  pub fn to_u32(self) -> Result<u32, EpeeError> {
     let mut buf = [0; core::mem::size_of::<u32>()];
-    Ok(u32::from_le_bytes(self.as_primitive(Type::Uint32, &mut buf)?.try_into().unwrap()))
+    Ok(u32::from_le_bytes(self.to_primitive(Type::Uint32, &mut buf)?.try_into().unwrap()))
   }
 
   /// Get the current item as a `u16`.
   #[inline(always)]
-  pub fn as_u16(&self) -> Result<u16, EpeeError> {
+  pub fn to_u16(self) -> Result<u16, EpeeError> {
     let mut buf = [0; core::mem::size_of::<u16>()];
-    Ok(u16::from_le_bytes(self.as_primitive(Type::Uint16, &mut buf)?.try_into().unwrap()))
+    Ok(u16::from_le_bytes(self.to_primitive(Type::Uint16, &mut buf)?.try_into().unwrap()))
   }
 
   /// Get the current item as a `u8`.
   #[inline(always)]
-  pub fn as_u8(&self) -> Result<u8, EpeeError> {
+  pub fn to_u8(self) -> Result<u8, EpeeError> {
     let mut buf = [0; core::mem::size_of::<u8>()];
-    Ok(self.as_primitive(Type::Uint8, &mut buf)?[0])
+    Ok(self.to_primitive(Type::Uint8, &mut buf)?[0])
   }
 
   /// Get the current item as an `f64`.
   #[inline(always)]
-  pub fn as_f64(&self) -> Result<f64, EpeeError> {
+  pub fn to_f64(self) -> Result<f64, EpeeError> {
     let mut buf = [0; core::mem::size_of::<f64>()];
-    Ok(f64::from_le_bytes(self.as_primitive(Type::Double, &mut buf)?.try_into().unwrap()))
+    Ok(f64::from_le_bytes(self.to_primitive(Type::Double, &mut buf)?.try_into().unwrap()))
   }
 
   /// Get the current item as a 'string' (represented as a `B`).
   #[inline(always)]
-  pub fn as_str(&self) -> Result<B, EpeeError> {
+  pub fn to_str(mut self) -> Result<B, EpeeError> {
     if (self.kind != Type::String) || (self.len != 1) {
       Err(EpeeError::TypeError)?;
     }
 
-    let root = self.root.as_ref().ok_or(EpeeError::InternalError)?;
-    read_str(&mut root.current_encoding_state.clone())
+    let root = self.root.take().ok_or(EpeeError::InternalError)?;
+    read_str(&mut root.current_encoding_state)
   }
 
   /// Get the current item as a 'string' (represented as a `B`) of a specific length.
   ///
   /// This will error if the result is not actually the expected length.
   #[inline(always)]
-  pub fn as_fixed_len_str(&self, len: usize) -> Result<B, EpeeError> {
-    let str = self.as_str()?;
+  pub fn to_fixed_len_str(self, len: usize) -> Result<B, EpeeError> {
+    let str = self.to_str()?;
     if str.len() != len {
       Err(EpeeError::TypeError)?;
     }
@@ -349,8 +346,8 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> EpeeEntry<'encoding, 'parent, 
 
   /// Get the current item as a `bool`.
   #[inline(always)]
-  pub fn as_bool(&self) -> Result<bool, EpeeError> {
+  pub fn to_bool(self) -> Result<bool, EpeeError> {
     let mut buf = [0; core::mem::size_of::<bool>()];
-    Ok(self.as_primitive(Type::Bool, &mut buf)?[0] != 0)
+    Ok(self.to_primitive(Type::Bool, &mut buf)?[0] != 0)
   }
 }
