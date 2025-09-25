@@ -24,18 +24,11 @@ use monero_oxide::{
 use monero_interface::*;
 
 use crate::{
-  BASE_RESPONSE_SIZE, BYTE_FACTOR_IN_JSON_RESPONSE_SIZE, TRANSACTION_SIZE_BOUND, HttpTransport,
-  MoneroDaemon, rpc_hex, hash_hex,
+  MAX_RPC_RESPONSE_SIZE, BASE_RESPONSE_SIZE, TRANSACTION_SIZE_BOUND, HttpTransport, MoneroDaemon,
+  rpc_hex, hash_hex,
 };
 
 mod epee;
-
-/*
-  Monero doesn't have a block size limit, solely one contextual to the current blockchain. With a
-  default size of 300 KB, we assume it won't reach 5 MB. Even if it does, we'll still accept a 5 MB
-  block if it fits within our multiplicative allowance or other additive allowances.
-*/
-const BLOCK_SIZE_BOUND: usize = 5_000_000;
 
 impl<T: HttpTransport> MoneroDaemon<T> {
   /// Perform a binary call to the specified route with the provided parameters.
@@ -79,12 +72,12 @@ impl<T: HttpTransport> MoneroDaemon<T> {
 
     // https://github.com/monero-project/monero/blob/cc73fe71162d564ffda8e549b79a350bca53c454
     //   /src/rpc/core_rpc_server.cpp#L77
-    const BLOCKS_PER_REQUEST: usize = 1000;
-    const BLOCKS_PER_REQUEST_U64: u64 = BLOCKS_PER_REQUEST as u64;
+    const BLOCKS_PER_REQUEST_LIMIT: usize = 1000;
+    const BLOCKS_PER_REQUEST_LIMIT_U64: u64 = BLOCKS_PER_REQUEST_LIMIT as u64;
 
     let expected_request_header_len = 19;
     let expected_request_len =
-      expected_request_header_len + 8 + (BLOCKS_PER_REQUEST.min(requested_blocks) * 8);
+      expected_request_header_len + 8 + (BLOCKS_PER_REQUEST_LIMIT.min(requested_blocks) * 8);
     let mut request = Vec::with_capacity(expected_request_len);
     request.extend(epee::HEADER);
     request.push(epee::VERSION);
@@ -95,12 +88,14 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     request.push((epee::Type::Uint64 as u8) | (epee::Array::Array as u8));
     debug_assert_eq!(expected_request_header_len, request.len());
 
+    // Optimistically use the default request limit
+    let mut request_limit = BLOCKS_PER_REQUEST_LIMIT_U64;
     let mut blocks = vec![];
     let mut first_iter = true;
     while start <= end {
       request.truncate(expected_request_header_len);
 
-      let this_end = start.saturating_add(BLOCKS_PER_REQUEST_U64 - 1).min(end);
+      let this_end = start.saturating_add(request_limit - 1).min(end);
       let requested_blocks: u64 = this_end - start + 1;
       request.extend(((requested_blocks << 2) | 0b11).to_le_bytes());
 
@@ -108,25 +103,45 @@ impl<T: HttpTransport> MoneroDaemon<T> {
         request.extend(i.to_le_bytes());
       }
 
-      // Only checked on the first iteration as the final chunk may be shorter
+      // Only checked on the first iteration as the final chunk may be shorter, or the request
+      // limit may be shrinked due to abnormally large blocks
       if first_iter {
         debug_assert_eq!(expected_request_len, request.len());
-        first_iter = false;
+        first_iter = false
       }
 
-      blocks.push(
-        self
-          .bin_call(
-            "get_blocks_by_height.bin",
-            request.clone(),
-            BASE_RESPONSE_SIZE.saturating_add(
-              usize::try_from(requested_blocks)
-                .expect("requested blocks in a single request exceeded `usize::MAX`")
-                .saturating_mul(BLOCK_SIZE_BOUND),
-            ),
-          )
-          .await?,
-      );
+      let res = match self
+        .bin_call("get_blocks_by_height.bin", request.clone(), MAX_RPC_RESPONSE_SIZE)
+        .await
+      {
+        Ok(res) => res,
+        Err(InterfaceError::InterfaceError(e)) => {
+          // If we only requested this one block, propagate the error
+          if request_limit == 1 {
+            Err(InterfaceError::InterfaceError(e))?;
+          }
+          // Else, retry with only requesting one block at a time
+          request_limit = 1;
+          continue;
+        }
+        Err(e) => Err(e)?,
+      };
+
+      // If this is less than the targetted amount of the response size limit, increase the current
+      // request limit by up to 50%
+      const TARGET: usize = (MAX_RPC_RESPONSE_SIZE * 4) / 5;
+      if res.len() < TARGET {
+        let fifty_percent_more = request_limit + (request_limit / 2);
+        let proportional = TARGET / res.len().div_ceil(request_limit);
+        request_limit = fifty_percent_more.min(proportional).min(BLOCKS_PER_REQUEST_LIMIT_U64);
+      }
+      // If this is more than the targetted amount of the response size limit, halve the current
+      // request limit
+      if res.len() > TARGET {
+        request_limit = (request_limit / 2).max(1);
+      }
+
+      blocks.push(res);
 
       match this_end.checked_add(1) {
         Some(after) => start = after,
@@ -177,6 +192,11 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
     }
   }
 
+  /*
+    We explicitly DO NOT provide the ability to fetch a list of blocks via their hashes due to
+    being unable to estimate their size. We only support fetching them individually as no
+    individual block should exceed the size limit.
+  */
   fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
     async move {
       #[derive(Debug, Deserialize)]
@@ -188,8 +208,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
         .json_rpc_call(
           "get_block",
           Some(json!({ "hash": hex::encode(hash) })),
-          BASE_RESPONSE_SIZE
-            .saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(BLOCK_SIZE_BOUND)),
+          MAX_RPC_RESPONSE_SIZE,
         )
         .await?;
 
