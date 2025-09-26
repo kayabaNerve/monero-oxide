@@ -7,8 +7,8 @@ use crate::{InterfaceError, ProvidesBlockchainMeta};
 
 /// Provides the blockchain from an untrusted interface.
 ///
-/// This provides some of its methods yet (`contiguous_blocks` || `block_by_number`) &&
-/// (`blocks` || `block`) MUST be overriden, ideally the batch methods.
+/// This provides some of its methods yet (`contiguous_blocks` || `block_by_number`) MUST be
+/// overriden, and the batch  method SHOULD be overriden.
 pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
   /// Get a contiguous range of blocks.
   ///
@@ -31,23 +31,6 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
     }
   }
 
-  /// Get a list of blocks by their hashes.
-  ///
-  /// No validation is applied to the received blocks other than that they deserialize and have the
-  /// expected length.
-  fn blocks(
-    &self,
-    hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>> {
-    async move {
-      let mut blocks = Vec::with_capacity(hashes.len());
-      for hash in hashes {
-        blocks.push(self.block(*hash).await?);
-      }
-      Ok(blocks)
-    }
-  }
-
   /* TODO
   /// Subscribe to blocks.
   fn subscribe(start: usize) ->
@@ -57,20 +40,7 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
   /// Get a block by its hash.
   ///
   /// No validation is applied to the received block other than that it deserializes.
-  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
-    async move {
-      let mut blocks = self.blocks(&[hash]).await?;
-      if blocks.len() != 1 {
-        Err(InterfaceError::InternalError(format!(
-          "`{}` returned {} blocks, expected {}",
-          "ProvidesUnvalidatedBlockchain::blocks",
-          blocks.len(),
-          1,
-        )))?;
-      }
-      Ok(blocks.pop().unwrap())
-    }
-  }
+  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, InterfaceError>>;
 
   /// Get a block by its number.
   ///
@@ -115,14 +85,6 @@ pub trait ProvidesBlockchain: ProvidesBlockchainMeta {
   fn contiguous_blocks(
     &self,
     range: RangeInclusive<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>>;
-
-  /// Get a list of blocks by their hashes.
-  ///
-  /// The blocks will be validated to be the requested blocks
-  fn blocks(
-    &self,
-    hashes: &[[u8; 32]],
   ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>>;
 
   /// Get a block by its hash.
@@ -197,16 +159,6 @@ pub(crate) fn sanity_check_block_by_hash(
   Ok(())
 }
 
-pub(crate) fn sanity_check_blocks<'a>(
-  hashes: &[[u8; 32]],
-  blocks: impl Iterator<Item = &'a Block>,
-) -> Result<(), InterfaceError> {
-  for (block, hash) in blocks.zip(hashes) {
-    sanity_check_block_by_hash(hash, block)?;
-  }
-  Ok(())
-}
-
 pub(crate) fn sanity_check_block_by_number(
   number: usize,
   block: &Block,
@@ -243,25 +195,6 @@ impl<P: ProvidesUnvalidatedBlockchain> ProvidesBlockchain for P {
         )))?;
       }
       sanity_check_contiguous_blocks(range, blocks.iter())?;
-      Ok(blocks)
-    }
-  }
-
-  fn blocks(
-    &self,
-    hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>> {
-    async move {
-      let blocks = <P as ProvidesUnvalidatedBlockchain>::blocks(self, hashes).await?;
-      if blocks.len() != hashes.len() {
-        Err(InterfaceError::InternalError(format!(
-          "`{}` returned {} blocks, expected {}",
-          "ProvidesUnvalidatedBlockchain::blocks",
-          blocks.len(),
-          hashes.len(),
-        )))?;
-      }
-      sanity_check_blocks(hashes, blocks.iter())?;
       Ok(blocks)
     }
   }

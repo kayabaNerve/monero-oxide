@@ -37,10 +37,6 @@ async fn test_blockchain() {
   assert_eq!(latest_block.hash(), hashes[0]);
   assert_eq!(rpc.block(hashes[0]).await.unwrap(), latest_block);
 
-  let blocks = rpc.blocks(&[hashes[0]]).await.unwrap();
-  assert_eq!(blocks.len(), 1);
-  assert_eq!(blocks[0], latest_block);
-
   let contiguous_blocks = rpc.contiguous_blocks(number ..= number).await.unwrap();
   assert_eq!(contiguous_blocks.len(), 1);
   assert_eq!(contiguous_blocks[0], latest_block);
@@ -51,7 +47,16 @@ async fn test_blockchain() {
     .unwrap();
   let contiguous_blocks = rpc.contiguous_blocks(number ..= new_number).await.unwrap();
   assert_eq!(contiguous_blocks[0], latest_block);
-  assert_eq!(&rpc.blocks(&hashes).await.unwrap(), &contiguous_blocks[1 ..]);
+  assert_eq!(
+    &{
+      let mut blocks = vec![];
+      for hash in &hashes {
+        blocks.push(rpc.block(*hash).await.unwrap());
+      }
+      blocks
+    },
+    &contiguous_blocks[1 ..]
+  );
   assert_eq!(contiguous_blocks.len(), new_number - number + 1);
   for ((block, hash), number) in contiguous_blocks
     .iter()

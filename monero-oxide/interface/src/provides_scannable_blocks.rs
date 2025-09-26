@@ -101,9 +101,9 @@ impl<P: ProvidesTransactions + ProvidesOutputs> ExpandToScannableBlock for P {}
 
 /// Provides scannable blocks from an untrusted interface.
 ///
-/// This provides all its methods yet
-/// (`contiguous_scannable_blocks` || `scannable_block_by_number`) &&
-/// (`scannable_blocks` || `scannable_block`) MUST be overriden, ideally the batch methods.
+/// This provides some of its methods yet
+/// (`contiguous_scannable_blocks` || `scannable_block_by_number`) MUST be overriden, and the batch
+/// method SHOULD be overriden.
 pub trait ProvidesUnvalidatedScannableBlocks: Sync {
   /// Get a contiguous range of `ScannableBlock`s.
   ///
@@ -125,43 +125,13 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
     }
   }
 
-  /// Get a list of `ScannableBlock`s by their hashes.
-  ///
-  /// No validation is applied to the received blocks other than that they deserialize and have the
-  /// expected length.
-  fn scannable_blocks(
-    &self,
-    hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, InterfaceError>> {
-    async move {
-      let mut blocks = Vec::with_capacity(hashes.len());
-      for hash in hashes {
-        blocks.push(self.scannable_block(*hash).await?);
-      }
-      Ok(blocks)
-    }
-  }
-
   /// Get a `ScannableBlock` by its hash.
   ///
   /// No validation is applied to the received blocks other than that it deserializes.
   fn scannable_block(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<ScannableBlock, InterfaceError>> {
-    async move {
-      let mut blocks = self.scannable_blocks(&[hash]).await?;
-      if blocks.len() != 1 {
-        Err(InterfaceError::InternalError(format!(
-          "`{}` returned {} blocks, expected {}",
-          "ProvidesUnvalidatedScannableBlocks::scannable_blocks",
-          blocks.len(),
-          1,
-        )))?;
-      }
-      Ok(blocks.pop().unwrap())
-    }
-  }
+  ) -> impl Send + Future<Output = Result<ScannableBlock, InterfaceError>>;
 
   /// Get a `ScannableBlock` by its number.
   ///
@@ -195,15 +165,6 @@ pub trait ProvidesScannableBlocks: Sync {
   fn contiguous_scannable_blocks(
     &self,
     range: RangeInclusive<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, InterfaceError>>;
-
-  /// Get a list of `ScannableBlock`s by their hashes.
-  ///
-  /// The blocks will be validated to be the requested blocks with well-formed numbers and have the
-  /// expected amount of transactions.
-  fn scannable_blocks(
-    &self,
-    hashes: &[[u8; 32]],
   ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, InterfaceError>>;
 
   /// Get a `ScannableBlock` by its hash.
@@ -253,40 +214,6 @@ impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
       }
       crate::provides_blockchain::sanity_check_contiguous_blocks(
         range,
-        blocks.iter().map(|scannable_block| &scannable_block.block),
-      )?;
-
-      for block in &blocks {
-        if block.block.transactions.len() != block.transactions.len() {
-          Err(InterfaceError::InvalidInterface(format!(
-            "scannable block had {} transactions yet only received {}",
-            block.block.transactions.len(),
-            block.transactions.len()
-          )))?;
-        }
-      }
-
-      Ok(blocks)
-    }
-  }
-
-  fn scannable_blocks(
-    &self,
-    hashes: &[[u8; 32]],
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, InterfaceError>> {
-    async move {
-      let blocks =
-        <P as ProvidesUnvalidatedScannableBlocks>::scannable_blocks(self, hashes).await?;
-      if blocks.len() != hashes.len() {
-        Err(InterfaceError::InternalError(format!(
-          "`{}` returned {} blocks, expected {}",
-          "ProvidesUnvalidatedScannableBlocks::scannable_blocks",
-          blocks.len(),
-          hashes.len(),
-        )))?;
-      }
-      crate::provides_blockchain::sanity_check_blocks(
-        hashes,
         blocks.iter().map(|scannable_block| &scannable_block.block),
       )?;
 

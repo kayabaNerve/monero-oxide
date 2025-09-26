@@ -200,11 +200,6 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
     }
   }
 
-  /*
-    We explicitly DO NOT provide the ability to fetch a list of blocks via their hashes due to
-    being unable to estimate their size. We only support fetching them individually as no
-    individual block should exceed the size limit.
-  */
   fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
     async move {
       #[derive(Debug, Deserialize)]
