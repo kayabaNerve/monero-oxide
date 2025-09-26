@@ -54,12 +54,12 @@ async fn check_block(rpc: impl Rpc, block_i: usize) {
   assert_eq!(block.hash(), hash, "hash differs");
   assert_eq!(block.serialize(), blob, "serialization differs");
 
-  let txs_len = 1 + block.transactions.len();
+  let txs_len = 1 + block.transactions().len();
 
-  if !block.transactions.is_empty() {
+  if !block.transactions().is_empty() {
     // Test getting pruned transactions
     loop {
-      match rpc.get_pruned_transactions(&block.transactions).await {
+      match rpc.get_pruned_transactions(block.transactions()).await {
         Ok(_) => break,
         Err(RpcError::ConnectionError(e)) => {
           println!("get_pruned_transactions ConnectionError: {e}");
@@ -70,7 +70,7 @@ async fn check_block(rpc: impl Rpc, block_i: usize) {
     }
 
     let txs = loop {
-      match rpc.get_transactions(&block.transactions).await {
+      match rpc.get_transactions(block.transactions()).await {
         Ok(txs) => break txs,
         Err(RpcError::ConnectionError(e)) => {
           println!("get_transactions ConnectionError: {e}");

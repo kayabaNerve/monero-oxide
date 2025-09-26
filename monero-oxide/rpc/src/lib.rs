@@ -610,7 +610,7 @@ pub trait Rpc: Sync + Clone {
     block: Block,
   ) -> impl Send + Future<Output = Result<ScannableBlock, RpcError>> {
     async move {
-      let transactions = self.get_pruned_transactions(&block.transactions).await?;
+      let transactions = self.get_pruned_transactions(block.transactions()).await?;
 
       /*
         Requesting the output index for each output we sucessfully scan would cause a loss of
@@ -655,7 +655,7 @@ pub trait Rpc: Sync + Clone {
       let miner_tx_hash = block.miner_transaction().hash();
       let miner_tx = Transaction::<Pruned>::from(block.miner_transaction().clone());
       for (hash, tx) in core::iter::once((&miner_tx_hash, &miner_tx))
-        .chain(block.transactions.iter().zip(&transactions))
+        .chain(block.transactions().iter().zip(&transactions))
       {
         // If this isn't a RingCT output, or there are no outputs, move to the next TX
         if (!matches!(tx, Transaction::V2 { .. })) || tx.prefix().outputs.is_empty() {

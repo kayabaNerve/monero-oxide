@@ -262,7 +262,7 @@ impl InternalScanner {
     // This is the output index for the first RingCT output within the block
     // We mutate it to be the output index for the first RingCT for each transaction
     let ScannableBlock { block, transactions, output_index_for_first_ringct_output } = block;
-    if block.transactions.len() != transactions.len() {
+    if block.transactions().len() != transactions.len() {
       Err(ScanError::InvalidScannableBlock(
         "scanning a ScannableBlock with more/less transactions than it should have",
       ))?;
@@ -281,7 +281,7 @@ impl InternalScanner {
       block.miner_transaction().hash(),
       Transaction::<Pruned>::from(block.miner_transaction().clone()),
     )];
-    for (hash, tx) in block.transactions.iter().zip(transactions) {
+    for (hash, tx) in block.transactions().iter().zip(transactions) {
       txs_with_hashes.push((*hash, tx));
     }
 

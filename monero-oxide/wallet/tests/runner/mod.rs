@@ -75,7 +75,7 @@ pub async fn mine_until_unlocked(
   let mut block = None;
   while !found {
     let inner_block = rpc.get_block_by_number(height - 1).await.unwrap();
-    found = match inner_block.transactions.iter().find(|&&x| x == tx_hash) {
+    found = match inner_block.transactions().iter().find(|&&x| x == tx_hash) {
       Some(_) => {
         block = Some(inner_block);
         true

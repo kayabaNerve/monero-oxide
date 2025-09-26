@@ -75,7 +75,7 @@ pub struct Block {
   /// The miner's transaction.
   miner_transaction: Transaction,
   /// The transactions within this block.
-  pub transactions: Vec<[u8; 32]>,
+  transactions: Vec<[u8; 32]>,
 }
 
 impl Block {
@@ -94,7 +94,8 @@ impl Block {
       /blob/8d4c625713e3419573dfcc7119c8848f47cabbaa/src/crypto/tree-hash.c#L55
 
     calculation of the Merkle tree representing all transactions will fail if this many
-    transactions is consumed by the `transactions` field alone.
+    transactions is consumed by the `transactions` field alone. Please note the constant inlined
+    into `tree_hash` is equivalent to the following.
   */
   pub const MAX_TRANSACTIONS: usize = 0x10000000;
 
@@ -122,6 +123,11 @@ impl Block {
       }
     }
 
+    // `- 1` due to the miner transaction
+    if transactions.len() > (Self::MAX_TRANSACTIONS - 1) {
+      None?;
+    }
+
     Some(Block { header, miner_transaction, transactions })
   }
 
@@ -140,6 +146,11 @@ impl Block {
   /// The block's miner's transaction.
   pub fn miner_transaction(&self) -> &Transaction {
     &self.miner_transaction
+  }
+
+  /// The block's transactions.
+  pub fn transactions(&self) -> &[[u8; 32]] {
+    &self.transactions
   }
 
   /// Write the Block.
@@ -173,7 +184,7 @@ impl Block {
 
     blob.extend_from_slice(
       &merkle_root(transactions)
-        .expect("the tree will not be empty, the miner tx is always present"),
+        .expect("the tree isn't empty and we bounded the amount of transactions"),
     );
     write_varint(&(1 + self.transactions.len()), &mut blob)
       .expect("write failed but <Vec as io::Write> doesn't fail");
@@ -207,15 +218,8 @@ impl Block {
   /// specific set of consensus rules.
   pub fn read<R: Read>(r: &mut R) -> io::Result<Block> {
     let header = BlockHeader::read(r)?;
-
     let miner_transaction = Transaction::read(r)?;
-
-    let transactions: usize = read_varint(r)?;
-    if transactions >= Self::MAX_TRANSACTIONS {
-      Err(io::Error::other("amount of transaction exceeds limit"))?;
-    }
-    let transactions = (0 .. transactions).map(|_| read_bytes(r)).collect::<Result<_, _>>()?;
-
+    let transactions = read_vec(read_bytes, Some(Self::MAX_TRANSACTIONS), r)?;
     Block::new(header, miner_transaction, transactions)
       .ok_or_else(|| io::Error::other("block failed sanity checks"))
   }
