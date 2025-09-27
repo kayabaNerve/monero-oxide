@@ -310,7 +310,7 @@ mod provides_transaction {
         while !hashes_hex.is_empty() {
           let this_count = TRANSACTIONS_LIMIT.min(hashes_hex.len());
 
-          let txs = "\"".to_string() + &hashes_hex.drain(.. this_count).map(hex::encode).collect::<Vec<_>>().join("\",\"") + "\"";
+          let txs = "\"".to_string() + &hashes_hex.drain(.. this_count).collect::<Vec<_>>().join("\",\"") + "\"";
           let txs: TransactionsResponse = self
             .rpc_call_core(
               "get_transactions",
@@ -376,7 +376,7 @@ mod provides_transaction {
         while !hashes_hex.is_empty() {
           let this_count = TRANSACTIONS_LIMIT.min(hashes_hex.len());
 
-          let txs = "\"".to_string() + &hashes_hex.drain(.. this_count).map(hex::encode).collect::<Vec<_>>().join("\",\"") + "\"";
+          let txs = "\"".to_string() + &hashes_hex.drain(.. this_count).collect::<Vec<_>>().join("\",\"") + "\"";
           let txs: TransactionsResponse = self
             .rpc_call_core(
               "get_transactions",
