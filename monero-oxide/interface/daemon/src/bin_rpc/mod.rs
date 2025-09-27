@@ -157,9 +157,28 @@ fn chained_iters<'a, I: Iterator, F: Fn(&'a [u8]) -> Result<I, InterfaceError>>(
   Ok(values.iter().map(|value| f(value)).collect::<Result<Vec<_>, _>>()?.into_iter().flatten())
 }
 
+async fn get_block<T: HttpTransport>(
+  daemon: &MoneroDaemon<T>,
+  request: String,
+) -> Result<Block, InterfaceError> {
+  #[derive(Deserialize)]
+  struct BlockResponse {
+    blob: String,
+  }
+
+  let res: BlockResponse =
+    daemon.json_rpc_call_core("get_block", Some(request), MAX_RPC_RESPONSE_SIZE).await?;
+
+  Block::read(&mut rpc_hex(&res.blob)?.as_slice())
+    .map_err(|_| InterfaceError::InvalidInterface("invalid block".to_string()))
+}
+
 impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
-  // TODO: Don't use `get_blocks.bin` here, which also yields transactions, yet a batch request for
-  // the blocks alone.
+  /*
+    TODO: Don't use `get_blocks.bin` here, which also yields transactions, yet a batch request for
+    the blocks alone. With that PR, reintroduce the code to dynamically adapt the amount of blocks
+    per request seen in commit 996693c2a270ad2dced15c6d2499583632f00515.
+  */
   fn contiguous_blocks(
     &self,
     mut range: RangeInclusive<usize>,
@@ -192,23 +211,14 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
   }
 
   fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
-    async move {
-      #[derive(Deserialize)]
-      struct BlockResponse {
-        blob: String,
-      }
+    get_block(self, format!(r#"{{ "hash": "{}" }}"#, hex::encode(hash)))
+  }
 
-      let res: BlockResponse = self
-        .json_rpc_call_core(
-          "get_block",
-          Some(format!(r#"{{ "hash": "{}" }}"#, hex::encode(hash))),
-          MAX_RPC_RESPONSE_SIZE,
-        )
-        .await?;
-
-      Block::read(&mut rpc_hex(&res.blob)?.as_slice())
-        .map_err(|_| InterfaceError::InvalidInterface("invalid block".to_string()))
-    }
+  fn block_by_number(
+    &self,
+    number: usize,
+  ) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
+    get_block(self, format!(r#"{{ "height": {number} }}"#))
   }
 
   fn block_hash(
@@ -290,13 +300,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
       // Handle the exceptional case where we're also requesting the genesis block, which
       // `fetch_contiguous_blocks` cannot handle
       if *range.start() == 0 {
-        res.push(
-          ProvidesUnvalidatedScannableBlocks::scannable_block(
-            self,
-            ProvidesUnvalidatedBlockchain::block_hash(self, 0).await?,
-          )
-          .await?,
-        );
+        res.push(ProvidesUnvalidatedScannableBlocks::scannable_block_by_number(self, 0).await?);
         range = 1 ..= *range.end();
       }
       let (requested_blocks, blocks_bin) = self.fetch_contiguous_blocks(range).await?;
@@ -393,6 +397,19 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
         .await?;
       }
       Ok(UnvalidatedScannableBlock { block, transactions, output_index_for_first_ringct_output })
+    }
+  }
+
+  fn scannable_block_by_number(
+    &self,
+    number: usize,
+  ) -> impl Send + Future<Output = Result<UnvalidatedScannableBlock, InterfaceError>> {
+    async move {
+      ProvidesUnvalidatedScannableBlocks::scannable_block(
+        self,
+        ProvidesUnvalidatedBlockchain::block_hash(self, number).await?,
+      )
+      .await
     }
   }
 }
