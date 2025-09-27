@@ -1,5 +1,4 @@
 use core::{
-  fmt::Debug,
   ops::{RangeInclusive, Bound, RangeBounds},
   future::Future,
 };
@@ -13,7 +12,6 @@ use alloc::{
 use curve25519_dalek::EdwardsPoint;
 
 use serde::Deserialize;
-use serde_json::json;
 
 use monero_oxide::{
   transaction::{Output, Timelock, Transaction},
@@ -224,15 +222,15 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
 
   fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
     async move {
-      #[derive(Debug, Deserialize)]
+      #[derive(Deserialize)]
       struct BlockResponse {
         blob: String,
       }
 
       let res: BlockResponse = self
-        .json_rpc_call(
+        .json_rpc_call_core(
           "get_block",
-          Some(json!({ "hash": hex::encode(hash) })),
+          Some(format!(r#"{{ "hash": "{}" }}"#, hex::encode(hash))),
           MAX_RPC_RESPONSE_SIZE,
         )
         .await?;
@@ -247,19 +245,19 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
     number: usize,
   ) -> impl Send + Future<Output = Result<[u8; 32], InterfaceError>> {
     async move {
-      #[derive(Debug, Deserialize)]
+      #[derive(Deserialize)]
       struct BlockHeaderResponse {
         hash: String,
       }
-      #[derive(Debug, Deserialize)]
+      #[derive(Deserialize)]
       struct BlockHeaderByHeightResponse {
         block_header: BlockHeaderResponse,
       }
 
       let header: BlockHeaderByHeightResponse = self
-        .json_rpc_call(
+        .json_rpc_call_core(
           "get_block_header_by_height",
-          Some(json!({ "height": number })),
+          Some(format!(r#"{{ "height": {number} }}"#)),
           BASE_RESPONSE_SIZE,
         )
         .await?;

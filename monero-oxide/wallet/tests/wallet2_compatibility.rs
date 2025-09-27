@@ -23,23 +23,23 @@ enum AddressSpec {
   Subaddress(SubaddressIndex),
 }
 
-#[derive(Deserialize, Debug)]
-struct EmptyResponse {}
-
 async fn make_integrated_address(rpc: &Rpc, payment_id: [u8; 8]) -> String {
   #[derive(Debug, Deserialize)]
   struct IntegratedAddressResponse {
     integrated_address: String,
   }
 
-  let res = rpc
-    .json_rpc_call::<IntegratedAddressResponse>(
-      "make_integrated_address",
-      Some(json!({ "payment_id": hex::encode(payment_id) })),
-      usize::MAX,
-    )
-    .await
-    .unwrap();
+  let res: IntegratedAddressResponse = serde_json::from_str(
+    &rpc
+      .json_rpc_call(
+        "make_integrated_address",
+        Some(json!({ "payment_id": hex::encode(payment_id) }).to_string()),
+        usize::MAX,
+      )
+      .await
+      .unwrap(),
+  )
+  .unwrap();
 
   res.integrated_address
 }
@@ -55,19 +55,22 @@ async fn initialize_rpcs() -> (Rpc, Rpc, MoneroAddress) {
 
   let mut wallet_id = [0; 8];
   OsRng.fill_bytes(&mut wallet_id);
-  let _: EmptyResponse = wallet_rpc
+  wallet_rpc
     .json_rpc_call(
       "create_wallet",
-      Some(json!({ "filename": hex::encode(wallet_id), "language": "English" })),
+      Some(json!({ "filename": hex::encode(wallet_id), "language": "English" }).to_string()),
       usize::MAX,
     )
     .await
     .unwrap();
 
-  let address: AddressResponse = wallet_rpc
-    .json_rpc_call("get_address", Some(json!({ "account_index": 0 })), usize::MAX)
-    .await
-    .unwrap();
+  let address: AddressResponse = serde_json::from_str(
+    &wallet_rpc
+      .json_rpc_call("get_address", Some(json!({ "account_index": 0 }).to_string()), usize::MAX)
+      .await
+      .unwrap(),
+  )
+  .unwrap();
 
   // Fund the new wallet
   let address = MoneroAddress::from_str(Network::Mainnet, &address.address).unwrap();
@@ -91,22 +94,28 @@ async fn from_wallet_rpc_to_self(spec: AddressSpec) {
   };
 
   // refresh & make a tx
-  let _: EmptyResponse = wallet_rpc.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
+  wallet_rpc.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
 
   #[derive(Debug, Deserialize)]
   struct TransferResponse {
     tx_hash: String,
   }
-  let tx: TransferResponse = wallet_rpc
-    .json_rpc_call(
-      "transfer",
-      Some(json!({
-        "destinations": [{"address": addr.to_string(), "amount": 1_000_000_000_000u64 }],
-      })),
-      usize::MAX,
-    )
-    .await
-    .unwrap();
+  let tx: TransferResponse = serde_json::from_str(
+    &wallet_rpc
+      .json_rpc_call(
+        "transfer",
+        Some(
+          json!({
+              "destinations": [{"address": addr.to_string(), "amount": 1_000_000_000_000u64 }],
+          })
+          .to_string(),
+        ),
+        usize::MAX,
+      )
+      .await
+      .unwrap(),
+  )
+  .unwrap();
   let tx_hash = hex::decode(tx.tx_hash).unwrap().try_into().unwrap();
 
   let fee_rate = daemon_rpc.fee_rate(FeePriority::Unimportant, u64::MAX).await.unwrap();
@@ -192,15 +201,18 @@ test!(
     },
     |_, _, tx: Transaction, _, data: Rpc| async move {
       // confirm receipt
-      let _: EmptyResponse = data.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
-      let transfer: TransfersResponse = data
-        .json_rpc_call(
-          "get_transfer_by_txid",
-          Some(json!({ "txid": hex::encode(tx.hash()) })),
-          usize::MAX,
-        )
-        .await
-        .unwrap();
+      data.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
+      let transfer: TransfersResponse = serde_json::from_str(
+        &data
+          .json_rpc_call(
+            "get_transfer_by_txid",
+            Some(json!({ "txid": hex::encode(tx.hash()) }).to_string()),
+            usize::MAX,
+          )
+          .await
+          .unwrap(),
+      )
+      .unwrap();
       assert_eq!(transfer.transfer.subaddr_index, Index { major: 0, minor: 0 });
       assert_eq!(transfer.transfer.amount, 1000000);
       assert_eq!(transfer.transfer.payment_id, hex::encode([0u8; 8]));
@@ -221,8 +233,10 @@ test!(
         address: String,
         account_index: u32,
       }
-      let addr: AccountResponse =
-        wallet_rpc.json_rpc_call("create_account", None, usize::MAX).await.unwrap();
+      let addr: AccountResponse = serde_json::from_str(
+        &wallet_rpc.json_rpc_call("create_account", None, usize::MAX).await.unwrap(),
+      )
+      .unwrap();
       assert!(addr.account_index != 0);
 
       builder
@@ -231,16 +245,19 @@ test!(
     },
     |_, _, tx: Transaction, _, data: (Rpc, u32)| async move {
       // confirm receipt
-      let _: EmptyResponse = data.0.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
-      let transfer: TransfersResponse = data
-        .0
-        .json_rpc_call(
-          "get_transfer_by_txid",
-          Some(json!({ "txid": hex::encode(tx.hash()), "account_index": data.1 })),
-          usize::MAX,
-        )
-        .await
-        .unwrap();
+      data.0.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
+      let transfer: TransfersResponse = serde_json::from_str(
+        &data
+          .0
+          .json_rpc_call(
+            "get_transfer_by_txid",
+            Some(json!({ "txid": hex::encode(tx.hash()), "account_index": data.1 }).to_string()),
+            usize::MAX,
+          )
+          .await
+          .unwrap(),
+      )
+      .unwrap();
       assert_eq!(transfer.transfer.subaddr_index, Index { major: data.1, minor: 0 });
       assert_eq!(transfer.transfer.amount, 1000000);
       assert_eq!(transfer.transfer.payment_id, hex::encode([0u8; 8]));
@@ -264,14 +281,17 @@ test!(
         addresses: Vec<String>,
         address_index: u32,
       }
-      let addrs: AddressesResponse = wallet_rpc
-        .json_rpc_call(
-          "create_address",
-          Some(json!({ "account_index": 0, "count": 2 })),
-          usize::MAX,
-        )
-        .await
-        .unwrap();
+      let addrs: AddressesResponse = serde_json::from_str(
+        &wallet_rpc
+          .json_rpc_call(
+            "create_address",
+            Some(json!({ "account_index": 0, "count": 2 }).to_string()),
+            usize::MAX,
+          )
+          .await
+          .unwrap(),
+      )
+      .unwrap();
       assert!(addrs.address_index != 0);
       assert!(addrs.addresses.len() == 2);
 
@@ -283,16 +303,19 @@ test!(
     },
     |_, _, tx: Transaction, _, data: (Rpc, Rpc, u32)| async move {
       // confirm receipt
-      let _: EmptyResponse = data.0.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
-      let transfer: TransfersResponse = data
-        .0
-        .json_rpc_call(
-          "get_transfer_by_txid",
-          Some(json!({ "txid": hex::encode(tx.hash()), "account_index": 0 })),
-          usize::MAX,
-        )
-        .await
-        .unwrap();
+      data.0.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
+      let transfer: TransfersResponse = serde_json::from_str(
+        &data
+          .0
+          .json_rpc_call(
+            "get_transfer_by_txid",
+            Some(json!({ "txid": hex::encode(tx.hash()), "account_index": 0 }).to_string()),
+            usize::MAX,
+          )
+          .await
+          .unwrap(),
+      )
+      .unwrap();
 
       assert_eq!(transfer.transfers.len(), 2);
       for t in transfer.transfers {
@@ -328,16 +351,19 @@ test!(
     },
     |_, _, tx: Transaction, _, data: (Rpc, [u8; 8])| async move {
       // confirm receipt
-      let _: EmptyResponse = data.0.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
-      let transfer: TransfersResponse = data
-        .0
-        .json_rpc_call(
-          "get_transfer_by_txid",
-          Some(json!({ "txid": hex::encode(tx.hash()) })),
-          usize::MAX,
-        )
-        .await
-        .unwrap();
+      data.0.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
+      let transfer: TransfersResponse = serde_json::from_str(
+        &data
+          .0
+          .json_rpc_call(
+            "get_transfer_by_txid",
+            Some(json!({ "txid": hex::encode(tx.hash()) }).to_string()),
+            usize::MAX,
+          )
+          .await
+          .unwrap(),
+      )
+      .unwrap();
       assert_eq!(transfer.transfer.subaddr_index, Index { major: 0, minor: 0 });
       assert_eq!(transfer.transfer.payment_id, hex::encode(data.1));
       assert_eq!(transfer.transfer.amount, 1000000);
@@ -365,15 +391,18 @@ test!(
     },
     |_, _, tx: Transaction, _, data: Rpc| async move {
       // confirm receipt
-      let _: EmptyResponse = data.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
-      let transfer: TransfersResponse = data
-        .json_rpc_call(
-          "get_transfer_by_txid",
-          Some(json!({ "txid": hex::encode(tx.hash()) })),
-          usize::MAX,
-        )
-        .await
-        .unwrap();
+      data.json_rpc_call("refresh", None, usize::MAX).await.unwrap();
+      let transfer: TransfersResponse = serde_json::from_str(
+        &data
+          .json_rpc_call(
+            "get_transfer_by_txid",
+            Some(json!({ "txid": hex::encode(tx.hash()) }).to_string()),
+            usize::MAX,
+          )
+          .await
+          .unwrap(),
+      )
+      .unwrap();
       assert_eq!(transfer.transfer.subaddr_index, Index { major: 0, minor: 0 });
       assert_eq!(transfer.transfer.amount, 1000000);
     },

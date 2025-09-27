@@ -38,10 +38,14 @@ async fn check_block<T: HttpTransport>(rpc: MoneroDaemon<T>, block_i: usize) {
   }
   let res: BlockResponse = loop {
     match rpc
-      .json_rpc_call("get_block", Some(json!({ "hash": hex::encode(hash) })), usize::MAX)
+      .json_rpc_call(
+        "get_block",
+        Some(json!({ "hash": hex::encode(hash) }).to_string()),
+        usize::MAX,
+      )
       .await
     {
-      Ok(res) => break res,
+      Ok(res) => break serde_json::from_str(&res).unwrap(),
       Err(InterfaceError::InterfaceError(e)) => {
         println!("get_block InterfaceError: {e}");
         continue;
@@ -151,18 +155,21 @@ async fn check_block<T: HttpTransport>(rpc: MoneroDaemon<T>, block_i: usize) {
                     match rpc
                       .rpc_call(
                         "get_outs",
-                        Some(json!({
-                          "get_txid": true,
-                          "outputs": indexes.iter().map(|o| json!({
-                            "amount": amount,
-                            "index": o
-                          })).collect::<Vec<_>>()
-                        })),
+                        Some(
+                          json!({
+                            "get_txid": true,
+                            "outputs": indexes.iter().map(|o| json!({
+                              "amount": amount,
+                              "index": o
+                            })).collect::<Vec<_>>()
+                          })
+                          .to_string(),
+                        ),
                         usize::MAX,
                       )
                       .await
                     {
-                      Ok(outs) => break outs,
+                      Ok(outs) => break serde_json::from_str(&outs).unwrap(),
                       Err(InterfaceError::InterfaceError(e)) => {
                         println!("get_outs InterfaceError: {e}");
                         continue;

@@ -12,8 +12,8 @@ use alloc::{
   string::{String, ToString},
 };
 
-use serde::{Serialize, Deserialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use serde::{Deserialize, de::DeserializeOwned};
+use serde_json::Value;
 
 use monero_oxide::transaction::{MAX_NON_MINER_TRANSACTION_SIZE, Input, Output, Pruned, Transaction};
 use monero_address::Address;
@@ -134,68 +134,85 @@ impl<T: Debug + HttpTransport> core::fmt::Debug for MoneroDaemon<T> {
   }
 }
 
-#[rustfmt::skip]
 impl<T: HttpTransport> MoneroDaemon<T> {
+  async fn rpc_call_core<Response: DeserializeOwned>(
+    &self,
+    route: &str,
+    params: Option<String>,
+    response_size_limit: usize,
+  ) -> Result<Response, InterfaceError> {
+    let res = self
+      .transport
+      .post(
+        route,
+        if let Some(params) = params { params.into_bytes() } else { vec![] },
+        self.response_size_limits.then_some(response_size_limit.max(MAX_RPC_RESPONSE_SIZE)),
+      )
+      .await?;
+    let res_str = std_shims::str::from_utf8(&res)
+      .map_err(|_| InterfaceError::InvalidInterface("response wasn't utf-8".to_string()))?;
+    serde_json::from_str(res_str).map_err(|_| {
+      InterfaceError::InvalidInterface("response wasn't the expected json".to_string())
+    })
+  }
+
   /// Perform a RPC call to the specified route with the provided parameters.
   ///
   /// This is NOT a JSON-RPC call. They use a route of "json_rpc" and are available via
   /// `json_rpc_call`.
-  pub fn rpc_call<'a, Params: Send + Serialize + Debug, Response: DeserializeOwned + Debug>(
-    &'a self,
-    route: &'a str,
-    params: Option<Params>,
+  ///
+  /// This method is NOT guaranteed by SemVer and may be removed in a future release. No guarantees
+  /// on the safety nor correctness of bespoke calls made with this function are guaranteed.
+  #[doc(hidden)]
+  pub async fn rpc_call(
+    &self,
+    route: &str,
+    params: Option<String>,
     response_size_limit: usize,
-  ) -> impl use<'a, T, Params, Response> + Send + Future<Output = Result<Response, InterfaceError>> {
-    async move {
-      let res =
-        self
-          .transport
-          .post(
-            route,
-            if let Some(params) = params.as_ref() {
-              serde_json::to_string(params)
-                .map_err(|e| {
-                  InterfaceError::InternalError(format!(
-                    "couldn't convert parameters ({params:?}) to JSON: {e:?}"
-                  ))
-                })?
-                .into_bytes()
-            } else {
-              vec![]
-            },
-            self.response_size_limits.then_some(response_size_limit.max(MAX_RPC_RESPONSE_SIZE)),
-          )
-          .await?;
-      let res_str = std_shims::str::from_utf8(&res)
-        .map_err(|_| InterfaceError::InvalidInterface("response wasn't utf-8".to_string()))?;
-      serde_json::from_str(res_str).map_err(|_| {
-        InterfaceError::InvalidInterface("response wasn't the expected json".to_string())
-      })
-    }
+  ) -> Result<String, InterfaceError> {
+    Ok(
+      self
+        .rpc_call_core::<serde_json::Value>(route, params, response_size_limit)
+        .await?
+        .to_string(),
+    )
+  }
+
+  async fn json_rpc_call_core<Response: DeserializeOwned>(
+    &self,
+    method: &str,
+    params: Option<String>,
+    response_size_limit: usize,
+  ) -> Result<Response, InterfaceError> {
+    let req = if let Some(params) = params {
+      format!(r#"{{ "method": {method}, "params": {params} }}"#)
+    } else {
+      r#"{{ "method": {method} }}"#.to_string()
+    };
+
+    Ok(
+      self
+        .rpc_call_core::<JsonRpcResponse<Response>>("json_rpc", Some(req), response_size_limit)
+        .await?
+        .result,
+    )
   }
 
   /// Perform a JSON-RPC call with the specified method with the provided parameters.
-  pub fn json_rpc_call<'a, Response: DeserializeOwned + Debug>(
-    &'a self,
-    method: &'a str,
-    params: Option<Value>,
+  ///
+  /// This method is NOT guaranteed by SemVer and may be removed in a future release. No guarantees
+  /// on the safety nor correctness of bespoke calls made with this function are guaranteed.
+  #[doc(hidden)]
+  pub async fn json_rpc_call(
+    &self,
+    method: &str,
+    params: Option<String>,
     response_size_limit: usize,
-  ) -> impl use<'a, T, Response> + Send + Future<Output = Result<Response, InterfaceError>> {
-    async move {
-      let mut req = json!({ "method": method });
-      if let Some(params) = params {
-        req
-          .as_object_mut()
-          .expect("accessing object as object failed?")
-          .insert("params".into(), params);
-      }
-      Ok(
-        self
-          .rpc_call::<_, JsonRpcResponse<Response>>("json_rpc", Some(req), response_size_limit)
-          .await?
-          .result,
-      )
-    }
+  ) -> Result<String, InterfaceError> {
+    // Untyped response
+    let result: Value = self.json_rpc_call_core(method, params, response_size_limit).await?;
+    // Return the response as a string
+    Ok(result.to_string())
   }
 
   /// Generate blocks, with the specified address receiving the block reward.
@@ -203,52 +220,44 @@ impl<T: HttpTransport> MoneroDaemon<T> {
   /// Returns the hashes of the generated blocks and the last block's alleged number.
   ///
   /// This is intended for testing purposes and does not validate the result.
-  pub fn generate_blocks<'a, const ADDR_BYTES: u128>(
-    &'a self,
-    address: &'a Address<ADDR_BYTES>,
+  pub async fn generate_blocks<const ADDR_BYTES: u128>(
+    &self,
+    address: &Address<ADDR_BYTES>,
     block_count: usize,
-  ) -> impl use<'a, T, ADDR_BYTES> + Send + Future<Output = Result<(Vec<[u8; 32]>, usize), InterfaceError>>
-  {
-    async move {
-      #[derive(Debug, Deserialize)]
-      struct BlocksResponse {
-        blocks: Vec<String>,
-        height: usize,
-      }
-
-      let res = self
-        .json_rpc_call::<BlocksResponse>(
-          "generateblocks",
-          Some(json!({
-            "wallet_address": address.to_string(),
-            "amount_of_blocks": block_count,
-          })),
-          BASE_RESPONSE_SIZE.saturating_add(
-            BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(block_count.saturating_mul(32)),
-          ),
-        )
-        .await?;
-
-      let mut blocks = Vec::with_capacity(res.blocks.len());
-      for block in res.blocks {
-        blocks.push(hash_hex(&block)?);
-      }
-      Ok((blocks, res.height))
+  ) -> Result<(Vec<[u8; 32]>, usize), InterfaceError> {
+    #[derive(Deserialize)]
+    struct BlocksResponse {
+      blocks: Vec<String>,
+      height: usize,
     }
+
+    let res = self
+      .json_rpc_call_core::<BlocksResponse>(
+        "generateblocks",
+        Some(format!(r#"{{ "wallet_address": "{address}", "amount_of_blocks": {block_count} }}"#)),
+        BASE_RESPONSE_SIZE.saturating_add(
+          BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(block_count.saturating_mul(32)),
+        ),
+      )
+      .await?;
+
+    let mut blocks = Vec::with_capacity(res.blocks.len());
+    for block in res.blocks {
+      blocks.push(hash_hex(&block)?);
+    }
+    Ok((blocks, res.height))
   }
 }
 
 impl<T: HttpTransport> ProvidesBlockchainMeta for MoneroDaemon<T> {
   fn latest_block_number(&self) -> impl Send + Future<Output = Result<usize, InterfaceError>> {
     async move {
-      #[derive(Debug, Deserialize)]
+      #[derive(Deserialize)]
       struct HeightResponse {
         height: usize,
       }
-      let res = self
-        .rpc_call::<Option<()>, HeightResponse>("get_height", None, BASE_RESPONSE_SIZE)
-        .await?
-        .height;
+      let res =
+        self.rpc_call_core::<HeightResponse>("get_height", None, BASE_RESPONSE_SIZE).await?.height;
       res.checked_sub(1).ok_or_else(|| {
         InterfaceError::InvalidInterface(
           "node claimed the blockchain didn't even have the genesis block".to_string(),
@@ -275,14 +284,14 @@ mod provides_transaction {
   const TRANSACTIONS_LIMIT: usize =
     const_min(TRANSACTIONS_PER_REQUEST_LIMIT, TRANSACTIONS_PER_RESPONSE_LIMIT);
 
-  #[derive(Debug, Deserialize)]
+  #[derive(Deserialize)]
   struct TransactionResponse {
     tx_hash: String,
     as_hex: String,
     pruned_as_hex: String,
     prunable_hash: String,
   }
-  #[derive(Debug, Deserialize)]
+  #[derive(Deserialize)]
   struct TransactionsResponse {
     #[serde(default)]
     missed_tx: Vec<String>,
@@ -301,12 +310,11 @@ mod provides_transaction {
         while !hashes_hex.is_empty() {
           let this_count = TRANSACTIONS_LIMIT.min(hashes_hex.len());
 
+          let txs = "\"".to_string() + &hashes_hex.drain(.. this_count).map(hex::encode).collect::<Vec<_>>().join("\",\"") + "\"";
           let txs: TransactionsResponse = self
-            .rpc_call(
+            .rpc_call_core(
               "get_transactions",
-              Some(json!({
-                "txs_hashes": hashes_hex.drain(.. this_count).collect::<Vec<_>>(),
-              })),
+              Some(format!(r#"{{ "txs_hashes": [{txs}] }}"#)),
               BASE_RESPONSE_SIZE.saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(this_count.saturating_mul(TRANSACTION_SIZE_BOUND))),
             )
             .await?;
@@ -368,13 +376,11 @@ mod provides_transaction {
         while !hashes_hex.is_empty() {
           let this_count = TRANSACTIONS_LIMIT.min(hashes_hex.len());
 
+          let txs = "\"".to_string() + &hashes_hex.drain(.. this_count).map(hex::encode).collect::<Vec<_>>().join("\",\"") + "\"";
           let txs: TransactionsResponse = self
-            .rpc_call(
+            .rpc_call_core(
               "get_transactions",
-              Some(json!({
-                "txs_hashes": hashes_hex.drain(.. this_count).collect::<Vec<_>>(),
-                "prune": true,
-              })),
+              Some(format!(r#"{{ "txs_hashes": [{txs}], "prune": true }}"#)),
               BASE_RESPONSE_SIZE.saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(this_count.saturating_mul(TRANSACTION_SIZE_BOUND))),
             )
             .await?;
@@ -425,7 +431,7 @@ impl<T: HttpTransport> PublishTransaction for MoneroDaemon<T> {
   ) -> impl Send + Future<Output = Result<(), PublishTransactionError>> {
     async move {
       #[allow(dead_code)]
-      #[derive(Debug, Deserialize)]
+      #[derive(Deserialize)]
       struct SendRawResponse {
         status: String,
         double_spend: bool,
@@ -441,9 +447,12 @@ impl<T: HttpTransport> PublishTransaction for MoneroDaemon<T> {
       }
 
       let res: SendRawResponse = self
-        .rpc_call(
+        .rpc_call_core(
           "send_raw_transaction",
-          Some(json!({ "tx_as_hex": hex::encode(tx.serialize()), "do_sanity_checks": false })),
+          Some(format!(
+            r#"{{ "tx_as_hex": "{}", "do_sanity_checks": false }}"#,
+            hex::encode(tx.serialize())
+          )),
           BASE_RESPONSE_SIZE,
         )
         .await?;
@@ -471,7 +480,7 @@ mod provides_fee_rates {
       priority: FeePriority,
     ) -> impl Send + Future<Output = Result<FeeRate, FeeError>> {
       async move {
-        #[derive(Debug, Deserialize)]
+        #[derive(Deserialize)]
         struct FeeResponse {
           status: String,
           fees: Option<Vec<u64>>,
@@ -480,9 +489,9 @@ mod provides_fee_rates {
         }
 
         let res: FeeResponse = self
-          .json_rpc_call(
+          .json_rpc_call_core(
             "get_fee_estimate",
-            Some(json!({ "grace_blocks": GRACE_BLOCKS_FOR_FEE_ESTIMATE })),
+            Some(format!(r#"{{ "grace_blocks": {GRACE_BLOCKS_FOR_FEE_ESTIMATE} }}"#)),
             BASE_RESPONSE_SIZE,
           )
           .await?;
