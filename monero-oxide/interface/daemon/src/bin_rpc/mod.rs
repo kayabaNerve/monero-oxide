@@ -306,7 +306,7 @@ async fn update_output_index<T: HttpTransport>(
   Ok(())
 }
 
-impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
+impl<T: HttpTransport> ProvidesScannableBlocks for MoneroDaemon<T> {
   fn contiguous_scannable_blocks(
     &self,
     range: RangeInclusive<usize>,
@@ -318,9 +318,23 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
       let mut blocks = chained_iters(&blocks_bin, epee::extract_blocks_from_blocks_bin)?;
       let mut txs = chained_iters(&blocks_bin, epee::extract_txs_from_blocks_bin)?;
 
+      let mut parent: Option<(usize, [u8; 32])> = None;
       let mut next_ringct_output_index = None;
       for block in (&mut blocks).take(requested_blocks) {
         let block = block?;
+
+        if let Some((parent_number, parent_hash)) = parent {
+          if (block.header.previous != parent_hash) ||
+            (parent_number.checked_add(1) != Some(block.number()))
+          {
+            Err(InterfaceError::InvalidInterface(
+              "`get_blocks_by_height.bin` returned blocks which don't build on each other"
+                .to_string(),
+            ))?;
+          }
+        }
+        parent = Some((block.number(), block.hash()));
+
         let mut block_txs = vec![];
 
         let mut output_index_for_first_ringct_output = None;
@@ -336,13 +350,14 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
         for hash in &block.transactions {
           let tx = txs.next().ok_or_else(|| {
             InterfaceError::InvalidInterface(
-              "`get_blocks.bin` contained less transactions than specified in its blocks"
+              "`get_blocks_by_height.bin` contained less transactions than specified in its blocks"
                 .to_string(),
             )
           })??;
           if tx.hash() != *hash {
             Err(InterfaceError::InvalidInterface(
-              "transaction from `get_blocks.bin` didn't correspond to the block".to_string(),
+              "transaction from `get_blocks_by_height.bin` didn't correspond to the block"
+                .to_string(),
             ))?;
           }
 
@@ -392,12 +407,20 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
           TransactionsError::TransactionNotFound => InterfaceError::InvalidInterface(
             "node sent us blocks it doesn't have the transactions for".to_string(),
           ),
-          TransactionsError::PrunedTransaction => InterfaceError::InternalError(
-            "requesting pruned transactions yet errored on pruned transaction".to_string(),
+          TransactionsError::PrunedTransaction => InterfaceError::InvalidInterface(
+            // This happens if we're sent a pruned V1 transaction after requesting it in full
+            "node sent us pruned transaction when expanding to a scannable block".to_string(),
           ),
         }
       })
     }
+  }
+
+  fn scannable_block_by_number(
+    &self,
+    number: usize,
+  ) -> impl Send + Future<Output = Result<ScannableBlock, InterfaceError>> {
+    async move { Ok(self.contiguous_scannable_blocks(number ..= number).await?.swap_remove(0)) }
   }
 }
 

@@ -6,6 +6,7 @@ use monero_oxide::transaction::{Pruned, Transaction};
 use crate::InterfaceError;
 
 /// A pruned transaction with the hash of its pruned data, if `version != 1`.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PrunedTransactionWithPrunableHash {
   transaction: Transaction<Pruned>,
   prunable_hash: Option<[u8; 32]>,
@@ -197,6 +198,57 @@ pub trait ProvidesTransactions: Sync {
   ) -> impl Send + Future<Output = Result<Transaction<Pruned>, TransactionsError>>;
 }
 
+pub(crate) async fn validate_pruned_transactions<P: ProvidesTransactions>(
+  interface: &P,
+  unvalidated: Vec<PrunedTransactionWithPrunableHash>,
+  hashes: &[[u8; 32]],
+) -> Result<Vec<Transaction<Pruned>>, TransactionsError> {
+  if unvalidated.len() != hashes.len() {
+    Err(InterfaceError::InternalError(format!(
+      "`{}` returned {} transactions, expected {}",
+      "ProvidesUnvalidatedTransactions::pruned_transactions",
+      unvalidated.len(),
+      hashes.len(),
+    )))?;
+  }
+
+  let mut txs = Vec::with_capacity(unvalidated.len());
+  let mut v1_indexes = vec![];
+  let mut v1_hashes = vec![];
+  for (tx, expected_hash) in unvalidated.into_iter().zip(hashes) {
+    match tx.verify_as_possible(*expected_hash) {
+      Ok(tx) => {
+        if matches!(tx, Transaction::V1 { .. }) {
+          v1_indexes.push(txs.len());
+          v1_hashes.push(*expected_hash);
+        }
+        txs.push(tx)
+      }
+      Err(hash) => Err(InterfaceError::InvalidInterface(format!(
+        "interface returned TX {} when {} was requested",
+        hex::encode(hash),
+        hex::encode(expected_hash)
+      )))?,
+    }
+  }
+
+  if !v1_indexes.is_empty() {
+    let full_txs = <P as ProvidesTransactions>::transactions(interface, &v1_hashes).await?;
+    for ((pruned_tx, hash), tx) in
+      v1_indexes.into_iter().map(|i| &txs[i]).zip(v1_hashes).zip(full_txs)
+    {
+      if &Transaction::<Pruned>::from(tx) != pruned_tx {
+        Err(InterfaceError::InvalidInterface(format!(
+          "interface returned pruned V1 TX which didn't match TX {}",
+          hex::encode(hash)
+        )))?;
+      }
+    }
+  }
+
+  Ok(txs)
+}
+
 impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
   fn transactions(
     &self,
@@ -234,50 +286,7 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
     async move {
       let unvalidated =
         <P as ProvidesUnvalidatedTransactions>::pruned_transactions(self, hashes).await?;
-      if unvalidated.len() != hashes.len() {
-        Err(InterfaceError::InternalError(format!(
-          "`{}` returned {} transactions, expected {}",
-          "ProvidesUnvalidatedTransactions::pruned_transactions",
-          unvalidated.len(),
-          hashes.len(),
-        )))?;
-      }
-
-      let mut txs = Vec::with_capacity(unvalidated.len());
-      let mut v1_indexes = vec![];
-      let mut v1_hashes = vec![];
-      for (tx, expected_hash) in unvalidated.into_iter().zip(hashes) {
-        match tx.verify_as_possible(*expected_hash) {
-          Ok(tx) => {
-            if matches!(tx, Transaction::V1 { .. }) {
-              v1_indexes.push(txs.len());
-              v1_hashes.push(*expected_hash);
-            }
-            txs.push(tx)
-          }
-          Err(hash) => Err(InterfaceError::InvalidInterface(format!(
-            "interface returned TX {} when {} was requested",
-            hex::encode(hash),
-            hex::encode(expected_hash)
-          )))?,
-        }
-      }
-
-      if !v1_indexes.is_empty() {
-        let full_txs = <P as ProvidesTransactions>::transactions(self, &v1_hashes).await?;
-        for ((pruned_tx, hash), tx) in
-          v1_indexes.into_iter().map(|i| &txs[i]).zip(v1_hashes).zip(full_txs)
-        {
-          if &Transaction::<Pruned>::from(tx) != pruned_tx {
-            Err(InterfaceError::InvalidInterface(format!(
-              "interface returned pruned V1 TX which didn't match TX {}",
-              hex::encode(hash)
-            )))?;
-          }
-        }
-      }
-
-      Ok(txs)
+      validate_pruned_transactions(self, unvalidated, hashes).await
     }
   }
 
@@ -306,26 +315,7 @@ impl<P: ProvidesUnvalidatedTransactions> ProvidesTransactions for P {
     async move {
       let unvalidated =
         <P as ProvidesUnvalidatedTransactions>::pruned_transaction(self, hash).await?;
-
-      match unvalidated.verify_as_possible(hash) {
-        Ok(tx) => {
-          if matches!(tx, Transaction::V1 { .. }) {
-            let full_tx = <P as ProvidesTransactions>::transaction(self, hash).await?;
-            if Transaction::<Pruned>::from(full_tx) != tx {
-              Err(InterfaceError::InvalidInterface(format!(
-                "interface returned pruned V1 TX which didn't match TX {}",
-                hex::encode(hash)
-              )))?;
-            }
-          }
-          Ok(tx)
-        }
-        Err(actual_hash) => Err(InterfaceError::InvalidInterface(format!(
-          "interface returned TX {} when {} was requested",
-          hex::encode(actual_hash),
-          hex::encode(hash)
-        )))?,
-      }
+      Ok(validate_pruned_transactions(self, vec![unvalidated], &[hash]).await?.swap_remove(0))
     }
   }
 }

@@ -6,25 +6,30 @@ use monero_oxide::{
   block::Block,
 };
 
-use crate::{InterfaceError, TransactionsError, ProvidesTransactions, ProvidesOutputs};
+use crate::{
+  InterfaceError, TransactionsError, PrunedTransactionWithPrunableHash, ProvidesTransactions,
+  ProvidesOutputs,
+};
 
 /// A block which is able to be scanned.
 // TODO: Should these fields be private so we can check their integrity within a constructor?
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ScannableBlock {
-  /// The block which is being scanned.
+  /// The block which is scannable.
   pub block: Block,
   /// The non-miner transactions within this block.
   pub transactions: Vec<Transaction<Pruned>>,
   /// The output index for the first RingCT output within this block.
   ///
-  /// None if there are no RingCT outputs within this block, Some otherwise.
+  /// `None` if there are no RingCT outputs within this block, `Some` otherwise.
   pub output_index_for_first_ringct_output: Option<u64>,
 }
 
 /// Extension trait for `ProvidesTransactions and `ProvidesOutputs`.
 pub trait ExpandToScannableBlock: ProvidesTransactions + ProvidesOutputs {
   /// Expand a `Block` to a `ScannableBlock`.
+  ///
+  /// The resulting block will be validated to have the expected transactions associated.
   fn expand_to_scannable_block(
     &self,
     block: Block,
@@ -99,6 +104,19 @@ pub trait ExpandToScannableBlock: ProvidesTransactions + ProvidesOutputs {
 
 impl<P: ProvidesTransactions + ProvidesOutputs> ExpandToScannableBlock for P {}
 
+/// An unvalidated block which may be scannable.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct UnvalidatedScannableBlock {
+  /// The block which to be scanned.
+  pub block: Block,
+  /// The non-miner transactions within this block.
+  pub transactions: Vec<PrunedTransactionWithPrunableHash>,
+  /// The output index for the first RingCT output within this block.
+  ///
+  /// None if there are no RingCT outputs within this block, Some otherwise.
+  pub output_index_for_first_ringct_output: Option<u64>,
+}
+
 /// Provides scannable blocks from an untrusted interface.
 ///
 /// This provides some of its methods yet
@@ -112,7 +130,7 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
   fn contiguous_scannable_blocks(
     &self,
     range: RangeInclusive<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, InterfaceError>> {
+  ) -> impl Send + Future<Output = Result<Vec<UnvalidatedScannableBlock>, InterfaceError>> {
     async move {
       // If a caller requests an exorbitant amount of blocks, this may trigger an OOM kill
       // In order to maintain correctness, we have to attempt to service this request though
@@ -131,7 +149,7 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
   fn scannable_block(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<ScannableBlock, InterfaceError>>;
+  ) -> impl Send + Future<Output = Result<UnvalidatedScannableBlock, InterfaceError>>;
 
   /// Get a `ScannableBlock` by its number.
   ///
@@ -139,7 +157,7 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
   fn scannable_block_by_number(
     &self,
     number: usize,
-  ) -> impl Send + Future<Output = Result<ScannableBlock, InterfaceError>> {
+  ) -> impl Send + Future<Output = Result<UnvalidatedScannableBlock, InterfaceError>> {
     async move {
       let mut blocks = self.contiguous_scannable_blocks(number ..= number).await?;
       if blocks.len() != 1 {
@@ -160,8 +178,7 @@ pub trait ProvidesScannableBlocks: Sync {
   /// Get a contiguous range of `ScannableBlock`s.
   ///
   /// The blocks will be validated to build upon each other, as expected, have the expected
-  /// numbers, and have the expected amount of transactions.
-  // TODO: For `version != 1` transactions, can we verify we have the expected transactions?
+  /// numbers, and have the expected transactions.
   fn contiguous_scannable_blocks(
     &self,
     range: RangeInclusive<usize>,
@@ -170,7 +187,7 @@ pub trait ProvidesScannableBlocks: Sync {
   /// Get a `ScannableBlock` by its hash.
   ///
   /// The block will be validated to be the requested block with a well-formed number and have the
-  /// expected amount of transactions.
+  /// expected transactions.
   fn scannable_block(
     &self,
     hash: [u8; 32],
@@ -182,14 +199,42 @@ pub trait ProvidesScannableBlocks: Sync {
   /// `number = 0`.
   ///
   /// The block will be validated to be a block with the requested number and have the expected
-  /// amount of transactions.
+  /// transactions.
   fn scannable_block_by_number(
     &self,
     number: usize,
   ) -> impl Send + Future<Output = Result<ScannableBlock, InterfaceError>>;
 }
 
-impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
+async fn validate_scannable_block<P: ProvidesTransactions + ProvidesUnvalidatedScannableBlocks>(
+  interface: &P,
+  block: UnvalidatedScannableBlock,
+) -> Result<ScannableBlock, InterfaceError> {
+  let UnvalidatedScannableBlock { block, transactions, output_index_for_first_ringct_output } =
+    block;
+  let transactions = match crate::provides_transactions::validate_pruned_transactions(
+    interface,
+    transactions,
+    &block.transactions,
+  )
+  .await
+  {
+    Ok(transactions) => transactions,
+    Err(e) => Err(match e {
+      TransactionsError::InterfaceError(e) => e,
+      TransactionsError::TransactionNotFound => InterfaceError::InvalidInterface(
+        "interface sent us a scannable block it doesn't have the transactions for".to_string(),
+      ),
+      TransactionsError::PrunedTransaction => InterfaceError::InvalidInterface(
+        // This happens if we're sent a pruned V1 transaction after requesting it in full
+        "interface sent us pruned transaction when validating a scannable block".to_string(),
+      ),
+    })?,
+  };
+  Ok(ScannableBlock { block, transactions, output_index_for_first_ringct_output })
+}
+
+impl<P: ProvidesTransactions + ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
   fn contiguous_scannable_blocks(
     &self,
     range: RangeInclusive<usize>,
@@ -217,17 +262,11 @@ impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
         blocks.iter().map(|scannable_block| &scannable_block.block),
       )?;
 
-      for block in &blocks {
-        if block.block.transactions.len() != block.transactions.len() {
-          Err(InterfaceError::InvalidInterface(format!(
-            "scannable block had {} transactions yet only received {}",
-            block.block.transactions.len(),
-            block.transactions.len()
-          )))?;
-        }
+      let mut res = Vec::with_capacity(blocks.len());
+      for block in blocks {
+        res.push(validate_scannable_block(self, block).await?);
       }
-
-      Ok(blocks)
+      Ok(res)
     }
   }
 
@@ -238,16 +277,7 @@ impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
     async move {
       let block = <P as ProvidesUnvalidatedScannableBlocks>::scannable_block(self, hash).await?;
       crate::provides_blockchain::sanity_check_block_by_hash(&hash, &block.block)?;
-
-      if block.block.transactions.len() != block.transactions.len() {
-        Err(InterfaceError::InvalidInterface(format!(
-          "scannable block had {} transactions yet only received {}",
-          block.block.transactions.len(),
-          block.transactions.len()
-        )))?;
-      }
-
-      Ok(block)
+      validate_scannable_block(self, block).await
     }
   }
 
@@ -259,16 +289,7 @@ impl<P: ProvidesUnvalidatedScannableBlocks> ProvidesScannableBlocks for P {
       let block =
         <P as ProvidesUnvalidatedScannableBlocks>::scannable_block_by_number(self, number).await?;
       crate::provides_blockchain::sanity_check_block_by_number(number, &block.block)?;
-
-      if block.block.transactions.len() != block.transactions.len() {
-        Err(InterfaceError::InvalidInterface(format!(
-          "scannable block had {} transactions yet only received {}",
-          block.block.transactions.len(),
-          block.transactions.len()
-        )))?;
-      }
-
-      Ok(block)
+      validate_scannable_block(self, block).await
     }
   }
 }
