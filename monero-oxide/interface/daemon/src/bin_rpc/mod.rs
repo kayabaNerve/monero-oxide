@@ -14,7 +14,7 @@ use curve25519_dalek::EdwardsPoint;
 use serde::Deserialize;
 
 use monero_oxide::{
-  transaction::{Output, Timelock, Transaction},
+  transaction::{Output, Timelock, PotentiallyPruned, Transaction},
   block::Block,
   DEFAULT_LOCK_WINDOW,
 };
@@ -48,10 +48,26 @@ impl<T: HttpTransport> MoneroDaemon<T> {
 }
 
 impl<T: HttpTransport> MoneroDaemon<T> {
+  // This MUST NOT be called with a start of `0`.
   async fn fetch_contiguous_blocks(
     &self,
     range: RangeInclusive<usize>,
   ) -> Result<(usize, Vec<Vec<u8>>), InterfaceError> {
+    /*
+      The following code uses `get_blocks.bin`, with the request specifying the `start_height`
+      field. Monero only observes this field if it has a non-zero value, hence why we must bound
+      the start is non-zero here. The caller is required to ensure they handle the zero case
+      themselves.
+
+      https://github.com/monero-project/monero/blob/b591866fcfed400bc89631686655aa769ec5f2dd
+        /src/cryptonote_core/blockchain.cpp#L2745
+    */
+    if *range.start() == 0 {
+      Err(InterfaceError::InternalError(
+        "attempting to fetch contiguous blocks from 0".to_string(),
+      ))?;
+    }
+
     let Some(requested_blocks_sub_one) = range.end().checked_sub(*range.start()) else {
       return Ok((0, vec![]));
     };
@@ -65,87 +81,50 @@ impl<T: HttpTransport> MoneroDaemon<T> {
       Err(InterfaceError::InternalError("start block wasn't representable in a `u64`".to_string()))?
     };
     let Ok(end) = u64::try_from(*range.end()) else {
-      Err(InterfaceError::InternalError("start block wasn't representable in a `u64`".to_string()))?
+      Err(InterfaceError::InternalError("end block wasn't representable in a `u64`".to_string()))?
+    };
+    let Ok(mut remaining_blocks) = u64::try_from(requested_blocks) else {
+      Err(InterfaceError::InternalError(
+        "amount of requested blocks wasn't representable in a `u64`".to_string(),
+      ))?
     };
 
-    // https://github.com/monero-project/monero/blob/cc73fe71162d564ffda8e549b79a350bca53c454
-    //   /src/rpc/core_rpc_server.cpp#L77
-    const BLOCKS_PER_REQUEST_LIMIT: usize = 1000;
-    const BLOCKS_PER_REQUEST_LIMIT_U64: u64 = BLOCKS_PER_REQUEST_LIMIT as u64;
-
-    let expected_request_header_len = 19;
-    let expected_request_len =
-      expected_request_header_len + 8 + (BLOCKS_PER_REQUEST_LIMIT.min(requested_blocks) * 8);
+    let expected_request_header_len = 32;
+    let expected_request_len = expected_request_header_len + 8 + 25;
     let mut request = Vec::with_capacity(expected_request_len);
     request.extend(epee::HEADER);
     request.push(epee::VERSION);
-    request.push(1 << 2);
+    request.push(3 << 2);
 
-    request.push(u8::try_from("heights".len()).unwrap());
-    request.extend("heights".as_bytes());
-    request.push((epee::Type::Uint64 as u8) | (epee::Array::Array as u8));
+    request.push(u8::try_from("prune".len()).unwrap());
+    request.extend("prune".as_bytes());
+    request.push(epee::Type::Bool as u8);
+    request.push(1);
+    request.push(u8::try_from("start_height".len()).unwrap());
+    request.extend("start_height".as_bytes());
+    request.push(epee::Type::Uint64 as u8);
     debug_assert_eq!(expected_request_header_len, request.len());
 
-    // Optimistically use the default request limit
-    let mut request_limit = BLOCKS_PER_REQUEST_LIMIT_U64;
     let mut blocks = vec![];
-    let mut first_iter = true;
     while start <= end {
       request.truncate(expected_request_header_len);
 
-      let this_end_inclusive = start.saturating_add(request_limit - 1).min(end);
-      let requested_blocks: u64 = this_end_inclusive - start + 1;
-      request.extend(((requested_blocks << 2) | 0b11).to_le_bytes());
+      request.extend(start.to_le_bytes());
 
-      for i in start ..= this_end_inclusive {
-        request.extend(i.to_le_bytes());
-      }
+      /*
+        This field is for a not-yet-released version of Monero, with the relevant pull request
+        being https://github.com/monero-project/monero/pull/9901. Older version of Monero will
+        ignore this field and return as many blocks as it wants in response to our request. Newer
+        versions of Monero won't waste our mutual bandwidth however.
+      */
+      request.push(u8::try_from("max_block_count".len()).unwrap());
+      request.extend("max_block_count".as_bytes());
+      request.push(epee::Type::Uint64 as u8);
+      request.extend(remaining_blocks.to_le_bytes());
 
-      // Only checked on the first iteration as the final chunk may be shorter, or the request
-      // limit may be shrinked due to abnormally large blocks
-      if first_iter {
-        debug_assert_eq!(expected_request_len, request.len());
-        first_iter = false
-      }
+      debug_assert_eq!(expected_request_len, request.len());
 
-      let res = match self
-        .bin_call("get_blocks_by_height.bin", request.clone(), MAX_RPC_RESPONSE_SIZE)
-        .await
-      {
-        Ok(res) => res,
-        Err(InterfaceError::InterfaceError(e)) => {
-          // If we only requested this one block, propagate the error
-          if request_limit == 1 {
-            Err(InterfaceError::InterfaceError(e))?;
-          }
-          // Else, retry with only requesting one block at a time
-          request_limit = 1;
-          continue;
-        }
-        Err(e) => Err(e)?,
-      };
-
-      // If this is less than the targetted amount of the response size limit, increase the current
-      // request limit by up to 50%
-      const TARGET: usize = (MAX_RPC_RESPONSE_SIZE * 4) / 5;
-      if res.len() < TARGET {
-        let fifty_percent_more =
-          (request_limit + (request_limit / 2)).min(BLOCKS_PER_REQUEST_LIMIT_U64);
-        // Safe due to bounding between `1 ..= BLOCKS_PER_REQUEST_LIMIT` which is representable as
-        // a `usize`
-        #[allow(clippy::cast_possible_truncation)]
-        let request_limit_usize = request_limit as usize;
-        let proportional =
-          (TARGET / res.len().div_ceil(request_limit_usize)).min(BLOCKS_PER_REQUEST_LIMIT);
-        // Safe due to bounding with `min`
-        let proportional = proportional as u64;
-        request_limit = fifty_percent_more.min(proportional);
-      }
-      // If this is more than the targetted amount of the response size limit, halve the current
-      // request limit
-      if res.len() > TARGET {
-        request_limit = (request_limit / 2).max(1);
-      }
+      let res = self.bin_call("get_blocks.bin", request.clone(), MAX_RPC_RESPONSE_SIZE).await?;
 
       let blocks_received = {
         let mut blocks_received = 0;
@@ -155,27 +134,16 @@ impl<T: HttpTransport> MoneroDaemon<T> {
         }
         blocks_received
       };
-      if blocks_received > requested_blocks {
-        Err(InterfaceError::InvalidInterface(format!(
-          "requested {requested_blocks} blocks yet received {blocks_received} blocks"
-        )))?;
+      if blocks_received == 0 {
+        Err(InterfaceError::InvalidInterface(
+          "received zero blocks when requesting multiple".to_string(),
+        ))?;
       }
 
       blocks.push(res);
 
-      /*
-        Allow receiving less blocks, in case Monero shortened the reply due to it approaching
-        limits.
-
-        If the Monero daemon safely, consistently does this in every case, then the above code to
-        dynamically adjust the amount of blocks requested is unnecessary.
-      */
-      let blocks_requested_but_not_received = requested_blocks - blocks_received;
-      match (this_end_inclusive - blocks_requested_but_not_received).checked_add(1) {
-        Some(after) => start = after,
-        // If the number after the end is unrepresentable, we've reached the end
-        None => break,
-      }
+      remaining_blocks = remaining_blocks.saturating_sub(blocks_received);
+      start = (end - remaining_blocks) + 1;
     }
 
     Ok((requested_blocks, blocks))
@@ -190,30 +158,33 @@ fn chained_iters<'a, I: Iterator, F: Fn(&'a [u8]) -> Result<I, InterfaceError>>(
 }
 
 impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
+  // TODO: Don't use `get_blocks.bin` here, which also yields transactions, yet a batch request for
+  // the blocks alone.
   fn contiguous_blocks(
     &self,
-    range: RangeInclusive<usize>,
+    mut range: RangeInclusive<usize>,
   ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>> {
     async move {
+      let mut res = vec![];
+      // Handle the exceptional case where we're also requesting the genesis block, which
+      // `fetch_contiguous_blocks` cannot handle
+      if *range.start() == 0 {
+        res.push(
+          ProvidesUnvalidatedBlockchain::block(
+            self,
+            ProvidesUnvalidatedBlockchain::block_hash(self, 0).await?,
+          )
+          .await?,
+        );
+        range = 1 ..= *range.end();
+      }
       let (requested_blocks, blocks_bin) = self.fetch_contiguous_blocks(range).await?;
-      let mut res = Vec::with_capacity(requested_blocks);
+      res.reserve(requested_blocks);
 
-      let mut blocks = chained_iters(&blocks_bin, epee::extract_blocks_from_blocks_bin)?;
-      for block in (&mut blocks).take(requested_blocks) {
+      for block in
+        chained_iters(&blocks_bin, epee::extract_blocks_from_blocks_bin)?.take(requested_blocks)
+      {
         res.push(block?);
-      }
-
-      if res.len() != requested_blocks {
-        Err(InterfaceError::InvalidInterface(format!(
-          "node returned {} blocks, requested {requested_blocks}",
-          res.len()
-        )))?;
-      }
-
-      if blocks.next().is_some() {
-        Err(InterfaceError::InvalidInterface(
-          "epee response had extra instances of `block`".to_string(),
-        ))?;
       }
 
       Ok(res)
@@ -266,16 +237,19 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
   }
 }
 
-async fn update_output_index<T: HttpTransport>(
+// TODO: `get_blocks.bin` returns the output index information we want. We don't need to make any
+// more requests
+async fn update_output_index<P: PotentiallyPruned, T: HttpTransport>(
   daemon: &MoneroDaemon<T>,
   next_ringct_output_index: &mut Option<u64>,
   output_index_for_first_ringct_output: &mut Option<u64>,
-  tx: &Transaction,
+  tx_hash: [u8; 32],
+  tx: &Transaction<P>,
 ) -> Result<(), InterfaceError> {
   if matches!(tx, Transaction::V2 { .. }) {
     // If we don't currently have the initial output index, fetch it via this transaction
     if next_ringct_output_index.is_none() && (!tx.prefix().outputs.is_empty()) {
-      let indexes = <MoneroDaemon<T> as ProvidesOutputs>::output_indexes(daemon, tx.hash()).await?;
+      let indexes = <MoneroDaemon<T> as ProvidesOutputs>::output_indexes(daemon, tx_hash).await?;
       if tx.prefix().outputs.len() != indexes.len() {
         Err(InterfaceError::InvalidInterface(format!(
           "TX had {} outputs yet `get_o_indexes` returned {}",
@@ -306,34 +280,34 @@ async fn update_output_index<T: HttpTransport>(
   Ok(())
 }
 
-impl<T: HttpTransport> ProvidesScannableBlocks for MoneroDaemon<T> {
+impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
   fn contiguous_scannable_blocks(
     &self,
-    range: RangeInclusive<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<ScannableBlock>, InterfaceError>> {
+    mut range: RangeInclusive<usize>,
+  ) -> impl Send + Future<Output = Result<Vec<UnvalidatedScannableBlock>, InterfaceError>> {
     async move {
+      let mut res = vec![];
+      // Handle the exceptional case where we're also requesting the genesis block, which
+      // `fetch_contiguous_blocks` cannot handle
+      if *range.start() == 0 {
+        res.push(
+          ProvidesUnvalidatedScannableBlocks::scannable_block(
+            self,
+            ProvidesUnvalidatedBlockchain::block_hash(self, 0).await?,
+          )
+          .await?,
+        );
+        range = 1 ..= *range.end();
+      }
       let (requested_blocks, blocks_bin) = self.fetch_contiguous_blocks(range).await?;
-      let mut res = Vec::with_capacity(requested_blocks);
+      res.reserve(requested_blocks);
 
-      let mut blocks = chained_iters(&blocks_bin, epee::extract_blocks_from_blocks_bin)?;
+      let blocks = chained_iters(&blocks_bin, epee::extract_blocks_from_blocks_bin)?;
       let mut txs = chained_iters(&blocks_bin, epee::extract_txs_from_blocks_bin)?;
 
-      let mut parent: Option<(usize, [u8; 32])> = None;
       let mut next_ringct_output_index = None;
-      for block in (&mut blocks).take(requested_blocks) {
+      for block in blocks.take(requested_blocks) {
         let block = block?;
-
-        if let Some((parent_number, parent_hash)) = parent {
-          if (block.header.previous != parent_hash) ||
-            (parent_number.checked_add(1) != Some(block.number()))
-          {
-            Err(InterfaceError::InvalidInterface(
-              "`get_blocks_by_height.bin` returned blocks which don't build on each other"
-                .to_string(),
-            ))?;
-          }
-        }
-        parent = Some((block.number(), block.hash()));
 
         let mut block_txs = vec![];
 
@@ -343,6 +317,7 @@ impl<T: HttpTransport> ProvidesScannableBlocks for MoneroDaemon<T> {
           self,
           &mut next_ringct_output_index,
           &mut output_index_for_first_ringct_output,
+          block.miner_transaction().hash(),
           block.miner_transaction(),
         )
         .await?;
@@ -350,45 +325,28 @@ impl<T: HttpTransport> ProvidesScannableBlocks for MoneroDaemon<T> {
         for hash in &block.transactions {
           let tx = txs.next().ok_or_else(|| {
             InterfaceError::InvalidInterface(
-              "`get_blocks_by_height.bin` contained less transactions than specified in its blocks"
+              "`get_blocks.bin` contained less transactions than specified in its blocks"
                 .to_string(),
             )
-          })??;
-          if tx.hash() != *hash {
-            Err(InterfaceError::InvalidInterface(
-              "transaction from `get_blocks_by_height.bin` didn't correspond to the block"
-                .to_string(),
-            ))?;
-          }
+          })?;
 
           update_output_index(
             self,
             &mut next_ringct_output_index,
             &mut output_index_for_first_ringct_output,
-            &tx,
+            *hash,
+            tx.as_ref(),
           )
           .await?;
 
-          block_txs.push(tx.into());
+          block_txs.push(tx);
         }
 
-        res.push(ScannableBlock {
+        res.push(UnvalidatedScannableBlock {
           block,
           transactions: block_txs,
           output_index_for_first_ringct_output,
         });
-      }
-
-      if res.len() != requested_blocks {
-        Err(InterfaceError::InvalidInterface(format!(
-          "node returned {} scannable blocks, requested {requested_blocks}",
-          res.len()
-        )))?;
-      }
-      if blocks.next().is_some() || txs.next().is_some() {
-        Err(InterfaceError::InvalidInterface(
-          "epee response had extra instances of `block` or `txs`".to_string(),
-        ))?;
       }
 
       Ok(res)
@@ -398,29 +356,44 @@ impl<T: HttpTransport> ProvidesScannableBlocks for MoneroDaemon<T> {
   fn scannable_block(
     &self,
     hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<ScannableBlock, InterfaceError>> {
+  ) -> impl Send + Future<Output = Result<UnvalidatedScannableBlock, InterfaceError>> {
     async move {
       let block = <Self as ProvidesBlockchain>::block(self, hash).await?;
-      <Self as ExpandToScannableBlock>::expand_to_scannable_block(self, block).await.map_err(|e| {
-        match e {
-          TransactionsError::InterfaceError(e) => e,
-          TransactionsError::TransactionNotFound => InterfaceError::InvalidInterface(
-            "node sent us blocks it doesn't have the transactions for".to_string(),
-          ),
-          TransactionsError::PrunedTransaction => InterfaceError::InvalidInterface(
-            // This happens if we're sent a pruned V1 transaction after requesting it in full
-            "node sent us pruned transaction when expanding to a scannable block".to_string(),
-          ),
-        }
-      })
+      let transactions =
+        <Self as ProvidesUnvalidatedTransactions>::pruned_transactions(self, &block.transactions)
+          .await
+          .map_err(|e| match e {
+            TransactionsError::InterfaceError(e) => e,
+            TransactionsError::TransactionNotFound => InterfaceError::InvalidInterface(
+              "daemon sent us a block it doesn't have the transactions for".to_string(),
+            ),
+            TransactionsError::PrunedTransaction => InterfaceError::InternalError(
+              "complaining about receiving a pruned transaction when".to_string() +
+                " requesting a pruned transaction",
+            ),
+          })?;
+      let mut next_ringct_output_index = None;
+      let mut output_index_for_first_ringct_output = None;
+      update_output_index(
+        self,
+        &mut next_ringct_output_index,
+        &mut output_index_for_first_ringct_output,
+        block.miner_transaction().hash(),
+        block.miner_transaction(),
+      )
+      .await?;
+      for (hash, transaction) in block.transactions.iter().zip(&transactions) {
+        update_output_index(
+          self,
+          &mut next_ringct_output_index,
+          &mut output_index_for_first_ringct_output,
+          *hash,
+          transaction.as_ref(),
+        )
+        .await?;
+      }
+      Ok(UnvalidatedScannableBlock { block, transactions, output_index_for_first_ringct_output })
     }
-  }
-
-  fn scannable_block_by_number(
-    &self,
-    number: usize,
-  ) -> impl Send + Future<Output = Result<ScannableBlock, InterfaceError>> {
-    async move { Ok(self.contiguous_scannable_blocks(number ..= number).await?.swap_remove(0)) }
   }
 }
 
@@ -433,11 +406,11 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
       let request = [
         epee::HEADER.as_slice(),
         &[epee::VERSION],
-        &[1u8 << 2],
+        &[1 << 2],
         &[u8::try_from("txid".len()).unwrap()],
         "txid".as_bytes(),
         &[epee::Type::String as u8],
-        &[32u8 << 2],
+        &[32 << 2],
         &hash,
       ]
       .concat();
@@ -485,10 +458,12 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
 
           let indexes_len_u64 =
             u64::try_from(indexes.len()).expect("requesting more than 2**64 indexes?");
+          // TODO: This can truncate if the responses if an absurd amount is requested
+          // https://github.com/monero-oxide/monero-oxide/issues/93
           request.extend(((indexes_len_u64 << 2) | 0b11).to_le_bytes());
 
           for index in indexes {
-            request.push(2u8 << 2);
+            request.push(2 << 2);
 
             request.push(u8::try_from("amount".len()).unwrap());
             request.extend("amount".as_bytes());
@@ -558,7 +533,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
       let request = [
         epee::HEADER.as_slice(),
         &[epee::VERSION],
-        &[5u8 << 2],
+        &[5 << 2],
         &[u8::try_from("from_height".len()).unwrap()],
         "from_height".as_bytes(),
         &[epee::Type::Uint64 as u8],
@@ -591,7 +566,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
         &[u8::try_from("amounts".len()).unwrap()],
         "amounts".as_bytes(),
         &[(epee::Type::Uint8 as u8) | (epee::Array::Array as u8)],
-        &[1u8 << 2],
+        &[1 << 2],
         &[0],
       ]
       .concat();

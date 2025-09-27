@@ -3,14 +3,14 @@ use std_shims::prelude::*;
 
 use monero_oxide::{
   io::{CompressedPoint, read_u64},
-  transaction::Transaction,
+  transaction::{Pruned, Transaction},
   block::Block,
 };
 
 use monero_epee::{EpeeError as OriginalEpeeError, EpeeEntry, Epee};
 pub(crate) use monero_epee::{HEADER, Type, Array};
 
-use crate::{InterfaceError, RingCtOutputInformation};
+use crate::{InterfaceError, PrunedTransactionWithPrunableHash, RingCtOutputInformation};
 
 pub(crate) const VERSION: u8 = 1;
 
@@ -230,7 +230,7 @@ pub(crate) fn extract_blocks_from_blocks_bin(
 
 pub(crate) fn extract_txs_from_blocks_bin(
   blocks_bin: &[u8],
-) -> Result<impl use<'_> + Iterator<Item = Result<Transaction, InterfaceError>>, InterfaceError> {
+) -> Result<impl use<'_> + Iterator<Item = PrunedTransactionWithPrunableHash>, InterfaceError> {
   let mut epee = Epee::new(blocks_bin).map_err(EpeeError)?;
   let mut epee = epee.fields().map_err(EpeeError)?;
   let Some(mut blocks) = optional_field!(epee, "blocks", EpeeEntry::iterate)? else {
@@ -244,17 +244,41 @@ pub(crate) fn extract_txs_from_blocks_bin(
       continue;
     };
     while let Some(transaction) = transactions.next() {
-      let transaction = transaction.map_err(EpeeError)?;
-      let mut transaction = transaction.to_str().map_err(EpeeError)?;
-      res.push(
-        Transaction::read(&mut transaction)
-          .map_err(|e| InterfaceError::InvalidInterface(format!("invalid transaction: {e:?}"))),
-      );
-      if !transaction.is_empty() {
-        Err(InterfaceError::InvalidInterface(
-          "transaction had extraneous bytes after it".to_string(),
-        ))?;
+      let mut fields = transaction.map_err(EpeeError)?.fields().map_err(EpeeError)?;
+      let mut transaction = None;
+      let mut prunable_hash = None;
+      while let Some(field) = fields.next() {
+        let (key, value) = field.map_err(EpeeError)?;
+        match key {
+          b"blob" => {
+            let mut value = value.to_str().map_err(EpeeError)?;
+            transaction = Some(Transaction::<Pruned>::read(&mut value).map_err(|e| {
+              InterfaceError::InvalidInterface(format!("invalid transaction: {e:?}"))
+            })?);
+            if !value.is_empty() {
+              Err(InterfaceError::InvalidInterface(
+                "transaction had extraneous bytes after it".to_string(),
+              ))?;
+            }
+          }
+          b"prunable_hash" => {
+            prunable_hash =
+              Some(<[u8; 32]>::try_from(value.to_fixed_len_str(32).map_err(EpeeError)?).unwrap());
+          }
+          _ => {}
+        }
       }
+      let Some(transaction) = transaction else {
+        Err(InterfaceError::InvalidInterface(
+          "transaction without transaction encoding".to_string(),
+        ))?
+      };
+      let prunable_hash = prunable_hash.filter(|_| !matches!(transaction, Transaction::V1 { .. }));
+      let transaction = PrunedTransactionWithPrunableHash::new(transaction, prunable_hash)
+        .ok_or_else(|| {
+          InterfaceError::InvalidInterface("non-v1 transaction missing prunable hash".to_string())
+        })?;
+      res.push(transaction);
     }
   }
   Ok(res.into_iter())

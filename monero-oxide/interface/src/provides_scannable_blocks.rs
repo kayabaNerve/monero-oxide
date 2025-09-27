@@ -126,7 +126,7 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
   /// Get a contiguous range of `ScannableBlock`s.
   ///
   /// No validation is applied to the received blocks other than that they deserialize and have the
-  /// expected length.
+  /// expected amount of blocks returned.
   fn contiguous_scannable_blocks(
     &self,
     range: RangeInclusive<usize>,
@@ -145,7 +145,7 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
 
   /// Get a `ScannableBlock` by its hash.
   ///
-  /// No validation is applied to the received blocks other than that it deserializes.
+  /// No validation is applied to the received block other than that it deserializes.
   fn scannable_block(
     &self,
     hash: [u8; 32],
@@ -153,7 +153,7 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
 
   /// Get a `ScannableBlock` by its number.
   ///
-  /// No validation is applied to the received blocks other than that it deserializes.
+  /// No validation is applied to the received block other than that it deserializes.
   fn scannable_block_by_number(
     &self,
     number: usize,

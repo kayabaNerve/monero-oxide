@@ -38,11 +38,6 @@ impl PrunedTransactionWithPrunableHash {
     Some(Self { transaction, prunable_hash })
   }
 
-  /// Retrieve the contained transaction.
-  pub fn retrieve(self) -> Transaction<Pruned> {
-    self.transaction
-  }
-
   /// Verify the transaction has the expected hash, if possible.
   ///
   /// This only works for transaction where `version != 1`. Transactions where `version = 1` will
@@ -57,6 +52,12 @@ impl PrunedTransactionWithPrunableHash {
       }
     }
     Ok(self.transaction)
+  }
+}
+
+impl AsRef<Transaction<Pruned>> for PrunedTransactionWithPrunableHash {
+  fn as_ref(&self) -> &Transaction<Pruned> {
+    &self.transaction
   }
 }
 
