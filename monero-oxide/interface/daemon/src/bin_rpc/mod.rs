@@ -95,11 +95,11 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     while start <= end {
       request.truncate(expected_request_header_len);
 
-      let this_end = start.saturating_add(request_limit - 1).min(end);
-      let requested_blocks: u64 = this_end - start + 1;
+      let this_end_inclusive = start.saturating_add(request_limit - 1).min(end);
+      let requested_blocks: u64 = this_end_inclusive - start + 1;
       request.extend(((requested_blocks << 2) | 0b11).to_le_bytes());
 
-      for i in start ..= this_end {
+      for i in start ..= this_end_inclusive {
         request.extend(i.to_le_bytes());
       }
 
@@ -149,9 +149,31 @@ impl<T: HttpTransport> MoneroDaemon<T> {
         request_limit = (request_limit / 2).max(1);
       }
 
+      let blocks_received = {
+        let mut blocks_received = 0;
+        for item in epee::extract_blocks_from_blocks_bin(&res)? {
+          item?;
+          blocks_received += 1;
+        }
+        blocks_received
+      };
+      if blocks_received > requested_blocks {
+        Err(InterfaceError::InvalidInterface(format!(
+          "requested {requested_blocks} blocks yet received {blocks_received} blocks"
+        )))?;
+      }
+
       blocks.push(res);
 
-      match this_end.checked_add(1) {
+      /*
+        Allow receiving less blocks, in case Monero shortened the reply due to it approaching
+        limits.
+
+        If the Monero daemon safely, consistently does this in every case, then the above code to
+        dynamically adjust the amount of blocks requested is unnecessary.
+      */
+      let blocks_requested_but_not_received = requested_blocks - blocks_received;
+      match (this_end_inclusive - blocks_requested_but_not_received).checked_add(1) {
         Some(after) => start = after,
         // If the number after the end is unrepresentable, we've reached the end
         None => break,
