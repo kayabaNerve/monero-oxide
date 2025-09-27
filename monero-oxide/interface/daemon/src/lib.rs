@@ -185,9 +185,9 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     response_size_limit: usize,
   ) -> Result<Response, InterfaceError> {
     let req = if let Some(params) = params {
-      format!(r#"{{ "method": {method}, "params": {params} }}"#)
+      format!(r#"{{ "method": "{method}", "params": {params} }}"#)
     } else {
-      r#"{{ "method": {method} }}"#.to_string()
+      r#"{{ "method": "{method}" }}"#.to_string()
     };
 
     Ok(
