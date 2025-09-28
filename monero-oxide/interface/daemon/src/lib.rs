@@ -424,7 +424,12 @@ mod provides_transaction {
             let prunable_hash = (!matches!(tx, Transaction::V1 { .. }))
               .then(|| hash_hex(&res.prunable_hash))
               .transpose()?;
-            Ok(PrunedTransactionWithPrunableHash::new(tx, prunable_hash).unwrap())
+            Ok(
+              PrunedTransactionWithPrunableHash::new(tx, prunable_hash)
+                .expect(
+                  "couldn't create `PrunedTransactionWithPrunableHash` despite providing prunable hash if version != 1"
+                )
+            )
           })
           .collect()
       }

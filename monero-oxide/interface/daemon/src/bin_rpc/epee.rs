@@ -133,6 +133,18 @@ pub(crate) fn extract_distribution(
   read_u64_array_from_epee(expected_len, distribution)
 }
 
+fn epee_32<'encoding, 'parent>(
+  entry: EpeeEntry<'encoding, 'parent, &'encoding [u8]>,
+) -> Result<[u8; 32], EpeeError> {
+  Ok(
+    entry
+      .to_fixed_len_str(32)
+      .map_err(EpeeError)?
+      .try_into()
+      .expect("32-byte string couldn't be converted to a 32-byte array"),
+  )
+}
+
 /// Accumulate a set of outs from `get_outs.bin`.
 pub(crate) fn accumulate_outs(
   epee: &[u8],
@@ -157,19 +169,9 @@ pub(crate) fn accumulate_outs(
       let (item_key, value) = out.map_err(EpeeError)?;
       match item_key {
         b"height" => block_number = Some(value.to_u64().map_err(EpeeError)?),
-        b"key" => {
-          key = Some(CompressedPoint(
-            value.to_fixed_len_str(32).map_err(EpeeError)?.try_into().unwrap(),
-          ))
-        }
-        b"mask" => {
-          commitment = Some(CompressedPoint(
-            value.to_fixed_len_str(32).map_err(EpeeError)?.try_into().unwrap(),
-          ))
-        }
-        b"txid" => {
-          transaction = Some(value.to_fixed_len_str(32).map_err(EpeeError)?.try_into().unwrap())
-        }
+        b"key" => key = Some(CompressedPoint(epee_32(value)?)),
+        b"mask" => commitment = Some(CompressedPoint(epee_32(value)?)),
+        b"txid" => transaction = Some(epee_32(value)?),
         b"unlocked" => unlocked = Some(value.to_bool().map_err(EpeeError)?),
         _ => continue,
       }
@@ -261,10 +263,7 @@ pub(crate) fn extract_txs_from_blocks_bin(
               ))?;
             }
           }
-          b"prunable_hash" => {
-            prunable_hash =
-              Some(<[u8; 32]>::try_from(value.to_fixed_len_str(32).map_err(EpeeError)?).unwrap());
-          }
+          b"prunable_hash" => prunable_hash = Some(epee_32(value)?),
           _ => {}
         }
       }

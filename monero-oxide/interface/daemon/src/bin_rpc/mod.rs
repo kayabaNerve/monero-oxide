@@ -27,6 +27,18 @@ use crate::{
 };
 
 mod epee;
+
+macro_rules! epee_key_len {
+  ($key: literal) => {{
+    #[allow(clippy::cast_possible_truncation)]
+    {
+      // Check this cast is well-formed when compiling
+      const _KEY_LEN_IS_LESS_THAN_256: [(); 255 - $key.len()] = [(); _];
+      $key.len() as u8
+    }
+  }};
+}
+
 mod blocks_bin;
 
 impl<T: HttpTransport> MoneroDaemon<T> {
@@ -155,7 +167,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
         epee::HEADER.as_slice(),
         &[epee::VERSION],
         &[1 << 2],
-        &[u8::try_from("txid".len()).unwrap()],
+        &[epee_key_len!("txid")],
         "txid".as_bytes(),
         &[epee::Type::String as u8],
         &[32 << 2],
@@ -192,7 +204,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
       request.extend(epee::HEADER);
       request.push(epee::VERSION);
       request.push(1 << 2);
-      request.push(u8::try_from("outputs".len()).unwrap());
+      request.push(epee_key_len!("outputs"));
       request.extend("outputs".as_bytes());
       request.push((epee::Type::Object as u8) | (epee::Array::Array as u8));
       debug_assert_eq!(request.len(), expected_request_header_len);
@@ -213,12 +225,12 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
           for index in indexes {
             request.push(2 << 2);
 
-            request.push(u8::try_from("amount".len()).unwrap());
+            request.push(epee_key_len!("amount"));
             request.extend("amount".as_bytes());
             request.push(epee::Type::Uint8 as u8);
             request.push(0);
 
-            request.push(u8::try_from("index".len()).unwrap());
+            request.push(epee_key_len!("index"));
             request.extend("index".as_bytes());
             request.push(epee::Type::Uint64 as u8);
             request.extend(&index.to_le_bytes());
@@ -282,7 +294,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
         epee::HEADER.as_slice(),
         &[epee::VERSION],
         &[5 << 2],
-        &[u8::try_from("from_height".len()).unwrap()],
+        &[epee_key_len!("from_height")],
         "from_height".as_bytes(),
         &[epee::Type::Uint64 as u8],
         &u64::try_from(from)
@@ -292,7 +304,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
             )
           })?
           .to_le_bytes(),
-        &[u8::try_from("to_height".len()).unwrap()],
+        &[epee_key_len!("to_height")],
         "to_height".as_bytes(),
         &[epee::Type::Uint64 as u8],
         &(if zero_zero_case {
@@ -303,15 +315,15 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
           })?
         })
         .to_le_bytes(),
-        &[u8::try_from("cumulative".len()).unwrap()],
+        &[epee_key_len!("cumulative")],
         "cumulative".as_bytes(),
         &[epee::Type::Bool as u8],
         &[1],
-        &[u8::try_from("compress".len()).unwrap()],
+        &[epee_key_len!("compress")],
         "compress".as_bytes(),
         &[epee::Type::Bool as u8],
         &[0], // TODO: Use compression
-        &[u8::try_from("amounts".len()).unwrap()],
+        &[epee_key_len!("amounts")],
         "amounts".as_bytes(),
         &[(epee::Type::Uint8 as u8) | (epee::Array::Array as u8)],
         &[1 << 2],

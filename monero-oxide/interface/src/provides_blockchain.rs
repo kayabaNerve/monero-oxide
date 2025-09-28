@@ -62,7 +62,7 @@ pub trait ProvidesUnvalidatedBlockchain: Sync + ProvidesBlockchainMeta {
           1,
         )))?;
       }
-      Ok(blocks.pop().unwrap())
+      Ok(blocks.pop().expect("verified we had a block"))
     }
   }
 

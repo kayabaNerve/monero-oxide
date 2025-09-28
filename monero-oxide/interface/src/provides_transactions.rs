@@ -46,7 +46,10 @@ impl PrunedTransactionWithPrunableHash {
   /// If verification fails, the actual hash of the transaction is returned as the error.
   pub fn verify_as_possible(self, hash: [u8; 32]) -> Result<Transaction<Pruned>, [u8; 32]> {
     if let Some(prunable_hash) = self.prunable_hash {
-      let actual_hash = self.transaction.hash_with_prunable_hash(prunable_hash).unwrap();
+      let actual_hash = self
+        .transaction
+        .hash_with_prunable_hash(prunable_hash)
+        .expect("couldn't hash with prunable hash despite prior ensuring presence was as expected");
       if actual_hash != hash {
         Err(actual_hash)?;
       }
@@ -136,7 +139,7 @@ pub trait ProvidesUnvalidatedTransactions: Sync {
           1,
         )))?;
       }
-      Ok(txs.pop().unwrap())
+      Ok(txs.pop().expect("verified we had a transaction"))
     }
   }
 
@@ -155,7 +158,7 @@ pub trait ProvidesUnvalidatedTransactions: Sync {
           1,
         )))?;
       }
-      Ok(txs.pop().unwrap())
+      Ok(txs.pop().expect("verified we had a pruned transaction"))
     }
   }
 }

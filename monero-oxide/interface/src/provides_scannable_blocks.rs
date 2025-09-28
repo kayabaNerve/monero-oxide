@@ -168,7 +168,7 @@ pub trait ProvidesUnvalidatedScannableBlocks: Sync {
           1,
         )))?;
       }
-      Ok(blocks.pop().unwrap())
+      Ok(blocks.pop().expect("verified we had a scannable block"))
     }
   }
 }

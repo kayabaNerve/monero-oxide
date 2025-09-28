@@ -59,11 +59,11 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     request.push(epee::VERSION);
     request.push(3 << 2);
 
-    request.push(u8::try_from("prune".len()).unwrap());
+    request.push(epee_key_len!("prune"));
     request.extend("prune".as_bytes());
     request.push(epee::Type::Bool as u8);
     request.push(1);
-    request.push(u8::try_from("start_height".len()).unwrap());
+    request.push(epee_key_len!("start_height"));
     request.extend("start_height".as_bytes());
     request.push(epee::Type::Uint64 as u8);
     debug_assert_eq!(expected_request_header_len, request.len());
@@ -80,7 +80,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
         ignore this field and return as many blocks as it wants in response to our request. Newer
         versions of Monero won't waste our mutual bandwidth however.
       */
-      request.push(u8::try_from("max_block_count".len()).unwrap());
+      request.push(epee_key_len!("max_block_count"));
       request.extend("max_block_count".as_bytes());
       request.push(epee::Type::Uint64 as u8);
       request.extend(remaining_blocks.to_le_bytes());
