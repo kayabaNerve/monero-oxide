@@ -102,6 +102,10 @@ pub trait HttpTransport: Sync + Clone {
 }
 
 /// A connection to a Monero daemon.
+///
+/// This interface, if unable to fulfill a request (such as when requesting a non-existent block),
+/// may represent that as the interface being invalid (on the assumption requests made should be
+/// fulfilled). Please be mindful accordingly.
 #[derive(Clone)]
 pub struct MoneroDaemon<T: HttpTransport> {
   transport: T,
