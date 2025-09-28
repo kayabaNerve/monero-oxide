@@ -110,12 +110,49 @@ pub trait HttpTransport: Sync + Clone {
 pub struct MoneroDaemon<T: HttpTransport> {
   transport: T,
   response_size_limits: bool,
+  supports_json_rpc_batch_requests: bool,
 }
 
 impl<T: HttpTransport> MoneroDaemon<T> {
   /// Construct a new connection to a Monero daemon.
-  pub fn new(transport: T) -> Self {
-    Self { transport, response_size_limits: true }
+  pub async fn new(transport: T) -> Result<Self, InterfaceError> {
+    /*
+      TODO: We don't currently fetch the RPC version here. If we did, we would be able to know
+      which RPC routes are available and optimize accordingly. It'd also provide some level of
+      validation over the functionality expected to be offered.
+    */
+
+    let mut result =
+      Self { transport, response_size_limits: true, supports_json_rpc_batch_requests: true };
+
+    // https://github.com/monero-project/monero/issues/10118
+    {
+      const BATCH_REQUEST: &str = r#"[
+       { "jsonrpc": "2.0", "method": "get_block", "params": {{ "height": 0 }}, "id": 0 },
+       { "jsonrpc": "2.0", "method": "get_block", "params": {{ "height": 0 }}, "id": 1 }
+      ]"#;
+      let response: serde_json::Value = result
+        .rpc_call_internal("json_rpc", Some(BATCH_REQUEST.to_string()), BASE_RESPONSE_SIZE)
+        .await?;
+      if let Some(error) = response.get("error") {
+        /*
+          If the server failed to parse our valid JSON, we assume it's because it's expecting an
+          object (while we sent an array, as allowed under the JSON-RPC 2.0 specification).
+
+          https://www.jsonrpc.org/specification#batch
+        */
+        if error.get("code") == Some(&serde_json::Value::from(-32700i32)) {
+          result.supports_json_rpc_batch_requests = false;
+        } else {
+          Err(InterfaceError::InvalidInterface(format!(
+            "interface returned error when attempting a batch request, code {:?}",
+            error.get("code").map(|code| code.as_number())
+          )))?;
+        }
+      }
+    }
+
+    Ok(result)
   }
 
   /// Whether to enable or disable response size limits.
@@ -136,6 +173,7 @@ impl<T: Debug + HttpTransport> core::fmt::Debug for MoneroDaemon<T> {
       .debug_struct("MoneroDaemon")
       .field("transport", &self.transport)
       .field("response_size_limits", &self.response_size_limits)
+      .field("supports_json_rpc_batch_requests", &self.supports_json_rpc_batch_requests)
       .finish()
   }
 }

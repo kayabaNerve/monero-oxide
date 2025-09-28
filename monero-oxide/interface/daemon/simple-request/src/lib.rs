@@ -127,7 +127,7 @@ impl SimpleRequestTransport {
       })?)
     };
 
-    Ok(MoneroDaemon::new(SimpleRequestTransport { authentication, url, request_timeout }))
+    MoneroDaemon::new(SimpleRequestTransport { authentication, url, request_timeout }).await
   }
 }
 

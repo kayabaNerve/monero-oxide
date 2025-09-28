@@ -22,7 +22,20 @@ struct BlockResponse {
   blob: String,
 }
 
-#[rustfmt::skip]
+/// The JSON-encoded request for a block.
+///
+/// The request's ID will equal the number of the block requested.
+fn block_request(number: usize) -> String {
+  format!(
+    r#"{{
+      "jsonrpc": "2.0",
+      "method": "get_block",
+      "params": {{ "height": {number} }},
+      "id": {number}
+    }}"#
+  )
+}
+
 impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
   /*
     When fetching blocks, we don't use `get_blocks.bin` (nor `get_blocks_by_height.bin`) as they
@@ -56,8 +69,13 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
       // Optimistically use our estimate for the initial request, before we gain context on the
       // actual sizes
       let mut blocks_per_request = BLOCKS_PER_RESPONSE_ESTIMATE;
-      let mut supports_batch_requests = true;
       while *range.start() <= *range.end() {
+        // If the server doesn't support batched JSON-RPC requests, don't request multiple blocks
+        // within a single request
+        if !self.supports_json_rpc_batch_requests {
+          blocks_per_request = 1;
+        }
+
         // Prepare a new request
         let start = *range.start();
         let end =
@@ -66,17 +84,12 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
 
         let single_block = start == end;
         let request = if single_block {
-          format!(
-            r#"{{ "jsonrpc": "2.0", "method": "get_block", "params": {{ "height": {start} }}, "id": {start} }}"#
-          )
+          block_request(start)
         } else {
           let mut request = String::with_capacity(request_len * 30);
           request.push('[');
           for number in start ..= end {
-            let individual_request = format!(
-              r#"{{ "jsonrpc": "2.0", "method": "get_block", "params": {{ "height": {number} }}, "id": {number} }}"#
-            );
-            request.push_str(&individual_request);
+            request.push_str(&block_request(number));
             request.push(',');
           }
           request.pop(); // Pop the trailing comma
@@ -85,8 +98,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
         };
 
         let json_blocks =
-          match self.rpc_call_core("json_rpc", Some(request), MAX_RPC_RESPONSE_SIZE).await
-          {
+          match self.rpc_call_core("json_rpc", Some(request), MAX_RPC_RESPONSE_SIZE).await {
             Ok(json_blocks) => json_blocks,
             Err(e) => {
               // If we only requested a single block, propagate the error
@@ -99,29 +111,6 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
             }
           };
         let response_byte_length = json_blocks.len();
-
-        // If there was an error, check if it was due to the server not supporting batch requests
-        // https://github.com/monero-project/monero/issues/10118
-        // TODO: We can make `JsonRpcResponse` an enum to avoid decoding twice here
-        {
-          let json_blocks = serde_json::from_str::<serde_json::Value>(&json_blocks).map_err(|_| {
-            InterfaceError::InvalidInterface("`get_block` response wasn't valid JSON".to_string())
-          })?;
-          if let Some(error) = json_blocks.get("error") {
-            if error.get("code") == Some(&serde_json::Value::from(-32700i32)) {
-              if !single_block {
-                // TODO: Fall back to `get_block` while making each request in parallel using a
-                // futures pool
-                supports_batch_requests = false;
-                blocks_per_request = 1;
-                continue;
-              }
-              Err(InterfaceError::InvalidInterface(
-                "interface had error when requesting a block".to_string(),
-              ))?;
-            }
-          }
-        }
 
         let mut json_blocks: Vec<JsonRpcResponse<BlockResponse>> = (if single_block {
           serde_json::from_str(&json_blocks).map(|block| vec![block])
@@ -176,11 +165,6 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
         // request limit
         if response_byte_length > TARGET_RESPONSE_SIZE {
           blocks_per_request = (blocks_per_request / 2).max(1);
-        }
-
-        // If the server doesn't support batch requests, only request a single block
-        if !supports_batch_requests {
-          blocks_per_request = 1;
         }
       }
 
