@@ -30,20 +30,27 @@ mod epee;
 
 impl<T: HttpTransport> MoneroDaemon<T> {
   /// Perform a binary call to the specified route with the provided parameters.
-  fn bin_call<'a>(
+  async fn bin_call<'a>(
     &'a self,
     route: &'a str,
     params: Vec<u8>,
     response_size_limit: usize,
-  ) -> impl use<'a, T> + Send + Future<Output = Result<Vec<u8>, InterfaceError>> {
-    async move {
-      let res = self
-        .transport
-        .post(route, params, self.response_size_limits.then_some(response_size_limit))
-        .await?;
-      epee::check_status(&res)?;
-      Ok(res)
-    }
+  ) -> Result<Vec<u8>, InterfaceError> {
+    let mut res = self
+      .transport
+      .post(route, params, self.response_size_limits.then_some(response_size_limit))
+      .await?;
+
+    /*
+      If the transport erroneously returned more bytes, truncate it before we expand it into an
+      object. This may invalidate it, but it limits the impact of a DoS the transport was supposed
+      to prevent. Since this is EPEE-encoded, we should be able to read the values present before
+      the cut-off without issue, so long as we stop our deserialization before hitting EOF.
+    */
+    res.truncate(response_size_limit);
+
+    epee::check_status(&res)?;
+    Ok(res)
   }
 }
 

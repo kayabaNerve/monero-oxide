@@ -141,7 +141,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     params: Option<String>,
     response_size_limit: usize,
   ) -> Result<Response, InterfaceError> {
-    let res = self
+    let mut res = self
       .transport
       .post(
         route,
@@ -149,6 +149,14 @@ impl<T: HttpTransport> MoneroDaemon<T> {
         self.response_size_limits.then_some(response_size_limit.max(MAX_RPC_RESPONSE_SIZE)),
       )
       .await?;
+
+    /*
+      If the transport erroneously returned more bytes, truncate it before we expand it into an
+      object. This may invalidate it, but it limits the impact of a DoS the transport was supposed
+      to prevent.
+    */
+    res.truncate(response_size_limit);
+
     let res_str = std_shims::str::from_utf8(&res)
       .map_err(|_| InterfaceError::InvalidInterface("response wasn't utf-8".to_string()))?;
     serde_json::from_str(res_str).map_err(|_| {
