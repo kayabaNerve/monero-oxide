@@ -7,7 +7,6 @@ use alloc::{
 };
 
 use serde::Deserialize;
-use serde_json::Value;
 
 use monero_oxide::block::{BlockHeader, Block};
 
@@ -86,7 +85,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
         };
 
         let json_blocks =
-          match self.rpc_call_core::<Value>("json_rpc", Some(request), MAX_RPC_RESPONSE_SIZE).await
+          match self.rpc_call_core("json_rpc", Some(request), MAX_RPC_RESPONSE_SIZE).await
           {
             Ok(json_blocks) => json_blocks,
             Err(e) => {
@@ -99,27 +98,31 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
               continue;
             }
           };
+        let response_byte_length = json_blocks.len();
 
         // If there was an error, check if it was due to the server not supporting batch requests
         // https://github.com/monero-project/monero/issues/10118
-        if let Some(error) = json_blocks.get("error") {
-          if error.get("code") == Some(&serde_json::Value::from(-32700i32)) {
-            if !single_block {
-              // TODO: Fall back to `get_block` while making each request in parallel using a
-              // futures pool
-              supports_batch_requests = false;
-              blocks_per_request = 1;
-              continue;
+        // TODO: We can make `JsonRpcResponse` an enum to avoid decoding twice here
+        {
+          let json_blocks = serde_json::from_str::<serde_json::Value>(&json_blocks).map_err(|_| {
+            InterfaceError::InvalidInterface("`get_block` response wasn't valid JSON".to_string())
+          })?;
+          if let Some(error) = json_blocks.get("error") {
+            if error.get("code") == Some(&serde_json::Value::from(-32700i32)) {
+              if !single_block {
+                // TODO: Fall back to `get_block` while making each request in parallel using a
+                // futures pool
+                supports_batch_requests = false;
+                blocks_per_request = 1;
+                continue;
+              }
+              Err(InterfaceError::InvalidInterface(
+                "interface had error when requesting a block".to_string(),
+              ))?;
             }
-            Err(InterfaceError::InvalidInterface(
-              "interface had error when requesting a block".to_string(),
-            ))?;
           }
         }
 
-        let json_blocks = json_blocks.to_string();
-        // This is imperfect as our encoding may be less/more compact than Monero's, yet it's fine
-        let response_byte_length = json_blocks.len();
         let mut json_blocks: Vec<JsonRpcResponse<BlockResponse>> = (if single_block {
           serde_json::from_str(&json_blocks).map(|block| vec![block])
         } else {
@@ -188,7 +191,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
   fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
     async move {
       let res: BlockResponse = self
-        .json_rpc_call_core(
+        .json_rpc_call_internal(
           "get_block",
           Some(format!(r#"{{ "hash": "{}" }}"#, hex::encode(hash))),
           MAX_RPC_RESPONSE_SIZE,
@@ -215,7 +218,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
       }
 
       let header: BlockHeaderByHeightResponse = self
-        .json_rpc_call_core(
+        .json_rpc_call_internal(
           "get_block_header_by_height",
           Some(format!(r#"{{ "height": {number} }}"#)),
           BASE_RESPONSE_SIZE,

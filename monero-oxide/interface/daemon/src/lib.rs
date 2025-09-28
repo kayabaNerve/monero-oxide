@@ -137,12 +137,12 @@ impl<T: Debug + HttpTransport> core::fmt::Debug for MoneroDaemon<T> {
 }
 
 impl<T: HttpTransport> MoneroDaemon<T> {
-  async fn rpc_call_core<Response: DeserializeOwned>(
+  async fn rpc_call_core(
     &self,
     route: &str,
     params: Option<String>,
     response_size_limit: usize,
-  ) -> Result<Response, InterfaceError> {
+  ) -> Result<String, InterfaceError> {
     let mut res = self
       .transport
       .post(
@@ -159,9 +159,18 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     */
     res.truncate(response_size_limit);
 
-    let res_str = std_shims::str::from_utf8(&res)
-      .map_err(|_| InterfaceError::InvalidInterface("response wasn't utf-8".to_string()))?;
-    serde_json::from_str(res_str).map_err(|_| {
+    std_shims::string::String::from_utf8(res)
+      .map_err(|_| InterfaceError::InvalidInterface("response wasn't utf-8".to_string()))
+  }
+
+  async fn rpc_call_internal<Response: DeserializeOwned>(
+    &self,
+    route: &str,
+    params: Option<String>,
+    response_size_limit: usize,
+  ) -> Result<Response, InterfaceError> {
+    let res = self.rpc_call_core(route, params, response_size_limit).await?;
+    serde_json::from_str(&res).map_err(|_| {
       InterfaceError::InvalidInterface("response wasn't the expected json".to_string())
     })
   }
@@ -182,13 +191,13 @@ impl<T: HttpTransport> MoneroDaemon<T> {
   ) -> Result<String, InterfaceError> {
     Ok(
       self
-        .rpc_call_core::<serde_json::Value>(route, params, response_size_limit)
+        .rpc_call_internal::<serde_json::Value>(route, params, response_size_limit)
         .await?
         .to_string(),
     )
   }
 
-  async fn json_rpc_call_core<Response: DeserializeOwned>(
+  async fn json_rpc_call_internal<Response: DeserializeOwned>(
     &self,
     method: &str,
     params: Option<String>,
@@ -202,7 +211,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
 
     Ok(
       self
-        .rpc_call_core::<JsonRpcResponse<Response>>("json_rpc", Some(req), response_size_limit)
+        .rpc_call_internal::<JsonRpcResponse<Response>>("json_rpc", Some(req), response_size_limit)
         .await?
         .result,
     )
@@ -220,7 +229,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     response_size_limit: usize,
   ) -> Result<String, InterfaceError> {
     // Untyped response
-    let result: Value = self.json_rpc_call_core(method, params, response_size_limit).await?;
+    let result: Value = self.json_rpc_call_internal(method, params, response_size_limit).await?;
     // Return the response as a string
     Ok(result.to_string())
   }
@@ -242,7 +251,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     }
 
     let res = self
-      .json_rpc_call_core::<BlocksResponse>(
+      .json_rpc_call_internal::<BlocksResponse>(
         "generateblocks",
         Some(format!(r#"{{ "wallet_address": "{address}", "amount_of_blocks": {block_count} }}"#)),
         BASE_RESPONSE_SIZE.saturating_add(
@@ -266,8 +275,10 @@ impl<T: HttpTransport> ProvidesBlockchainMeta for MoneroDaemon<T> {
       struct HeightResponse {
         height: usize,
       }
-      let res =
-        self.rpc_call_core::<HeightResponse>("get_height", None, BASE_RESPONSE_SIZE).await?.height;
+      let res = self
+        .rpc_call_internal::<HeightResponse>("get_height", None, BASE_RESPONSE_SIZE)
+        .await?
+        .height;
       res.checked_sub(1).ok_or_else(|| {
         InterfaceError::InvalidInterface(
           "node claimed the blockchain didn't even have the genesis block".to_string(),
@@ -322,7 +333,7 @@ mod provides_transaction {
 
           let txs = "\"".to_string() + &hashes_hex.drain(.. this_count).collect::<Vec<_>>().join("\",\"") + "\"";
           let txs: TransactionsResponse = self
-            .rpc_call_core(
+            .rpc_call_internal(
               "get_transactions",
               Some(format!(r#"{{ "txs_hashes": [{txs}] }}"#)),
               BASE_RESPONSE_SIZE.saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(this_count.saturating_mul(TRANSACTION_SIZE_BOUND))),
@@ -388,7 +399,7 @@ mod provides_transaction {
 
           let txs = "\"".to_string() + &hashes_hex.drain(.. this_count).collect::<Vec<_>>().join("\",\"") + "\"";
           let txs: TransactionsResponse = self
-            .rpc_call_core(
+            .rpc_call_internal(
               "get_transactions",
               Some(format!(r#"{{ "txs_hashes": [{txs}], "prune": true }}"#)),
               BASE_RESPONSE_SIZE.saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(this_count.saturating_mul(TRANSACTION_SIZE_BOUND))),
@@ -462,7 +473,7 @@ impl<T: HttpTransport> PublishTransaction for MoneroDaemon<T> {
       }
 
       let res: SendRawResponse = self
-        .rpc_call_core(
+        .rpc_call_internal(
           "send_raw_transaction",
           Some(format!(
             r#"{{ "tx_as_hex": "{}", "do_sanity_checks": false }}"#,
@@ -504,7 +515,7 @@ mod provides_fee_rates {
         }
 
         let res: FeeResponse = self
-          .json_rpc_call_core(
+          .json_rpc_call_internal(
             "get_fee_estimate",
             Some(format!(r#"{{ "grace_blocks": {GRACE_BLOCKS_FOR_FEE_ESTIMATE} }}"#)),
             BASE_RESPONSE_SIZE,
