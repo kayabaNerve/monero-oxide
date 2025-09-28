@@ -1,30 +1,20 @@
 use core::{
-  ops::{RangeInclusive, Bound, RangeBounds},
+  ops::{Bound, RangeBounds},
   future::Future,
 };
 
-use alloc::{
-  format, vec,
-  vec::Vec,
-  string::{String, ToString},
-};
+use alloc::{format, vec, vec::Vec, string::ToString};
 
 use curve25519_dalek::EdwardsPoint;
 
-use serde::Deserialize;
-
 use monero_oxide::{
   transaction::{Output, Timelock},
-  block::Block,
   DEFAULT_LOCK_WINDOW,
 };
 
 use monero_interface::*;
 
-use crate::{
-  MAX_RPC_RESPONSE_SIZE, BASE_RESPONSE_SIZE, TRANSACTION_SIZE_BOUND, HttpTransport, MoneroDaemon,
-  rpc_hex, hash_hex,
-};
+use crate::{BASE_RESPONSE_SIZE, TRANSACTION_SIZE_BOUND, HttpTransport, MoneroDaemon};
 
 mod epee;
 
@@ -64,96 +54,6 @@ impl<T: HttpTransport> MoneroDaemon<T> {
 
     epee::check_status(&res)?;
     Ok(res)
-  }
-}
-
-async fn get_block<T: HttpTransport>(
-  daemon: &MoneroDaemon<T>,
-  request: String,
-) -> Result<Block, InterfaceError> {
-  #[derive(Deserialize)]
-  struct BlockResponse {
-    blob: String,
-  }
-
-  let res: BlockResponse =
-    daemon.json_rpc_call_core("get_block", Some(request), MAX_RPC_RESPONSE_SIZE).await?;
-
-  Block::read(&mut rpc_hex(&res.blob)?.as_slice())
-    .map_err(|_| InterfaceError::InvalidInterface("invalid block".to_string()))
-}
-
-impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
-  /*
-    TODO: Don't use `get_blocks.bin` here, which also yields transactions, yet a batch request for
-    the blocks alone. With that PR, reintroduce the code to dynamically adapt the amount of blocks
-    per request seen in commit 996693c2a270ad2dced15c6d2499583632f00515.
-  */
-  fn contiguous_blocks(
-    &self,
-    mut range: RangeInclusive<usize>,
-  ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>> {
-    async move {
-      let mut res = vec![];
-      // Handle the exceptional case where we're also requesting the genesis block, which
-      // `fetch_contiguous_blocks` cannot handle
-      if *range.start() == 0 {
-        res.push(
-          ProvidesUnvalidatedBlockchain::block(
-            self,
-            ProvidesUnvalidatedBlockchain::block_hash(self, 0).await?,
-          )
-          .await?,
-        );
-        range = 1 ..= *range.end();
-      }
-      let (requested_blocks, blocks_bin) = self.fetch_contiguous_blocks(range).await?;
-      res.reserve(requested_blocks);
-
-      for block in blocks_bin::chained_iters(&blocks_bin, epee::extract_blocks_from_blocks_bin)?
-        .take(requested_blocks)
-      {
-        res.push(block?);
-      }
-
-      Ok(res)
-    }
-  }
-
-  fn block(&self, hash: [u8; 32]) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
-    get_block(self, format!(r#"{{ "hash": "{}" }}"#, hex::encode(hash)))
-  }
-
-  fn block_by_number(
-    &self,
-    number: usize,
-  ) -> impl Send + Future<Output = Result<Block, InterfaceError>> {
-    get_block(self, format!(r#"{{ "height": {number} }}"#))
-  }
-
-  fn block_hash(
-    &self,
-    number: usize,
-  ) -> impl Send + Future<Output = Result<[u8; 32], InterfaceError>> {
-    async move {
-      #[derive(Deserialize)]
-      struct BlockHeaderResponse {
-        hash: String,
-      }
-      #[derive(Deserialize)]
-      struct BlockHeaderByHeightResponse {
-        block_header: BlockHeaderResponse,
-      }
-
-      let header: BlockHeaderByHeightResponse = self
-        .json_rpc_call_core(
-          "get_block_header_by_height",
-          Some(format!(r#"{{ "height": {number} }}"#)),
-          BASE_RESPONSE_SIZE,
-        )
-        .await?;
-      hash_hex(&header.block_header.hash)
-    }
   }
 }
 

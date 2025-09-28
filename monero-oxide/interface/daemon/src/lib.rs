@@ -20,6 +20,7 @@ use monero_address::Address;
 
 use monero_interface::*;
 
+mod blocks;
 mod bin_rpc;
 
 // https://github.com/monero-project/monero/blob/b591866fcfed400bc89631686655aa769ec5f2dd
@@ -73,9 +74,10 @@ fn hash_hex(hash: &str) -> Result<[u8; 32], InterfaceError> {
     .map_err(|_| InterfaceError::InvalidInterface("hash wasn't 32-bytes".to_string()))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct JsonRpcResponse<T> {
   result: T,
+  id: Option<usize>,
 }
 
 #[rustfmt::skip]
