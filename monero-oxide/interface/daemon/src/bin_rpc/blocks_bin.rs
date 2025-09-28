@@ -91,8 +91,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
 
       let blocks_received = {
         let mut blocks_received = 0;
-        for item in epee::extract_blocks_from_blocks_bin(&res)? {
-          item?;
+        for _ in epee::extract_blocks_from_blocks_bin(&res)? {
           blocks_received += 1;
         }
         blocks_received
@@ -180,14 +179,8 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
       res.reserve(requested_blocks);
 
       let blocks = chained_iters(&blocks_bin, epee::extract_blocks_from_blocks_bin)?;
-      let mut txs = chained_iters(&blocks_bin, epee::extract_txs_from_blocks_bin)?;
-
       let mut next_ringct_output_index = None;
-      for block in blocks.take(requested_blocks) {
-        let block = block?;
-
-        let mut block_txs = vec![];
-
+      for (block, transactions) in blocks.take(requested_blocks) {
         let mut output_index_for_first_ringct_output = None;
 
         update_output_index(
@@ -199,29 +192,25 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
         )
         .await?;
 
-        for hash in &block.transactions {
-          let tx = txs.next().ok_or_else(|| {
-            InterfaceError::InvalidInterface(
-              "`get_blocks.bin` contained less transactions than specified in its blocks"
-                .to_string(),
-            )
-          })?;
-
+        if block.transactions.len() != transactions.len() {
+          Err(InterfaceError::InvalidInterface(
+            "distinct amount of transaction in block and transaction entries".to_string(),
+          ))?;
+        }
+        for (hash, transaction) in block.transactions.iter().zip(&transactions) {
           update_output_index(
             self,
             &mut next_ringct_output_index,
             &mut output_index_for_first_ringct_output,
             *hash,
-            tx.as_ref(),
+            transaction.as_ref(),
           )
           .await?;
-
-          block_txs.push(tx);
         }
 
         res.push(UnvalidatedScannableBlock {
           block,
-          transactions: block_txs,
+          transactions,
           output_index_for_first_ringct_output,
         });
       }

@@ -208,7 +208,10 @@ pub(crate) fn accumulate_outs(
 
 pub(crate) fn extract_blocks_from_blocks_bin(
   blocks_bin: &[u8],
-) -> Result<impl use<'_> + Iterator<Item = Result<Block, InterfaceError>>, InterfaceError> {
+) -> Result<
+  impl use<'_> + Iterator<Item = (Block, Vec<PrunedTransactionWithPrunableHash>)>,
+  InterfaceError,
+> {
   let mut epee = Epee::new(blocks_bin).map_err(EpeeError)?;
   let mut epee = epee.fields().map_err(EpeeError)?;
   let Some(mut blocks) = optional_field!(epee, "blocks", EpeeEntry::iterate)? else {
@@ -217,68 +220,74 @@ pub(crate) fn extract_blocks_from_blocks_bin(
 
   let mut res = vec![];
   while let Some(block) = blocks.next() {
-    let mut block = block.map_err(EpeeError)?.fields().map_err(EpeeError)?;
-    let mut block = field!(block, "block", EpeeEntry::to_str)?;
-    res.push(
-      Block::read(&mut block)
-        .map_err(|e| InterfaceError::InvalidInterface(format!("invalid block: {e:?}"))),
-    );
-    if !block.is_empty() {
-      Err(InterfaceError::InvalidInterface("block had extraneous bytes after it".to_string()))?;
-    }
-  }
-  Ok(res.into_iter())
-}
-
-pub(crate) fn extract_txs_from_blocks_bin(
-  blocks_bin: &[u8],
-) -> Result<impl use<'_> + Iterator<Item = PrunedTransactionWithPrunableHash>, InterfaceError> {
-  let mut epee = Epee::new(blocks_bin).map_err(EpeeError)?;
-  let mut epee = epee.fields().map_err(EpeeError)?;
-  let Some(mut blocks) = optional_field!(epee, "blocks", EpeeEntry::iterate)? else {
-    return Ok(vec![].into_iter());
-  };
-
-  let mut res = vec![];
-  while let Some(block) = blocks.next() {
-    let mut block = block.map_err(EpeeError)?.fields().map_err(EpeeError)?;
-    let Some(mut transactions) = optional_field!(block, "txs", EpeeEntry::iterate)? else {
-      continue;
-    };
-    while let Some(transaction) = transactions.next() {
-      let mut fields = transaction.map_err(EpeeError)?.fields().map_err(EpeeError)?;
-      let mut transaction = None;
-      let mut prunable_hash = None;
-      while let Some(field) = fields.next() {
-        let (key, value) = field.map_err(EpeeError)?;
-        match key {
-          b"blob" => {
-            let mut value = value.to_str().map_err(EpeeError)?;
-            transaction = Some(Transaction::<Pruned>::read(&mut value).map_err(|e| {
-              InterfaceError::InvalidInterface(format!("invalid transaction: {e:?}"))
-            })?);
-            if !value.is_empty() {
-              Err(InterfaceError::InvalidInterface(
-                "transaction had extraneous bytes after it".to_string(),
-              ))?;
-            }
+    let mut block_fields = block.map_err(EpeeError)?.fields().map_err(EpeeError)?;
+    let mut block = None;
+    let mut transactions = vec![];
+    while let Some(field) = block_fields.next() {
+      let (key, value) = field.map_err(EpeeError)?;
+      match key {
+        b"block" => {
+          let mut encoding = value.to_str().map_err(EpeeError)?;
+          block = Some(
+            Block::read(&mut encoding)
+              .map_err(|e| InterfaceError::InvalidInterface(format!("invalid block: {e:?}")))?,
+          );
+          if !encoding.is_empty() {
+            Err(InterfaceError::InvalidInterface(
+              "block had extraneous bytes after it".to_string(),
+            ))?;
           }
-          b"prunable_hash" => prunable_hash = Some(epee_32(value)?),
-          _ => {}
         }
+        b"txs" => {
+          let mut transaction_entries = value.iterate().map_err(EpeeError)?;
+          while let Some(transaction) = transaction_entries.next() {
+            let mut fields = transaction.map_err(EpeeError)?.fields().map_err(EpeeError)?;
+            let mut transaction = None;
+            let mut prunable_hash = None;
+            while let Some(field) = fields.next() {
+              let (key, value) = field.map_err(EpeeError)?;
+              match key {
+                b"blob" => {
+                  let mut encoding = value.to_str().map_err(EpeeError)?;
+                  transaction = Some(Transaction::<Pruned>::read(&mut encoding).map_err(|e| {
+                    InterfaceError::InvalidInterface(format!("invalid transaction: {e:?}"))
+                  })?);
+                  if !encoding.is_empty() {
+                    Err(InterfaceError::InvalidInterface(
+                      "transaction had extraneous bytes after it".to_string(),
+                    ))?;
+                  }
+                }
+                b"prunable_hash" => prunable_hash = Some(epee_32(value)?),
+                _ => {}
+              }
+            }
+            let Some(transaction) = transaction else {
+              Err(InterfaceError::InvalidInterface(
+                "transaction without transaction encoding".to_string(),
+              ))?
+            };
+
+            // Only use the prunable hash if this transaction has a well-defined prunable hash
+            let prunable_hash =
+              prunable_hash.filter(|_| !matches!(transaction, Transaction::V1 { .. }));
+            let transaction = PrunedTransactionWithPrunableHash::new(transaction, prunable_hash)
+              .ok_or_else(|| {
+                InterfaceError::InvalidInterface(
+                  "non-v1 transaction missing prunable hash".to_string(),
+                )
+              })?;
+            transactions.push(transaction);
+          }
+        }
+        _ => {}
       }
-      let Some(transaction) = transaction else {
-        Err(InterfaceError::InvalidInterface(
-          "transaction without transaction encoding".to_string(),
-        ))?
-      };
-      let prunable_hash = prunable_hash.filter(|_| !matches!(transaction, Transaction::V1 { .. }));
-      let transaction = PrunedTransactionWithPrunableHash::new(transaction, prunable_hash)
-        .ok_or_else(|| {
-          InterfaceError::InvalidInterface("non-v1 transaction missing prunable hash".to_string())
-        })?;
-      res.push(transaction);
     }
+
+    let Some(block) = block else {
+      Err(InterfaceError::InvalidInterface("block entry itself was missing the block".to_string()))?
+    };
+    res.push((block, transactions));
   }
   Ok(res.into_iter())
 }
