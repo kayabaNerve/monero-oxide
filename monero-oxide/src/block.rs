@@ -42,7 +42,7 @@ impl BlockHeader {
   /// The upper bound for a block header's size.
   ///
   /// Please see https://github.com/monero-oxide/monero-oxide/pull/97 for more information.
-  pub const SIZE_UPPER_BOUND: usize = 9 + 9 + 9 + 32 + 4;
+  pub const SIZE_UPPER_BOUND: usize = 10 + 10 + 10 + 32 + 4;
 
   /// Write the BlockHeader.
   pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
