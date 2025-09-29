@@ -98,6 +98,12 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> FieldIterator<'encoding, 'pare
   /// This is approximate to `Iterator::next` yet each item maintains a mutable reference to the
   /// iterator. Accordingly, we cannot use `Iterator::next` which requires items not borrow from
   /// the iterator.
+  ///
+  /// [polonius-the-crab](https://docs.rs/polonius-the-crab) details a frequent limitation of
+  /// Rust's borrow checker which users of this function may incur. It also details potential
+  /// solutions (primarily using inlined code instead of functions, callbacks) before presenting
+  /// itself as a complete solution. Please refer to it if you have difficulties calling this
+  /// method for context.
   #[allow(clippy::should_implement_trait)]
   pub fn next(&mut self) -> Option<Result<(B, EpeeEntry<'encoding, '_, B>), EpeeError>> {
     self.len = self.len.checked_sub(1)?;
@@ -198,6 +204,12 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> ArrayIterator<'encoding, 'pare
   /// This is approximate to `Iterator::next` yet each item maintains a mutable reference to the
   /// iterator. Accordingly, we cannot use `Iterator::next` which requires items not borrow from
   /// the iterator.
+  ///
+  /// [polonius-the-crab](https://docs.rs/polonius-the-crab) details a frequent limitation of
+  /// Rust's borrow checker which users of this function may incur. It also details potential
+  /// solutions (primarily using inlined code instead of functions, callbacks) before presenting
+  /// itself as a complete solution. Please refer to it if you have difficulties calling this
+  /// method for context.
   #[allow(clippy::should_implement_trait)]
   pub fn next(&mut self) -> Option<Result<EpeeEntry<'encoding, '_, B>, EpeeError>> {
     if let Some(err) = self.root.error {
