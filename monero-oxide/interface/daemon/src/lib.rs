@@ -248,7 +248,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     let req = if let Some(params) = params {
       format!(r#"{{ "jsonrpc": "2.0", "method": "{method}", "params": {params}, "id": 0 }}"#)
     } else {
-      r#"{{ "jsonrpc": "2.0", "method": "{method}", "id": 0 }}"#.to_string()
+      format!(r#"{{ "jsonrpc": "2.0", "method": "{method}", "id": 0 }}"#)
     };
 
     Ok(
