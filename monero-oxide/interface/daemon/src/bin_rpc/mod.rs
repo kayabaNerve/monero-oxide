@@ -33,7 +33,11 @@ mod blocks_bin;
 
 impl<T: HttpTransport> MoneroDaemon<T> {
   /// Perform a binary call to the specified route with the provided parameters.
-  async fn bin_call<'a>(
+  ///
+  /// This method is NOT guaranteed by SemVer and may be removed in a future release. No guarantees
+  /// on the safety nor correctness of bespoke calls made with this function are guaranteed.
+  #[doc(hidden)]
+  pub async fn bin_call<'a>(
     &'a self,
     route: &'a str,
     params: Vec<u8>,
