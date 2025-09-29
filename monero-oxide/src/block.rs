@@ -160,10 +160,13 @@ impl Block {
     serialized
   }
 
-  /// Serialize the block as required for the proof of work hash.
+  /// Serialize the block as generally required for the proof of work hash.
   ///
   /// This is distinct from the serialization required for the block hash. To get the block hash,
   /// use the [`Block::hash`] function.
+  ///
+  /// Please note that for block #202,612, regardless of the network, the proof of work hash will
+  /// be fixed to a specific value and this preimage will be irrelevant.
   pub fn serialize_pow_hash(&self) -> Vec<u8> {
     let mut blob = self.header.serialize();
 
