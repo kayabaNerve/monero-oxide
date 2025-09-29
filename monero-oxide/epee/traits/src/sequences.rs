@@ -35,7 +35,14 @@ impl<T: 'static + EpeeDecode, const N: usize> EpeeDecode for [T; N] {
       let mut original = [0; N];
       str.read_into_slice(&mut original)?;
 
-      // We know these types are equivalent, making this an effective NOP and safe
+      /*
+        We know these types are equivalent, making this an effective NOP and safe. Unlike with
+        `Vec`, we can't use `core::mem::transmute` as the size of the container is dependent on the
+        size of the type, and Rust doesn't know
+        `core::mem::size_of::<T>() == core::mem::size_of::<u8>()` in this branch. Accordingly, we
+        manually implement a bitwise copy from a pointer to the `[u8; N]`. This is fine as
+        `u8: Copy`.
+      */
       let casted =
         unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(original) as *const [T; N]) };
 
