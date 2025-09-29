@@ -18,4 +18,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 workspace = true
 
 [dependencies]
-monero-wallet = { path = "../../monero-oxide/wallet", default-features = false, features = ["compile-time-generators"] }
+monero-epee = { path = "../../monero-oxide/epee" }
+monero-wallet = { path = "../../monero-oxide/wallet", default-features = false, features = ["compile-time-generators"], optional = true }
+
+[features]
+alloc = ["monero-wallet"]
