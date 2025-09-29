@@ -1,8 +1,10 @@
 use core::{ops::RangeInclusive, future::Future};
-
 use alloc::{format, vec, vec::Vec, string::ToString};
 
-use monero_oxide::transaction::{PotentiallyPruned, Transaction};
+use monero_oxide::{
+  transaction::{PotentiallyPruned, Transaction},
+  block::Block,
+};
 
 use monero_interface::*;
 
@@ -11,12 +13,14 @@ use crate::{MAX_RPC_RESPONSE_SIZE, HttpTransport, MoneroDaemon};
 use super::epee;
 
 impl<T: HttpTransport> MoneroDaemon<T> {
-  // This MUST NOT be called with a start of `0`.
-  pub(super) async fn fetch_contiguous_blocks(
+  /// This MUST NOT be called with a start of `0`.
+  ///
+  /// This returns false if this methodology isn't applicable.
+  async fn fetch_contiguous_blocks(
     &self,
     range: RangeInclusive<usize>,
     res: &mut Vec<UnvalidatedScannableBlock>,
-  ) -> Result<(), InterfaceError> {
+  ) -> Result<bool, InterfaceError> {
     /*
       The following code uses `get_blocks.bin`, with the request specifying the `start_height`
       field. Monero only observes this field if it has a non-zero value, hence why we must bound
@@ -33,7 +37,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     }
 
     let Some(requested_blocks_sub_one) = range.end().checked_sub(*range.start()) else {
-      return Ok(());
+      return Ok(true);
     };
     let Some(requested_blocks) = requested_blocks_sub_one.checked_add(1) else {
       Err(InterfaceError::InternalError(
@@ -92,7 +96,10 @@ impl<T: HttpTransport> MoneroDaemon<T> {
 
       let blocks_received = {
         let mut blocks_received = 0;
-        for block in epee::extract_blocks_from_blocks_bin(&epee)? {
+        let Some(blocks) = epee::extract_blocks_from_blocks_bin(&epee)? else {
+          return Ok(false);
+        };
+        for block in blocks {
           res.push(block);
           blocks_received += 1;
           remaining_blocks -= 1;
@@ -116,7 +123,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
       start = (end - remaining_blocks) + 1;
     }
 
-    Ok(())
+    Ok(true)
   }
 }
 
@@ -177,6 +184,46 @@ async fn update_output_index_with_fetch<P: PotentiallyPruned, T: HttpTransport>(
   update_output_index(next_ringct_output_index, output_index_for_first_ringct_output, tx)
 }
 
+async fn expand<T: HttpTransport>(
+  daemon: &MoneroDaemon<T>,
+  block: Block,
+) -> Result<UnvalidatedScannableBlock, InterfaceError> {
+  let transactions =
+    ProvidesUnvalidatedTransactions::pruned_transactions(daemon, &block.transactions)
+      .await
+      .map_err(|e| match e {
+        TransactionsError::InterfaceError(e) => e,
+        TransactionsError::TransactionNotFound => InterfaceError::InvalidInterface(
+          "daemon sent us a block it doesn't have the transactions for".to_string(),
+        ),
+        TransactionsError::PrunedTransaction => InterfaceError::InternalError(
+          "complaining about receiving a pruned transaction when".to_string() +
+            " requesting a pruned transaction",
+        ),
+      })?;
+  let mut next_ringct_output_index = None;
+  let mut output_index_for_first_ringct_output = None;
+  update_output_index_with_fetch(
+    daemon,
+    &mut next_ringct_output_index,
+    &mut output_index_for_first_ringct_output,
+    block.miner_transaction().hash(),
+    block.miner_transaction(),
+  )
+  .await?;
+  for (hash, transaction) in block.transactions.iter().zip(&transactions) {
+    update_output_index_with_fetch(
+      daemon,
+      &mut next_ringct_output_index,
+      &mut output_index_for_first_ringct_output,
+      *hash,
+      transaction.as_ref(),
+    )
+    .await?;
+  }
+  Ok(UnvalidatedScannableBlock { block, transactions, output_index_for_first_ringct_output })
+}
+
 impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
   fn contiguous_scannable_blocks(
     &self,
@@ -190,7 +237,27 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
         res.push(ProvidesUnvalidatedScannableBlocks::scannable_block_by_number(self, 0).await?);
         range = 1 ..= *range.end();
       }
-      self.fetch_contiguous_blocks(range, &mut res).await?;
+      let len_before_fetch = res.len();
+
+      if !self.fetch_contiguous_blocks(range.clone(), &mut res).await? {
+        // Update the range according to any blocks successfully fetched with this methodology
+        let len_successfully_fetched =
+          res.len().checked_sub(len_before_fetch).ok_or_else(|| {
+            InterfaceError::InternalError(
+              "`fetch_contiguous_blocks` shortened the length of `res`".to_string(),
+            )
+          })?;
+        let Some(new_start) = (*range.start()).checked_add(len_successfully_fetched) else {
+          // If the new start is unrepresentable, it exceeds the representable end
+          return Ok(res);
+        };
+        range = new_start ..= *range.end();
+
+        // Fall back to what's presumably JSON methods
+        for block in ProvidesUnvalidatedBlockchain::contiguous_blocks(self, range).await? {
+          res.push(expand(self, block).await?);
+        }
+      }
       Ok(res)
     }
   }
@@ -200,41 +267,8 @@ impl<T: HttpTransport> ProvidesUnvalidatedScannableBlocks for MoneroDaemon<T> {
     hash: [u8; 32],
   ) -> impl Send + Future<Output = Result<UnvalidatedScannableBlock, InterfaceError>> {
     async move {
-      let block = <Self as ProvidesBlockchain>::block(self, hash).await?;
-      let transactions =
-        <Self as ProvidesUnvalidatedTransactions>::pruned_transactions(self, &block.transactions)
-          .await
-          .map_err(|e| match e {
-            TransactionsError::InterfaceError(e) => e,
-            TransactionsError::TransactionNotFound => InterfaceError::InvalidInterface(
-              "daemon sent us a block it doesn't have the transactions for".to_string(),
-            ),
-            TransactionsError::PrunedTransaction => InterfaceError::InternalError(
-              "complaining about receiving a pruned transaction when".to_string() +
-                " requesting a pruned transaction",
-            ),
-          })?;
-      let mut next_ringct_output_index = None;
-      let mut output_index_for_first_ringct_output = None;
-      update_output_index_with_fetch(
-        self,
-        &mut next_ringct_output_index,
-        &mut output_index_for_first_ringct_output,
-        block.miner_transaction().hash(),
-        block.miner_transaction(),
-      )
-      .await?;
-      for (hash, transaction) in block.transactions.iter().zip(&transactions) {
-        update_output_index_with_fetch(
-          self,
-          &mut next_ringct_output_index,
-          &mut output_index_for_first_ringct_output,
-          *hash,
-          transaction.as_ref(),
-        )
-        .await?;
-      }
-      Ok(UnvalidatedScannableBlock { block, transactions, output_index_for_first_ringct_output })
+      let block = <Self as ProvidesUnvalidatedBlockchain>::block(self, hash).await?;
+      expand(self, block).await
     }
   }
 

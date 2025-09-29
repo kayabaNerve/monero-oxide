@@ -8,14 +8,14 @@ use monero_oxide::{
 };
 
 use monero_epee::{EpeeError as OriginalEpeeError, EpeeEntry, Epee};
-pub(crate) use monero_epee::{HEADER, Type, Array};
+pub(super) use monero_epee::{HEADER, Type, Array};
 
 use crate::{
   InterfaceError, PrunedTransactionWithPrunableHash, UnvalidatedScannableBlock,
   RingCtOutputInformation,
 };
 
-pub(crate) const VERSION: u8 = 1;
+pub(super) const VERSION: u8 = 1;
 
 struct EpeeError(OriginalEpeeError);
 impl From<EpeeError> for InterfaceError {
@@ -88,7 +88,7 @@ impl FixedLenStr {
 }
 
 /// Check the `status` field within an `epee`-encoded object.
-pub(crate) fn check_status(epee: &[u8]) -> Result<(), InterfaceError> {
+pub(super) fn check_status(epee: &[u8]) -> Result<(), InterfaceError> {
   let mut epee = Epee::new(epee).map_err(EpeeError)?;
   let mut epee = epee.fields().map_err(EpeeError)?;
   let status = field!(epee, "status", EpeeEntry::to_str)?;
@@ -101,7 +101,7 @@ pub(crate) fn check_status(epee: &[u8]) -> Result<(), InterfaceError> {
 /// Extract the `start_height` field from the response to `get_output_distribution.bin`.
 ///
 /// This assumes only a single distribution was requested by the caller.
-pub(crate) fn extract_start_height(epee: &[u8]) -> Result<usize, InterfaceError> {
+pub(super) fn extract_start_height(epee: &[u8]) -> Result<usize, InterfaceError> {
   let mut epee = Epee::new(epee).map_err(EpeeError)?;
   let mut epee = epee.fields().map_err(EpeeError)?;
   /*
@@ -118,7 +118,7 @@ pub(crate) fn extract_start_height(epee: &[u8]) -> Result<usize, InterfaceError>
 /// Extract the `distribution` field from the response to `get_output_distribution.bin`.
 ///
 /// This assumes only a single distribution was requested by the caller.
-pub(crate) fn extract_distribution(
+pub(super) fn extract_distribution(
   epee: &[u8],
   expected_len: usize,
 ) -> Result<Vec<u64>, InterfaceError> {
@@ -149,7 +149,7 @@ fn epee_32<'encoding, 'parent>(
 }
 
 /// Accumulate a set of outs from `get_outs.bin`.
-pub(crate) fn accumulate_outs(
+pub(super) fn accumulate_outs(
   epee: &[u8],
   amount: usize,
   res: &mut Vec<RingCtOutputInformation>,
@@ -209,9 +209,10 @@ pub(crate) fn accumulate_outs(
   Ok(())
 }
 
-pub(crate) fn extract_blocks_from_blocks_bin(
+/// Returns `None` if this methodology isn't applicable.
+pub(super) fn extract_blocks_from_blocks_bin(
   blocks_bin: &[u8],
-) -> Result<impl use<'_> + Iterator<Item = UnvalidatedScannableBlock>, InterfaceError> {
+) -> Result<Option<impl use<'_> + Iterator<Item = UnvalidatedScannableBlock>>, InterfaceError> {
   let mut epee = Epee::new(blocks_bin).map_err(EpeeError)?;
   let mut epee = epee.fields().map_err(EpeeError)?;
 
@@ -274,6 +275,21 @@ pub(crate) fn extract_blocks_from_blocks_bin(
                   // Only use the prunable hash if this transaction has a well-defined prunable hash
                   let prunable_hash =
                     prunable_hash.filter(|_| !matches!(transaction, Transaction::V1 { .. }));
+
+                  /*
+                    If this is a transaction which SHOULD have a prunable hash, yet the prunable
+                    hash was either missing or `[0; 32]` (an uninitialized value with statistically
+                    negligible probability of occurring natturally), return `None`. This signifies
+                    this methodology shouldn't be used.
+
+                    https://github.com/monero-project/monero/issues/10120
+                  */
+                  if matches!(transaction, Transaction::V2 { proofs: Some(_), .. }) &&
+                    (prunable_hash.is_none() || (prunable_hash == Some([0; 32])))
+                  {
+                    return Ok(None);
+                  }
+
                   let transaction =
                     PrunedTransactionWithPrunableHash::new(transaction, prunable_hash).ok_or_else(
                       || {
@@ -372,10 +388,10 @@ pub(crate) fn extract_blocks_from_blocks_bin(
     ))?;
   }
 
-  Ok(result.into_iter())
+  Ok(Some(result.into_iter()))
 }
 
-pub(crate) fn extract_output_indexes(epee: &[u8]) -> Result<Vec<u64>, InterfaceError> {
+pub(super) fn extract_output_indexes(epee: &[u8]) -> Result<Vec<u64>, InterfaceError> {
   let mut epee = Epee::new(epee).map_err(EpeeError)?;
   let mut epee = epee.fields().map_err(EpeeError)?;
   let Some(mut indexes) = optional_field!(epee, "o_indexes", EpeeEntry::iterate)? else {

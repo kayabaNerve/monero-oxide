@@ -1,7 +1,7 @@
 use core::{ops::RangeInclusive, future::Future};
 
 use alloc::{
-  format,
+  format, vec,
   vec::Vec,
   string::{String, ToString},
 };
