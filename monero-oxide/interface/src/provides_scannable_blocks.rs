@@ -107,9 +107,9 @@ impl<P: ProvidesTransactions + ProvidesOutputs> ExpandToScannableBlock for P {}
 /// An unvalidated block which may be scannable.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct UnvalidatedScannableBlock {
-  /// The block which to be scanned.
+  /// The block which is to be scanned.
   pub block: Block,
-  /// The non-miner transactions within this block.
+  /// The non-miner transactions allegedly within this block.
   pub transactions: Vec<PrunedTransactionWithPrunableHash>,
   /// The output index for the first RingCT output within this block.
   ///

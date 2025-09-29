@@ -10,7 +10,10 @@ use monero_oxide::{
 use monero_epee::{EpeeError as OriginalEpeeError, EpeeEntry, Epee};
 pub(crate) use monero_epee::{HEADER, Type, Array};
 
-use crate::{InterfaceError, PrunedTransactionWithPrunableHash, RingCtOutputInformation};
+use crate::{
+  InterfaceError, PrunedTransactionWithPrunableHash, UnvalidatedScannableBlock,
+  RingCtOutputInformation,
+};
 
 pub(crate) const VERSION: u8 = 1;
 
@@ -208,88 +211,168 @@ pub(crate) fn accumulate_outs(
 
 pub(crate) fn extract_blocks_from_blocks_bin(
   blocks_bin: &[u8],
-) -> Result<
-  impl use<'_> + Iterator<Item = (Block, Vec<PrunedTransactionWithPrunableHash>)>,
-  InterfaceError,
-> {
+) -> Result<impl use<'_> + Iterator<Item = UnvalidatedScannableBlock>, InterfaceError> {
   let mut epee = Epee::new(blocks_bin).map_err(EpeeError)?;
   let mut epee = epee.fields().map_err(EpeeError)?;
-  let Some(mut blocks) = optional_field!(epee, "blocks", EpeeEntry::iterate)? else {
-    return Ok(vec![].into_iter());
-  };
 
   let mut res = vec![];
-  while let Some(block) = blocks.next() {
-    let mut block_fields = block.map_err(EpeeError)?.fields().map_err(EpeeError)?;
-    let mut block = None;
-    let mut transactions = vec![];
-    while let Some(field) = block_fields.next() {
-      let (key, value) = field.map_err(EpeeError)?;
-      match key {
-        b"block" => {
-          let mut encoding = value.to_str().map_err(EpeeError)?;
-          block = Some(
-            Block::read(&mut encoding)
-              .map_err(|e| InterfaceError::InvalidInterface(format!("invalid block: {e:?}")))?,
-          );
-          if !encoding.is_empty() {
-            Err(InterfaceError::InvalidInterface(
-              "block had extraneous bytes after it".to_string(),
-            ))?;
-          }
-        }
-        b"txs" => {
-          let mut transaction_entries = value.iterate().map_err(EpeeError)?;
-          while let Some(transaction) = transaction_entries.next() {
-            let mut fields = transaction.map_err(EpeeError)?.fields().map_err(EpeeError)?;
-            let mut transaction = None;
-            let mut prunable_hash = None;
-            while let Some(field) = fields.next() {
-              let (key, value) = field.map_err(EpeeError)?;
-              match key {
-                b"blob" => {
-                  let mut encoding = value.to_str().map_err(EpeeError)?;
-                  transaction = Some(Transaction::<Pruned>::read(&mut encoding).map_err(|e| {
-                    InterfaceError::InvalidInterface(format!("invalid transaction: {e:?}"))
-                  })?);
-                  if !encoding.is_empty() {
-                    Err(InterfaceError::InvalidInterface(
-                      "transaction had extraneous bytes after it".to_string(),
-                    ))?;
-                  }
+  let mut all_output_indexes = vec![];
+  while let Some(epee) = epee.next() {
+    let (key, value) = epee.map_err(EpeeError)?;
+    match key {
+      b"blocks" => {
+        let mut blocks = value.iterate().map_err(EpeeError)?;
+        while let Some(block) = blocks.next() {
+          let mut block_fields = block.map_err(EpeeError)?.fields().map_err(EpeeError)?;
+          let mut block = None;
+          let mut transactions = vec![];
+          while let Some(field) = block_fields.next() {
+            let (key, value) = field.map_err(EpeeError)?;
+            match key {
+              b"block" => {
+                let mut encoding = value.to_str().map_err(EpeeError)?;
+                block = Some(Block::read(&mut encoding).map_err(|e| {
+                  InterfaceError::InvalidInterface(format!("invalid block: {e:?}"))
+                })?);
+                if !encoding.is_empty() {
+                  Err(InterfaceError::InvalidInterface(
+                    "block had extraneous bytes after it".to_string(),
+                  ))?;
                 }
-                b"prunable_hash" => prunable_hash = Some(epee_32(value)?),
-                _ => {}
               }
-            }
-            let Some(transaction) = transaction else {
-              Err(InterfaceError::InvalidInterface(
-                "transaction without transaction encoding".to_string(),
-              ))?
-            };
+              b"txs" => {
+                let mut transaction_entries = value.iterate().map_err(EpeeError)?;
+                while let Some(transaction) = transaction_entries.next() {
+                  let mut fields = transaction.map_err(EpeeError)?.fields().map_err(EpeeError)?;
+                  let mut transaction = None;
+                  let mut prunable_hash = None;
+                  while let Some(field) = fields.next() {
+                    let (key, value) = field.map_err(EpeeError)?;
+                    match key {
+                      b"blob" => {
+                        let mut encoding = value.to_str().map_err(EpeeError)?;
+                        transaction =
+                          Some(Transaction::<Pruned>::read(&mut encoding).map_err(|e| {
+                            InterfaceError::InvalidInterface(format!("invalid transaction: {e:?}"))
+                          })?);
+                        if !encoding.is_empty() {
+                          Err(InterfaceError::InvalidInterface(
+                            "transaction had extraneous bytes after it".to_string(),
+                          ))?;
+                        }
+                      }
+                      b"prunable_hash" => prunable_hash = Some(epee_32(value)?),
+                      _ => {}
+                    }
+                  }
+                  let Some(transaction) = transaction else {
+                    Err(InterfaceError::InvalidInterface(
+                      "transaction without transaction encoding".to_string(),
+                    ))?
+                  };
 
-            // Only use the prunable hash if this transaction has a well-defined prunable hash
-            let prunable_hash =
-              prunable_hash.filter(|_| !matches!(transaction, Transaction::V1 { .. }));
-            let transaction = PrunedTransactionWithPrunableHash::new(transaction, prunable_hash)
-              .ok_or_else(|| {
-                InterfaceError::InvalidInterface(
-                  "non-v1 transaction missing prunable hash".to_string(),
-                )
-              })?;
-            transactions.push(transaction);
+                  // Only use the prunable hash if this transaction has a well-defined prunable hash
+                  let prunable_hash =
+                    prunable_hash.filter(|_| !matches!(transaction, Transaction::V1 { .. }));
+                  let transaction =
+                    PrunedTransactionWithPrunableHash::new(transaction, prunable_hash).ok_or_else(
+                      || {
+                        InterfaceError::InvalidInterface(
+                          "non-v1 transaction missing prunable hash".to_string(),
+                        )
+                      },
+                    )?;
+                  transactions.push(transaction);
+                }
+              }
+              _ => {}
+            }
+          }
+
+          let Some(block) = block else {
+            Err(InterfaceError::InvalidInterface(
+              "block entry itself was missing the block".to_string(),
+            ))?
+          };
+          res.push((block, transactions));
+        }
+      }
+      b"output_indices" => {
+        // Iterate all blocks
+        let mut blocks_transaction_output_indexes = value.iterate().map_err(EpeeError)?;
+        while let Some(block_transaction_output_indexes) = blocks_transaction_output_indexes.next()
+        {
+          // Iterate this block
+          let block_transaction_output_indexes =
+            block_transaction_output_indexes.map_err(EpeeError)?;
+          let mut fields = block_transaction_output_indexes.fields().map_err(EpeeError)?;
+          let Some(mut block_transaction_output_indexes) =
+            optional_field!(fields, "indices", EpeeEntry::iterate)?
+          else {
+            continue;
+          };
+          while let Some(transaction_output_indexes) = block_transaction_output_indexes.next() {
+            // Iterate this transaction
+            let transaction_output_indexes = transaction_output_indexes.map_err(EpeeError)?;
+            let mut fields = transaction_output_indexes.fields().map_err(EpeeError)?;
+            let Some(mut transaction_output_indexes) =
+              optional_field!(fields, "indices", EpeeEntry::iterate)?
+            else {
+              continue;
+            };
+            while let Some(index) = transaction_output_indexes.next() {
+              all_output_indexes.push(index.map_err(EpeeError)?.to_u64().map_err(EpeeError)?);
+            }
           }
         }
-        _ => {}
       }
+      _ => {}
+    }
+  }
+
+  // From the flattened view of output indexes, identify the first output index for a RingCT
+  // transaction within each block
+  let mut all_output_indexes = all_output_indexes.as_slice();
+  let mut handle_transaction = |output_index_for_first_ringct_output: &mut Option<u64>,
+                                transaction: &Transaction<Pruned>| {
+    let outputs = transaction.prefix().outputs.len();
+    if all_output_indexes.len() < outputs {
+      return Err(InterfaceError::InvalidInterface(
+        "block entry omitted output indexes for present transactions".to_string(),
+      ));
     }
 
-    let Some(block) = block else {
-      Err(InterfaceError::InvalidInterface("block entry itself was missing the block".to_string()))?
-    };
-    res.push((block, transactions));
+    if (!matches!(transaction, Transaction::V1 { .. })) && (outputs != 0) {
+      *output_index_for_first_ringct_output =
+        output_index_for_first_ringct_output.or(Some(all_output_indexes[0]));
+    }
+    all_output_indexes = &all_output_indexes[outputs ..];
+    Ok(())
+  };
+  let mut result = Vec::with_capacity(res.len());
+  for (block, transactions) in res {
+    let mut output_index_for_first_ringct_output = None;
+    handle_transaction(
+      &mut output_index_for_first_ringct_output,
+      &block.miner_transaction().clone().into(),
+    )?;
+    for transaction in &transactions {
+      handle_transaction(&mut output_index_for_first_ringct_output, transaction.as_ref())?;
+    }
+    result.push(UnvalidatedScannableBlock {
+      block,
+      transactions,
+      output_index_for_first_ringct_output,
+    });
   }
-  Ok(res.into_iter())
+  if !all_output_indexes.is_empty() {
+    Err(InterfaceError::InvalidInterface(
+      "`get_blocks.bin` had a distinct amount of output indexes than transaction outputs"
+        .to_string(),
+    ))?;
+  }
+
+  Ok(result.into_iter())
 }
 
 pub(crate) fn extract_output_indexes(epee: &[u8]) -> Result<Vec<u64>, InterfaceError> {
