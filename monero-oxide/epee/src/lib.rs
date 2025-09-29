@@ -147,10 +147,10 @@ impl<'encoding, B: BytesLike<'encoding>> Epee<'encoding, B> {
     })
   }
 
-  /// Iterate over the fields within this object.
+  /// Obtain an `EpeeEntry` representing the encoded object.
   ///
   /// This takes a mutable reference as `Epee` is the owned object representing the decoder's
-  /// state. However, this is not eligible to be called against after consumption. That is why the
+  /// state. However, this is not eligible to be called again after consumption. That is why the
   /// mutable reference has an _equivalent_ lifetime to the encoding the decoder is premised on.
   /// This prevents any code which invokes this method twice from compiling as the first call will
   /// always be considered as continually borrowing `self`, even when its returned value is
@@ -158,13 +158,8 @@ impl<'encoding, B: BytesLike<'encoding>> Epee<'encoding, B> {
   ///
   /// If the caller can somehow call this method twice for a given `Epee`, know the behavior is
   /// completely undefined.
-  pub fn fields(&'encoding mut self) -> Result<FieldIterator<'encoding, 'encoding, B>, EpeeError> {
-    // Read past the `Type::Object` this was constructed with into `[Type::Entry; n]`
-    let len = match self.stack.single_step(&mut self.current_encoding_state)? {
-      Some(SingleStepResult::Object { fields }) => fields,
-      _ => Err(EpeeError::InternalError)?,
-    };
-    Ok(FieldIterator { root: self, len })
+  pub fn entry(&'encoding mut self) -> EpeeEntry<'encoding, 'encoding, B> {
+    EpeeEntry { root: Some(self), kind: Type::Object, len: 1 }
   }
 }
 
