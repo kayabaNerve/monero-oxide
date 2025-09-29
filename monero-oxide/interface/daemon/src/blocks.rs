@@ -192,23 +192,23 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
     number: usize,
   ) -> impl Send + Future<Output = Result<[u8; 32], InterfaceError>> {
     async move {
-      #[derive(Deserialize)]
-      struct BlockHeaderResponse {
-        hash: String,
-      }
-      #[derive(Deserialize)]
-      struct BlockHeaderByHeightResponse {
-        block_header: BlockHeaderResponse,
-      }
-
-      let header: BlockHeaderByHeightResponse = self
+      let hash: String = self
         .json_rpc_call_internal(
-          "get_block_header_by_height",
-          Some(format!(r#"{{ "height": {number} }}"#)),
+          "on_get_block_hash",
+          Some(format!(r#"[{number}]"#)),
           BASE_RESPONSE_SIZE,
         )
         .await?;
-      hash_hex(&header.block_header.hash)
+      let hash = hash_hex(&hash)?;
+
+      // https://github.com/monero-project/monero/pull/10109
+      if hash == [0; 32] {
+        Err(InterfaceError::InterfaceError(format!(
+          "requested hash for block {number}, which the interface did not have"
+        )))?;
+      }
+
+      Ok(hash)
     }
   }
 }

@@ -176,6 +176,16 @@ async fn test_decoys() {
   }
 }
 
+#[tokio::test]
+async fn test_block_hash_for_non_existent_block() {
+  let _guard = SEQUENTIAL.lock().await;
+
+  let rpc =
+    SimpleRequestTransport::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
+  let non_existent = rpc.latest_block_number().await.unwrap() + 1;
+  assert!(rpc.block_hash(non_existent).await.is_err());
+}
+
 /*
 // This test passes yet requires a mainnet node, which we don't have reliable access to in CI.
 #[tokio::test]
