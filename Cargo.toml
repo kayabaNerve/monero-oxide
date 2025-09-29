@@ -11,6 +11,7 @@ members = [
   "monero-oxide",
 
   "monero-oxide/epee",
+  "monero-oxide/epee/traits",
 
   "monero-oxide/rpc",
   "monero-oxide/rpc/simple-request",

@@ -4,5 +4,6 @@ pub use monero_epee;
 
 #[cfg(feature = "alloc")]
 pub mod alloc {
+  pub use monero_epee_traits;
   pub use monero_wallet;
 }

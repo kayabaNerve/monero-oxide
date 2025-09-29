@@ -6,7 +6,7 @@ use crate::EpeeError;
 #[allow(clippy::len_without_is_empty)]
 pub trait BytesLike<'encoding>: Sized {
   /// The length of the current item.
-  // This is only used for `as_fixed_len_str`.
+  // This is only used for `as_fixed_len_str` within this library.
   fn len(&self) -> usize;
 
   /// Read a fixed amount of bytes from the container.

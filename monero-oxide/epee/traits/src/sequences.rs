@@ -1,0 +1,47 @@
+use alloc::{vec, vec::Vec};
+
+use crate::{BytesLike, EpeeError, EpeeEntry, EpeeDecode};
+
+impl<T: 'static + EpeeDecode> EpeeDecode for Vec<T> {
+  fn decode<'encoding, 'parent, B: BytesLike<'encoding>>(
+    entry: EpeeEntry<'encoding, 'parent, B>,
+  ) -> Result<Self, EpeeError> {
+    if core::any::TypeId::of::<T>() == core::any::TypeId::of::<u8>() {
+      let mut str = entry.to_str()?;
+      let mut res = Vec::with_capacity(str.len());
+      str.read_into_slice(&mut res)?;
+
+      // We know these types are equivalent, making this an effective NOP and safe
+      let res = unsafe { core::mem::transmute::<Vec<u8>, Vec<T>>(res) };
+
+      return Ok(res);
+    }
+
+    let mut res = vec![];
+    let mut iter = entry.iterate()?;
+    while let Some(item) = iter.next() {
+      res.push(T::decode(item?)?);
+    }
+    Ok(res)
+  }
+}
+
+impl<T: 'static + EpeeDecode, const N: usize> EpeeDecode for [T; N] {
+  fn decode<'encoding, 'parent, B: BytesLike<'encoding>>(
+    entry: EpeeEntry<'encoding, 'parent, B>,
+  ) -> Result<Self, EpeeError> {
+    if core::any::TypeId::of::<T>() == core::any::TypeId::of::<u8>() {
+      let mut str = entry.to_fixed_len_str(N)?;
+      let mut original = [0; N];
+      str.read_into_slice(&mut original)?;
+
+      // We know these types are equivalent, making this an effective NOP and safe
+      let casted =
+        unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(original) as *const [T; N]) };
+
+      return Ok(casted);
+    }
+
+    Vec::<T>::decode(entry)?.try_into().map_err(|_| EpeeError::TypeError)
+  }
+}

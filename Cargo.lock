@@ -882,6 +882,13 @@ name = "monero-epee"
 version = "0.2.0"
 
 [[package]]
+name = "monero-epee-traits"
+version = "0.1.0"
+dependencies = [
+ "monero-epee",
+]
+
+[[package]]
 name = "monero-generators"
 version = "0.4.0"
 dependencies = [
@@ -943,6 +950,7 @@ name = "monero-oxide-no-std-tests"
 version = "0.1.0"
 dependencies = [
  "monero-epee",
+ "monero-epee-traits",
  "monero-wallet",
 ]
 
