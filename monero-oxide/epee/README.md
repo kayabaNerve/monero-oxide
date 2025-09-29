@@ -17,7 +17,8 @@ to as EPEE throughout this library), with the following exceptions:
 
 At this time, we do not support:
 - Encoding objects
-- Decoding objects into typed data structures
+- Decoding objects into typed data structures. For that, please review the
+  `monero-epee-traits` crate.
 
 Instead, we support indexing `epee`-encoded values and decoding individual
 fields in a manner comparable to `serde_json::Value` (albeit without
@@ -27,7 +28,7 @@ exhaustion attacks compared to more complex implementations.
 
 Because of this, we are also able to support no-`std` and no-`alloc`, without
 any dependencies other than `core`, while only consuming approximately one
-kibibyte of memory on the stack.
+kibibyte of memory on the stack. We also have no `unsafe` code.
 
 For a more functional library, please check out
 [`cuprate-epee-encoding`](
