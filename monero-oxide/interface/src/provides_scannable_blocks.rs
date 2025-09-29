@@ -21,7 +21,15 @@ pub struct ScannableBlock {
   pub transactions: Vec<Transaction<Pruned>>,
   /// The output index for the first RingCT output within this block.
   ///
-  /// `None` if there are no RingCT outputs within this block, `Some` otherwise.
+  /// This should be `None` if there are no RingCT outputs within this block, `Some` otherwise.
+  ///
+  /// This is not bound to be correct by any of the functions within this crate's API as it's
+  /// infeasible to verify the accuracy of. To do so would require a trusted view over the RingCT
+  /// outputs, synchronized to the block before this. To ensure correctness and privacy, the user
+  /// SHOULD locally maintain a database of the RingCT outputs and the user SHOULD use it to
+  /// override whatever is claimed to be the output index for the first RingCT output within this
+  /// block. If the values are different, the user SHOULD detect the interface is invalid and
+  /// disconnect entirely.
   pub output_index_for_first_ringct_output: Option<u64>,
 }
 
@@ -111,9 +119,9 @@ pub struct UnvalidatedScannableBlock {
   pub block: Block,
   /// The non-miner transactions allegedly within this block.
   pub transactions: Vec<PrunedTransactionWithPrunableHash>,
-  /// The output index for the first RingCT output within this block.
+  /// The alleged output index for the first RingCT output within this block.
   ///
-  /// None if there are no RingCT outputs within this block, Some otherwise.
+  /// This should be `None` if there are no RingCT outputs within this block, `Some` otherwise.
   pub output_index_for_first_ringct_output: Option<u64>,
 }
 
