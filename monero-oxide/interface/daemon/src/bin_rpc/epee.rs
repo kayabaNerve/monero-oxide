@@ -90,7 +90,7 @@ impl FixedLenStr {
 /// Check the `status` field within an `epee`-encoded object.
 pub(super) fn check_status(epee: &[u8]) -> Result<(), InterfaceError> {
   let mut epee = Epee::new(epee).map_err(EpeeError)?;
-  let mut epee = epee.fields().map_err(EpeeError)?;
+  let mut epee = epee.entry().map_err(EpeeError)?.fields().map_err(EpeeError)?;
   let status = field!(epee, "status", EpeeEntry::to_str)?;
   if status != b"OK" {
     return Err(InterfaceError::InvalidInterface("epee `status` wasn't \"OK\"".to_string()));
@@ -103,7 +103,7 @@ pub(super) fn check_status(epee: &[u8]) -> Result<(), InterfaceError> {
 /// This assumes only a single distribution was requested by the caller.
 pub(super) fn extract_start_height(epee: &[u8]) -> Result<usize, InterfaceError> {
   let mut epee = Epee::new(epee).map_err(EpeeError)?;
-  let mut epee = epee.fields().map_err(EpeeError)?;
+  let mut epee = epee.entry().map_err(EpeeError)?.fields().map_err(EpeeError)?;
   /*
     `distributions` is technically an array, but we assume only one distribution was requested,
     which allows us to treat it as a unit value and immediately access its fields.
@@ -123,7 +123,7 @@ pub(super) fn extract_distribution(
   expected_len: usize,
 ) -> Result<Vec<u64>, InterfaceError> {
   let mut epee = Epee::new(epee).map_err(EpeeError)?;
-  let mut epee = epee.fields().map_err(EpeeError)?;
+  let mut epee = epee.entry().map_err(EpeeError)?.fields().map_err(EpeeError)?;
   let mut distributions = field!(epee, "distributions", EpeeEntry::fields)?;
 
   let fixed_len_str = FixedLenStr(expected_len.checked_mul(8).ok_or_else(|| {
@@ -157,7 +157,7 @@ pub(super) fn accumulate_outs(
   let start = res.len();
 
   let mut epee = Epee::new(epee).map_err(EpeeError)?;
-  let mut epee = epee.fields().map_err(EpeeError)?;
+  let mut epee = epee.entry().map_err(EpeeError)?.fields().map_err(EpeeError)?;
   let mut outs = field!(epee, "outs", EpeeEntry::iterate)?;
   while let Some(out) = outs.next() {
     let mut out = out.map_err(EpeeError)?.fields().map_err(EpeeError)?;
@@ -214,7 +214,7 @@ pub(super) fn extract_blocks_from_blocks_bin(
   blocks_bin: &[u8],
 ) -> Result<Option<impl use<'_> + Iterator<Item = UnvalidatedScannableBlock>>, InterfaceError> {
   let mut epee = Epee::new(blocks_bin).map_err(EpeeError)?;
-  let mut epee = epee.fields().map_err(EpeeError)?;
+  let mut epee = epee.entry().map_err(EpeeError)?.fields().map_err(EpeeError)?;
 
   let mut res = vec![];
   let mut all_output_indexes = vec![];
@@ -393,7 +393,7 @@ pub(super) fn extract_blocks_from_blocks_bin(
 
 pub(super) fn extract_output_indexes(epee: &[u8]) -> Result<Vec<u64>, InterfaceError> {
   let mut epee = Epee::new(epee).map_err(EpeeError)?;
-  let mut epee = epee.fields().map_err(EpeeError)?;
+  let mut epee = epee.entry().map_err(EpeeError)?.fields().map_err(EpeeError)?;
   let Some(mut indexes) = optional_field!(epee, "o_indexes", EpeeEntry::iterate)? else {
     return Ok(vec![]);
   };
