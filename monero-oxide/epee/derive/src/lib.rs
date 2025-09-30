@@ -76,6 +76,19 @@ pub fn derive_epee_decode(object: TokenStream) -> TokenStream {
   let mut all_fields = String::new();
   {
     let mut object = object.clone().into_iter().peekable();
+
+    loop {
+      match object.peek() {
+        Some(TokenTree::Punct(punct)) if punct.as_char() == '#' => {
+          let _ = object.next().expect("peeked but not present");
+          let TokenTree::Group(_) = object.next().expect("`#` but no `[ ... ]`") else {
+            panic!("`#` not followed by a `TokenTree::Group` for its `[ ... ]`")
+          };
+        }
+        _ => break,
+      }
+    }
+
     match object.next() {
       Some(TokenTree::Ident(ident)) if ident.to_string() == "struct" => {}
       _ => panic!("`EpeeDecode` wasn't applied to a `struct`"),
