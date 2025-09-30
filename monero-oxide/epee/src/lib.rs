@@ -35,6 +35,8 @@ pub enum EpeeError {
   DepthLimitExceeded,
   /// An operation expected one type yet the actual type was distinct.
   TypeError,
+  /// An `Epee` object was reused.
+  EpeeReuse,
 }
 
 /// The EPEE header.
@@ -53,7 +55,6 @@ pub struct Epee<'encoding, B: BytesLike<'encoding>> {
   error: Option<EpeeError>,
   _encoding_lifetime: PhantomData<&'encoding ()>,
 }
-
 /// An item with an EPEE-encoded object.
 pub struct EpeeEntry<'encoding, 'parent, B: BytesLike<'encoding>> {
   root: Option<&'parent mut Epee<'encoding, B>>,
@@ -150,28 +151,15 @@ impl<'encoding, B: BytesLike<'encoding>> Epee<'encoding, B> {
   /// Obtain an `EpeeEntry` representing the encoded object.
   ///
   /// This takes a mutable reference as `Epee` is the owned object representing the decoder's
-  /// state. However, this is not eligible to be called again after consumption. That is why the
-  /// mutable reference has an _equivalent_ lifetime to the encoding the decoder is premised on.
-  /// This prevents any code which invokes this method twice from compiling as the first call will
-  /// always be considered as continually borrowing `self`, even when its returned value is
-  /// dropped.
-  ///
-  /// If the caller can somehow call this method twice for a given `Epee`, know the behavior is
-  /// completely undefined.
-  pub fn entry(&'encoding mut self) -> EpeeEntry<'encoding, 'encoding, B> {
-    EpeeEntry { root: Some(self), kind: Type::Object, len: 1 }
+  /// state. However, this is not eligible to be called again after consumption. Multiple calls to
+  /// this function will cause an error to be returned.
+  pub fn entry(&mut self) -> Result<EpeeEntry<'encoding, '_, B>, EpeeError> {
+    if self.stack.depth() != 1 {
+      Err(EpeeError::EpeeReuse)?;
+    }
+    Ok(EpeeEntry { root: Some(self), kind: Type::Object, len: 1 })
   }
 }
-
-/// ```rust,compile_fail
-///  let mut epee = Epee::new([].as_slice()).unwrap();
-///  {
-///    let fields = epee.fields().unwrap();
-///    drop(fields);
-///  }
-///  let _fields = epee.fields().unwrap();
-/// ```
-const _FIELDS_CANNOT_BE_CALLED_TWICE: () = ();
 
 /// An iterator over an array.
 pub struct ArrayIterator<'encoding, 'parent, B: BytesLike<'encoding>> {
