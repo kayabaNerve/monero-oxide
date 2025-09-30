@@ -158,7 +158,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
           )
           .await?;
 
-        epee::accumulate_outs(&outs, indexes.len(), &mut res)?;
+        epee::accumulate_outputs(&outs, indexes.len(), &mut res)?;
       }
 
       Ok(res)

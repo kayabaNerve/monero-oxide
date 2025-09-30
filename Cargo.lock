@@ -885,7 +885,8 @@ dependencies = [
  "curve25519-dalek",
  "hex",
  "monero-address",
- "monero-epee",
+ "monero-epee-derive",
+ "monero-epee-traits",
  "monero-interface",
  "monero-oxide",
  "serde",
@@ -896,7 +897,20 @@ dependencies = [
 [[package]]
 name = "monero-epee"
 version = "0.2.0"
-source = "git+https://github.com/kayabaNerve/monero-oxide?rev=769ea96433ba57a22445bc71a2859f6dec4f60cc#769ea96433ba57a22445bc71a2859f6dec4f60cc"
+source = "git+https://github.com/kayabaNerve/monero-oxide?rev=20d2cd224d5f58d8ffbc73d1e7a75a474864516d#20d2cd224d5f58d8ffbc73d1e7a75a474864516d"
+
+[[package]]
+name = "monero-epee-derive"
+version = "0.1.0"
+source = "git+https://github.com/kayabaNerve/monero-oxide?rev=20d2cd224d5f58d8ffbc73d1e7a75a474864516d#20d2cd224d5f58d8ffbc73d1e7a75a474864516d"
+
+[[package]]
+name = "monero-epee-traits"
+version = "0.1.0"
+source = "git+https://github.com/kayabaNerve/monero-oxide?rev=20d2cd224d5f58d8ffbc73d1e7a75a474864516d#20d2cd224d5f58d8ffbc73d1e7a75a474864516d"
+dependencies = [
+ "monero-epee",
+]
 
 [[package]]
 name = "monero-generators"

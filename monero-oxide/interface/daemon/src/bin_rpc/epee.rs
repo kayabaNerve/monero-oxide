@@ -2,20 +2,20 @@
 use std_shims::prelude::*;
 
 use monero_oxide::{
-  io::{CompressedPoint, read_u64},
+  io::CompressedPoint,
   transaction::{Pruned, Transaction},
   block::Block,
 };
 
-use monero_epee::{EpeeError as OriginalEpeeError, EpeeEntry, Epee};
-pub(super) use monero_epee::{HEADER, Type, Array};
+#[rustfmt::skip]
+use monero_epee_traits::{EpeeError as OriginalEpeeError, BytesLike, EpeeEntry, EpeeDecode, EpeeObject};
+pub(super) use monero_epee_traits::{HEADER, VERSION, Type, Array};
+use monero_epee_derive::EpeeDecode;
 
 use crate::{
   InterfaceError, PrunedTransactionWithPrunableHash, UnvalidatedScannableBlock,
   RingCtOutputInformation,
 };
-
-pub(super) const VERSION: u8 = 1;
 
 struct EpeeError(OriginalEpeeError);
 impl From<EpeeError> for InterfaceError {
@@ -24,92 +24,70 @@ impl From<EpeeError> for InterfaceError {
   }
 }
 
-/// Read a `Vec<u64>` from a `epee`-encoded buffer.
-///
-/// This assumes the claimed length is actually present within the byte buffer. This will be the
-/// case for an array encoded within a length-checked string
-fn read_u64_array_from_epee(len: usize, mut epee: &[u8]) -> Result<Vec<u64>, InterfaceError> {
-  // This is safe to pre-allocate due to the byte buffer being prior-checked to have this many items
-  let mut res = Vec::with_capacity(len);
-  for _ in 0 .. len {
-    res.push(read_u64(&mut epee).map_err(|_| {
-      InterfaceError::InternalError(
-        "incomplete array despite precondition the array is complete".to_string(),
-      )
-    })?);
-  }
-  Ok(res)
+#[derive(Default, EpeeDecode)]
+struct Status {
+  status: [u8; 2],
 }
-
-/*
-  `EpeeEntry` must live for less time than its iterator, yet this makes it very tricky to work
-  with. If we wrote a function which takes an iterator, then returns an entry, the entry's
-  lifetime _must_ outlive the function (because it's returned from the function). At the same time,
-  this prevents the iterator from being iterated within the function's body over because it's
-  mutably borrowed for a lifetime exceeding the function.
-
-  The solution, however ugly, is to handle the field _inside_ the iteration over the fields. We use
-  the following macro to generate the code for this.
-*/
-macro_rules! optional_field {
-  ($fields: ident, $field: literal, $body: expr) => {
-    loop {
-      let Some(entry) = $fields.next() else { break Ok::<_, EpeeError>(None) };
-      let entry = match entry {
-        Ok(entry) => entry,
-        Err(e) => Err(EpeeError(e))?,
-      };
-      if entry.0 == $field.as_bytes() {
-        break Ok(Some($body(entry.1).map_err(EpeeError)?));
-      }
-    }
-  };
-}
-macro_rules! field {
-  ($fields: ident, $field: literal, $body: expr) => {
-    optional_field!($fields, $field, $body)?.ok_or_else(|| {
-      InterfaceError::InvalidInterface(format!("expected field {} but it wasn't present", $field))
-    })
-  };
-}
-
-/// A wrapper to call `to_fixed_len_str` via, since `field` assumes the body only takes a single
-/// argument.
-// Unfortunately, callers cannot simply use a lambda due to needing to define these lifetimes.
-struct FixedLenStr(usize);
-impl FixedLenStr {
-  #[allow(clippy::wrong_self_convention)]
-  fn to_fixed_len_str<'encoding, 'parent>(
-    self,
-    entry: EpeeEntry<'encoding, 'parent, &'encoding [u8]>,
-  ) -> Result<&'encoding [u8], monero_epee::EpeeError> {
-    entry.to_fixed_len_str(self.0)
-  }
-}
-
 /// Check the `status` field within an `epee`-encoded object.
 pub(super) fn check_status(epee: &[u8]) -> Result<(), InterfaceError> {
-  let mut epee = Epee::new(epee).map_err(EpeeError)?;
-  let mut epee = epee.entry().map_err(EpeeError)?.fields().map_err(EpeeError)?;
-  let status = field!(epee, "status", EpeeEntry::to_str)?;
-  if status != b"OK" {
+  if Status::decode_root(epee).map_err(EpeeError)?.status != *b"OK" {
     return Err(InterfaceError::InvalidInterface("epee `status` wasn't \"OK\"".to_string()));
   }
   Ok(())
+}
+
+#[derive(Default)]
+struct U64Blob(Vec<u64>);
+impl EpeeDecode for U64Blob {
+  fn decode<'encoding, 'parent, B: BytesLike<'encoding>>(
+    entry: EpeeEntry<'encoding, 'parent, B>,
+  ) -> Result<Self, OriginalEpeeError> {
+    let mut blob = entry.to_str()?;
+    if (blob.len() % 8) != 0 {
+      Err(OriginalEpeeError::TypeError)?;
+    }
+
+    // This is safe to pre-allocate as this length is returned to us by our own buffer
+    let len = blob.len() / 8;
+    let mut res = Vec::with_capacity(len);
+    let mut next = [0; 8];
+    for _ in 0 .. len {
+      blob.read_into_slice(&mut next)?;
+      res.push(u64::from_le_bytes(next));
+    }
+    Ok(U64Blob(res))
+  }
+}
+#[derive(Default, EpeeDecode)]
+struct Distribution {
+  start_height: Option<u64>,
+  /*
+    This does allocate for the length of whatever distribution is encoded, yet the encoding as a
+    whole is checked to be approximate to the size of the expected encoding of an honest result,
+    making this fine.
+  */
+  distribution: U64Blob,
+}
+#[derive(Default, EpeeDecode)]
+struct Distributions {
+  /*
+    `distributions` is technically an array, but we assume only one distribution was requested,
+    which allows us to treat it as a unit value and immediately access its fields.
+  */
+  distributions: Distribution,
 }
 
 /// Extract the `start_height` field from the response to `get_output_distribution.bin`.
 ///
 /// This assumes only a single distribution was requested by the caller.
 pub(super) fn extract_start_height(epee: &[u8]) -> Result<usize, InterfaceError> {
-  let mut epee = Epee::new(epee).map_err(EpeeError)?;
-  let mut epee = epee.entry().map_err(EpeeError)?.fields().map_err(EpeeError)?;
-  /*
-    `distributions` is technically an array, but we assume only one distribution was requested,
-    which allows us to treat it as a unit value and immediately access its fields.
-  */
-  let mut distributions = field!(epee, "distributions", EpeeEntry::fields)?;
-  let start_height = field!(distributions, "start_height", EpeeEntry::to_u64)?;
+  let start_height = Distributions::decode_root(epee)
+    .map_err(EpeeError)?
+    .distributions
+    .start_height
+    .ok_or_else(|| {
+      InterfaceError::InvalidInterface("`start_height` was omitted from `Distribution`".to_string())
+    })?;
   usize::try_from(start_height).map_err(|_| {
     InterfaceError::InvalidInterface("`start_height` did not fit within a `usize`".to_string())
   })
@@ -122,227 +100,168 @@ pub(super) fn extract_distribution(
   epee: &[u8],
   expected_len: usize,
 ) -> Result<Vec<u64>, InterfaceError> {
-  let mut epee = Epee::new(epee).map_err(EpeeError)?;
-  let mut epee = epee.entry().map_err(EpeeError)?.fields().map_err(EpeeError)?;
-  let mut distributions = field!(epee, "distributions", EpeeEntry::fields)?;
-
-  let fixed_len_str = FixedLenStr(expected_len.checked_mul(8).ok_or_else(|| {
-    InterfaceError::InternalError(
-      "requested a distribution whose byte length doesn't fit within a `usize`".to_string(),
-    )
-  })?);
   let distribution =
-    field!(distributions, "distribution", |value| fixed_len_str.to_fixed_len_str(value))?;
-  read_u64_array_from_epee(expected_len, distribution)
+    Distributions::decode_root(epee).map_err(EpeeError)?.distributions.distribution.0;
+  if distribution.len() != expected_len {
+    Err(InterfaceError::InvalidInterface(
+      "RPC returned a distribution of an unexpected length".to_string(),
+    ))?;
+  }
+  Ok(distribution)
 }
 
-fn epee_32<'encoding, 'parent>(
-  entry: EpeeEntry<'encoding, 'parent, &'encoding [u8]>,
-) -> Result<[u8; 32], EpeeError> {
-  Ok(
-    entry
-      .to_fixed_len_str(32)
-      .map_err(EpeeError)?
-      .try_into()
-      .expect("32-byte string couldn't be converted to a 32-byte array"),
-  )
+#[derive(Default, EpeeDecode)]
+struct Output {
+  height: Option<u64>,
+  key: Option<[u8; 32]>,
+  mask: Option<[u8; 32]>,
+  txid: Option<[u8; 32]>,
+  unlocked: Option<bool>,
 }
-
-/// Accumulate a set of outs from `get_outs.bin`.
-pub(super) fn accumulate_outs(
+#[derive(Default, EpeeDecode)]
+struct Outputs {
+  outs: Vec<Output>,
+}
+/// Accumulate a set of outputs from `get_outs.bin`.
+pub(super) fn accumulate_outputs(
   epee: &[u8],
   amount: usize,
   res: &mut Vec<RingCtOutputInformation>,
 ) -> Result<(), InterfaceError> {
-  let start = res.len();
+  let outputs = Outputs::decode_root(epee).map_err(EpeeError)?;
+  /*
+    Here, we allocate (during the decoding) before we perform this length check (after decoding),
+    yet this blob is of a bounded size so this shouldn't be an issue.
 
-  let mut epee = Epee::new(epee).map_err(EpeeError)?;
-  let mut epee = epee.entry().map_err(EpeeError)?.fields().map_err(EpeeError)?;
-  let mut outs = field!(epee, "outs", EpeeEntry::iterate)?;
-  while let Some(out) = outs.next() {
-    let mut out = out.map_err(EpeeError)?.fields().map_err(EpeeError)?;
-
-    let mut block_number = None;
-    let mut key = None;
-    let mut commitment = None;
-    let mut transaction = None;
-    let mut unlocked = None;
-
-    while let Some(out) = out.next() {
-      let (item_key, value) = out.map_err(EpeeError)?;
-      match item_key {
-        b"height" => block_number = Some(value.to_u64().map_err(EpeeError)?),
-        b"key" => key = Some(CompressedPoint(epee_32(value)?)),
-        b"mask" => commitment = Some(CompressedPoint(epee_32(value)?)),
-        b"txid" => transaction = Some(epee_32(value)?),
-        b"unlocked" => unlocked = Some(value.to_bool().map_err(EpeeError)?),
-        _ => continue,
-      }
-    }
-
-    let Some((block_number, key, commitment, transaction, unlocked)) =
-      (|| Some((block_number?, key?, commitment?, transaction?, unlocked?)))()
+    TODO: Re-do the length check here to ensure it occurred?
+  */
+  if outputs.outs.len() != amount {
+    Err(InterfaceError::InvalidInterface(
+      "`get_outs.bin` had a distinct amount of outs than expected".to_string(),
+    ))?;
+  }
+  for output in outputs.outs {
+    let Output {
+      height: Some(block_number),
+      key: Some(key),
+      mask: Some(commitment),
+      txid: Some(transaction),
+      unlocked: Some(unlocked),
+    } = output
     else {
       Err(InterfaceError::InvalidInterface(
         "missing field in output from `get_outs.bin`".to_string(),
       ))?
     };
 
+    let key = CompressedPoint(key);
+
     let block_number = usize::try_from(block_number).map_err(|_| {
       InterfaceError::InvalidInterface(
         "`get_outs.bin` returned an block number not representable within a `usize`".to_string(),
       )
     })?;
-    let commitment = commitment.decompress().ok_or_else(|| {
+
+    let commitment = CompressedPoint(commitment).decompress().ok_or_else(|| {
       InterfaceError::InvalidInterface("`get_outs.bin` returned an invalid commitment".to_string())
     })?;
 
     res.push(RingCtOutputInformation { block_number, key, commitment, transaction, unlocked });
   }
 
-  if res.len() != (start + amount) {
-    Err(InterfaceError::InvalidInterface(
-      "`get_outs.bin` had a distinct amount of outs than expected".to_string(),
-    ))?;
-  }
-
   Ok(())
+}
+
+#[derive(Default, EpeeDecode)]
+struct TransactionEntry {
+  blob: Vec<u8>,
+  prunable_hash: [u8; 32],
+}
+#[derive(Default, EpeeDecode)]
+struct BlockCompleteEntry {
+  block: Vec<u8>,
+  txs: Vec<TransactionEntry>,
+}
+#[derive(Default, EpeeDecode)]
+struct OutputIndicesPerTransaction {
+  indices: Vec<u64>,
+}
+#[derive(Default, EpeeDecode)]
+struct OutputIndicesPerBlock {
+  indices: Vec<OutputIndicesPerTransaction>,
+}
+#[derive(Default, EpeeDecode)]
+struct BlocksBin {
+  blocks: Vec<BlockCompleteEntry>,
+  output_indices: Vec<OutputIndicesPerBlock>,
 }
 
 /// Returns `None` if this methodology isn't applicable.
 pub(super) fn extract_blocks_from_blocks_bin(
   blocks_bin: &[u8],
 ) -> Result<Option<impl use<'_> + Iterator<Item = UnvalidatedScannableBlock>>, InterfaceError> {
-  let mut epee = Epee::new(blocks_bin).map_err(EpeeError)?;
-  let mut epee = epee.entry().map_err(EpeeError)?.fields().map_err(EpeeError)?;
+  let blocks_bin = BlocksBin::decode_root(blocks_bin).map_err(EpeeError)?;
 
   let mut res = vec![];
+  for block_entry in blocks_bin.blocks {
+    let block;
+    {
+      let mut encoding = block_entry.block.as_slice();
+      block = Block::read(&mut encoding)
+        .map_err(|e| InterfaceError::InvalidInterface(format!("invalid block: {e:?}")))?;
+      if !encoding.is_empty() {
+        Err(InterfaceError::InvalidInterface("block had extraneous bytes after it".to_string()))?;
+      }
+    }
+
+    let mut transactions = vec![];
+    for tx in block_entry.txs {
+      let transaction = {
+        let mut encoding = tx.blob.as_slice();
+        let transaction = Transaction::<Pruned>::read(&mut encoding)
+          .map_err(|e| InterfaceError::InvalidInterface(format!("invalid transaction: {e:?}")))?;
+        if !encoding.is_empty() {
+          Err(InterfaceError::InvalidInterface(
+            "transaction had extraneous bytes after it".to_string(),
+          ))?;
+        }
+        transaction
+      };
+
+      // Only use the prunable hash if this transaction has a well-defined prunable hash
+      let prunable_hash =
+        Some(tx.prunable_hash).filter(|_| !matches!(transaction, Transaction::V1 { .. }));
+
+      /*
+        If this is a transaction which SHOULD have a prunable hash, yet the prunable
+        hash was either missing or `[0; 32]` (an uninitialized value with statistically
+        negligible probability of occurring natturally), return `None`. This signifies
+        this methodology shouldn't be used.
+
+        https://github.com/monero-project/monero/issues/10120
+      */
+      if matches!(transaction, Transaction::V2 { proofs: Some(_), .. }) &&
+        (prunable_hash.is_none() || (prunable_hash == Some([0; 32])))
+      {
+        return Ok(None);
+      }
+
+      let transaction = PrunedTransactionWithPrunableHash::new(transaction, prunable_hash)
+        .ok_or_else(|| {
+          InterfaceError::InvalidInterface("non-v1 transaction missing prunable hash".to_string())
+        })?;
+      transactions.push(transaction);
+    }
+
+    res.push((block, transactions));
+  }
+
   let mut all_output_indexes = vec![];
-  while let Some(epee) = epee.next() {
-    let (key, value) = epee.map_err(EpeeError)?;
-    match key {
-      b"blocks" => {
-        let mut blocks = value.iterate().map_err(EpeeError)?;
-        while let Some(block) = blocks.next() {
-          let mut block_fields = block.map_err(EpeeError)?.fields().map_err(EpeeError)?;
-          let mut block = None;
-          let mut transactions = vec![];
-          while let Some(field) = block_fields.next() {
-            let (key, value) = field.map_err(EpeeError)?;
-            match key {
-              b"block" => {
-                let mut encoding = value.to_str().map_err(EpeeError)?;
-                block = Some(Block::read(&mut encoding).map_err(|e| {
-                  InterfaceError::InvalidInterface(format!("invalid block: {e:?}"))
-                })?);
-                if !encoding.is_empty() {
-                  Err(InterfaceError::InvalidInterface(
-                    "block had extraneous bytes after it".to_string(),
-                  ))?;
-                }
-              }
-              b"txs" => {
-                let mut transaction_entries = value.iterate().map_err(EpeeError)?;
-                while let Some(transaction) = transaction_entries.next() {
-                  let mut fields = transaction.map_err(EpeeError)?.fields().map_err(EpeeError)?;
-                  let mut transaction = None;
-                  let mut prunable_hash = None;
-                  while let Some(field) = fields.next() {
-                    let (key, value) = field.map_err(EpeeError)?;
-                    match key {
-                      b"blob" => {
-                        let mut encoding = value.to_str().map_err(EpeeError)?;
-                        transaction =
-                          Some(Transaction::<Pruned>::read(&mut encoding).map_err(|e| {
-                            InterfaceError::InvalidInterface(format!("invalid transaction: {e:?}"))
-                          })?);
-                        if !encoding.is_empty() {
-                          Err(InterfaceError::InvalidInterface(
-                            "transaction had extraneous bytes after it".to_string(),
-                          ))?;
-                        }
-                      }
-                      b"prunable_hash" => prunable_hash = Some(epee_32(value)?),
-                      _ => {}
-                    }
-                  }
-                  let Some(transaction) = transaction else {
-                    Err(InterfaceError::InvalidInterface(
-                      "transaction without transaction encoding".to_string(),
-                    ))?
-                  };
-
-                  // Only use the prunable hash if this transaction has a well-defined prunable hash
-                  let prunable_hash =
-                    prunable_hash.filter(|_| !matches!(transaction, Transaction::V1 { .. }));
-
-                  /*
-                    If this is a transaction which SHOULD have a prunable hash, yet the prunable
-                    hash was either missing or `[0; 32]` (an uninitialized value with statistically
-                    negligible probability of occurring natturally), return `None`. This signifies
-                    this methodology shouldn't be used.
-
-                    https://github.com/monero-project/monero/issues/10120
-                  */
-                  if matches!(transaction, Transaction::V2 { proofs: Some(_), .. }) &&
-                    (prunable_hash.is_none() || (prunable_hash == Some([0; 32])))
-                  {
-                    return Ok(None);
-                  }
-
-                  let transaction =
-                    PrunedTransactionWithPrunableHash::new(transaction, prunable_hash).ok_or_else(
-                      || {
-                        InterfaceError::InvalidInterface(
-                          "non-v1 transaction missing prunable hash".to_string(),
-                        )
-                      },
-                    )?;
-                  transactions.push(transaction);
-                }
-              }
-              _ => {}
-            }
-          }
-
-          let Some(block) = block else {
-            Err(InterfaceError::InvalidInterface(
-              "block entry itself was missing the block".to_string(),
-            ))?
-          };
-          res.push((block, transactions));
-        }
+  for block in blocks_bin.output_indices {
+    for tx in block.indices {
+      for index in tx.indices {
+        all_output_indexes.push(index);
       }
-      b"output_indices" => {
-        // Iterate all blocks
-        let mut blocks_transaction_output_indexes = value.iterate().map_err(EpeeError)?;
-        while let Some(block_transaction_output_indexes) = blocks_transaction_output_indexes.next()
-        {
-          // Iterate this block
-          let block_transaction_output_indexes =
-            block_transaction_output_indexes.map_err(EpeeError)?;
-          let mut fields = block_transaction_output_indexes.fields().map_err(EpeeError)?;
-          let Some(mut block_transaction_output_indexes) =
-            optional_field!(fields, "indices", EpeeEntry::iterate)?
-          else {
-            continue;
-          };
-          while let Some(transaction_output_indexes) = block_transaction_output_indexes.next() {
-            // Iterate this transaction
-            let transaction_output_indexes = transaction_output_indexes.map_err(EpeeError)?;
-            let mut fields = transaction_output_indexes.fields().map_err(EpeeError)?;
-            let Some(mut transaction_output_indexes) =
-              optional_field!(fields, "indices", EpeeEntry::iterate)?
-            else {
-              continue;
-            };
-            while let Some(index) = transaction_output_indexes.next() {
-              all_output_indexes.push(index.map_err(EpeeError)?.to_u64().map_err(EpeeError)?);
-            }
-          }
-        }
-      }
-      _ => {}
     }
   }
 
@@ -391,16 +310,10 @@ pub(super) fn extract_blocks_from_blocks_bin(
   Ok(Some(result.into_iter()))
 }
 
+#[derive(Default, EpeeDecode)]
+struct OutputIndexes {
+  o_indexes: Vec<u64>,
+}
 pub(super) fn extract_output_indexes(epee: &[u8]) -> Result<Vec<u64>, InterfaceError> {
-  let mut epee = Epee::new(epee).map_err(EpeeError)?;
-  let mut epee = epee.entry().map_err(EpeeError)?.fields().map_err(EpeeError)?;
-  let Some(mut indexes) = optional_field!(epee, "o_indexes", EpeeEntry::iterate)? else {
-    return Ok(vec![]);
-  };
-
-  let mut res = vec![];
-  while let Some(index) = indexes.next() {
-    res.push(index.map_err(EpeeError)?.to_u64().map_err(EpeeError)?);
-  }
-  Ok(res)
+  Ok(OutputIndexes::decode_root(epee).map_err(EpeeError)?.o_indexes)
 }
