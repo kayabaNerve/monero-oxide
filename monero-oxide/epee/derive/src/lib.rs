@@ -87,23 +87,37 @@ pub fn derive_epee_decode(object: TokenStream) -> TokenStream {
 
     let generic_bounds_tree = take_angle_expression(&mut object);
 
-    let mut generics_tree = vec![TokenTree::Punct(Punct::new('<', Spacing::Alone))];
+    let mut generics_tree = vec![];
     {
       let mut iter = generic_bounds_tree.clone().into_iter().peekable();
       while let Some(component) = iter.next() {
-        if matches!(component, TokenTree::Ident(_)) {
-          generics_tree.push(component);
-          generics_tree.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
-          skip_comma_delimited(&mut iter);
+        // Take until the next colon, used to mark trait bounds
+        if let TokenTree::Punct(punct) = &component {
+          if punct.as_char() == ':' {
+            // Skip the actual bounds
+            skip_comma_delimited(&mut iter);
+            // Add our own comma delimiter and move to the next item
+            generics_tree.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
+            continue;
+          }
         }
+        // Push this component as it isn't part of the bounds
+        generics_tree.push(component);
       }
     }
-    generics_tree.push(TokenTree::Punct(Punct::new('>', Spacing::Alone)));
+    // Ensure this is terminated, which it won't be if the last item had bounds yet didn't have a
+    // trailing comma
+    if let Some(last) = generics_tree.last() {
+      match last {
+        TokenTree::Punct(punct) if punct.as_char() == '>' => {}
+        _ => generics_tree.push(TokenTree::Punct(Punct::new('>', Spacing::Alone))),
+      }
+    }
 
     generic_bounds = generic_bounds_tree.to_string();
     generics = TokenStream::from_iter(generics_tree).to_string();
 
-    // This means we don't support `struct`'s defined with `where` bounds
+    // This presumably means we don't support `struct`'s defined with `where` bounds
     let Some(TokenTree::Group(struct_body)) = object.next() else {
       panic!("`struct`'s name was not followed by its body");
     };
