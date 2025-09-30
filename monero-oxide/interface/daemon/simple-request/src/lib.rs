@@ -107,15 +107,17 @@ impl SimpleRequestTransport {
       let client = Client::without_connection_pool(&url)
         .map_err(|_| InterfaceError::InterfaceError("invalid URL".to_string()))?;
       // Obtain the initial challenge, which also somewhat validates this connection
-      let challenge =
-        Self::digest_auth_challenge(
-          &client
-            .request(Request::post(url.clone()).body(vec![].into()).map_err(|e| {
-              InterfaceError::InterfaceError(format!("couldn't make request: {e:?}"))
-            })?)
-            .await
-            .map_err(|e| InterfaceError::InterfaceError(format!("{e:?}")))?,
-        )?;
+      let challenge = Self::digest_auth_challenge(
+        &tokio::time::timeout(
+          request_timeout,
+          client.request(Request::post(url.clone()).body(vec![].into()).map_err(|e| {
+            InterfaceError::InterfaceError(format!("couldn't make request: {e:?}"))
+          })?),
+        )
+        .await
+        .map_err(|e| InterfaceError::InterfaceError(format!("timeout reached: {e:?}")))?
+        .map_err(|e| InterfaceError::InterfaceError(format!("{e:?}")))?,
+      )?;
       Authentication::Authenticated {
         username: Zeroizing::new(split_userpass[0].to_string()),
         password: Zeroizing::new((*split_userpass.get(1).unwrap_or(&"")).to_string()),
@@ -289,7 +291,7 @@ impl HttpTransport for SimpleRequestTransport {
     async move {
       tokio::time::timeout(self.request_timeout, self.inner_post(route, body, response_size_limit))
         .await
-        .map_err(|e| InterfaceError::InterfaceError(format!("{e:?}")))?
+        .map_err(|e| InterfaceError::InterfaceError(format!("timeout reached: {e:?}")))?
     }
   }
 }
