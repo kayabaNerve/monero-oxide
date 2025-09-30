@@ -8,14 +8,12 @@ use monero_oxide::{
 };
 
 use monero_epee::{EpeeError as OriginalEpeeError, EpeeEntry, Epee};
-pub(super) use monero_epee::{HEADER, Type, Array};
+pub(super) use monero_epee::{HEADER, VERSION, Type, Array};
 
 use crate::{
   InterfaceError, PrunedTransactionWithPrunableHash, UnvalidatedScannableBlock,
   RingCtOutputInformation,
 };
-
-pub(super) const VERSION: u8 = 1;
 
 struct EpeeError(OriginalEpeeError);
 impl From<EpeeError> for InterfaceError {
