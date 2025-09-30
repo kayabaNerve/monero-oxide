@@ -33,9 +33,17 @@ pub trait EpeeObject: EpeeDecode {
   /// length of input or decode into types which define bounds.
   ///
   /// This method SHOULD NOT be overriden.
-  fn decode_root<B: for<'encoding> BytesLike<'encoding>>(epee: B) -> Result<Self, EpeeError> {
+  fn decode_root<'encoding, B: BytesLike<'encoding>>(epee: B) -> Result<Self, EpeeError> {
     let mut epee = Epee::new(epee)?;
-    let entry = epee.entry();
+    let entry = epee.entry()?;
     Self::decode(entry)
+  }
+}
+
+impl<T: EpeeDecode> EpeeDecode for Option<T> {
+  fn decode<'encoding, 'parent, B: BytesLike<'encoding>>(
+    entry: EpeeEntry<'encoding, 'parent, B>,
+  ) -> Result<Self, EpeeError> {
+    T::decode(entry).map(Some)
   }
 }

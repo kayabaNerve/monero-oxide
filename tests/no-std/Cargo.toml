@@ -20,8 +20,9 @@ workspace = true
 [dependencies]
 monero-epee = { path = "../../monero-oxide/epee" }
 monero-epee-traits = { path = "../../monero-oxide/epee/traits", optional = true }
+monero-epee-derive = { path = "../../monero-oxide/epee/derive", optional = true }
 
 monero-wallet = { path = "../../monero-oxide/wallet", default-features = false, features = ["compile-time-generators"], optional = true }
 
 [features]
-alloc = ["monero-epee-traits", "monero-wallet"]
+alloc = ["monero-epee-traits", "monero-epee-derive", "monero-wallet"]

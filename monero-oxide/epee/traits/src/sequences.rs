@@ -8,7 +8,7 @@ impl<T: 'static + EpeeDecode> EpeeDecode for Vec<T> {
   ) -> Result<Self, EpeeError> {
     if core::any::TypeId::of::<T>() == core::any::TypeId::of::<u8>() {
       let mut str = entry.to_str()?;
-      let mut res = Vec::with_capacity(str.len());
+      let mut res = vec![0; str.len()];
       str.read_into_slice(&mut res)?;
 
       // We know these types are equivalent, making this an effective NOP and safe

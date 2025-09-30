@@ -6,4 +6,7 @@ pub use monero_epee;
 pub mod alloc {
   pub use monero_epee_traits;
   pub use monero_wallet;
+
+  #[derive(Default, monero_epee_derive::EpeeDecode)]
+  struct Epee {}
 }
