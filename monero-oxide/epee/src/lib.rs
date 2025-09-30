@@ -74,6 +74,47 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> Drop for EpeeEntry<'encoding, 
   }
 }
 
+impl<'encoding, B: BytesLike<'encoding>> Epee<'encoding, B> {
+  /// Create a new view of an encoding.
+  pub fn new(mut encoding: B) -> Result<Self, EpeeError> {
+    // Check the header
+    {
+      let mut present_header = [0; HEADER.len()];
+      encoding.read_into_slice(&mut present_header)?;
+      if present_header != HEADER {
+        Err(EpeeError::InvalidHeader)?;
+      }
+    }
+
+    // Check the version
+    {
+      let version = encoding.read_byte().ok();
+      if version != Some(VERSION) {
+        Err(EpeeError::InvalidVersion(version))?;
+      }
+    }
+
+    Ok(Epee {
+      current_encoding_state: encoding,
+      stack: Stack::root_object(),
+      error: None,
+      _encoding_lifetime: PhantomData,
+    })
+  }
+
+  /// Obtain an `EpeeEntry` representing the encoded object.
+  ///
+  /// This takes a mutable reference as `Epee` is the owned object representing the decoder's
+  /// state. However, this is not eligible to be called again after consumption. Multiple calls to
+  /// this function will cause an error to be returned.
+  pub fn entry(&mut self) -> Result<EpeeEntry<'encoding, '_, B>, EpeeError> {
+    if self.stack.depth() != 1 {
+      Err(EpeeError::EpeeReuse)?;
+    }
+    Ok(EpeeEntry { root: Some(self), kind: Type::Object, len: 1 })
+  }
+}
+
 /// An iterator over fields.
 pub struct FieldIterator<'encoding, 'parent, B: BytesLike<'encoding>> {
   root: &'parent mut Epee<'encoding, B>,
@@ -117,47 +158,6 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> FieldIterator<'encoding, 'pare
     };
 
     Some(Ok((key, EpeeEntry { root: Some(self.root), kind, len })))
-  }
-}
-
-impl<'encoding, B: BytesLike<'encoding>> Epee<'encoding, B> {
-  /// Create a new view of an encoding.
-  pub fn new(mut encoding: B) -> Result<Self, EpeeError> {
-    // Check the header
-    {
-      let mut present_header = [0; HEADER.len()];
-      encoding.read_into_slice(&mut present_header)?;
-      if present_header != HEADER {
-        Err(EpeeError::InvalidHeader)?;
-      }
-    }
-
-    // Check the version
-    {
-      let version = encoding.read_byte().ok();
-      if version != Some(VERSION) {
-        Err(EpeeError::InvalidVersion(version))?;
-      }
-    }
-
-    Ok(Epee {
-      current_encoding_state: encoding,
-      stack: Stack::root_object(),
-      error: None,
-      _encoding_lifetime: PhantomData,
-    })
-  }
-
-  /// Obtain an `EpeeEntry` representing the encoded object.
-  ///
-  /// This takes a mutable reference as `Epee` is the owned object representing the decoder's
-  /// state. However, this is not eligible to be called again after consumption. Multiple calls to
-  /// this function will cause an error to be returned.
-  pub fn entry(&mut self) -> Result<EpeeEntry<'encoding, '_, B>, EpeeError> {
-    if self.stack.depth() != 1 {
-      Err(EpeeError::EpeeReuse)?;
-    }
-    Ok(EpeeEntry { root: Some(self), kind: Type::Object, len: 1 })
   }
 }
 
