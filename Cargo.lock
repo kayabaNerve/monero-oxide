@@ -896,7 +896,7 @@ dependencies = [
 [[package]]
 name = "monero-epee"
 version = "0.2.0"
-source = "git+https://github.com/kayabaNerve/monero-oxide?rev=1bed5d9319b4761df6a8557d2e0774428ba90bff#1bed5d9319b4761df6a8557d2e0774428ba90bff"
+source = "git+https://github.com/kayabaNerve/monero-oxide?rev=0f7e63a37f396381f08f5af7f99bec0e6b1d2c5c#0f7e63a37f396381f08f5af7f99bec0e6b1d2c5c"
 
 [[package]]
 name = "monero-generators"
