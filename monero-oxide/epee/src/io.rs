@@ -19,7 +19,10 @@ pub trait BytesLike<'encoding>: Sized {
   /// Read a fixed amount of bytes from the container.
   ///
   /// This MUST return `Ok((len, slice))` where `slice` is the expected length or `Err(_)`.
-  fn read_bytes(&mut self, bytes: usize) -> Result<(Self::ExternallyTrackedLength, Self), EpeeError>;
+  fn read_bytes(
+    &mut self,
+    bytes: usize,
+  ) -> Result<(Self::ExternallyTrackedLength, Self), EpeeError>;
 
   /// Read a fixed amount of bytes from the container into a slice.
   /*
@@ -52,7 +55,10 @@ impl<'encoding> BytesLike<'encoding> for &'encoding [u8] {
   }
 
   #[inline(always)]
-  fn read_bytes(&mut self, bytes: usize) -> Result<(Self::ExternallyTrackedLength, Self), EpeeError> {
+  fn read_bytes(
+    &mut self,
+    bytes: usize,
+  ) -> Result<(Self::ExternallyTrackedLength, Self), EpeeError> {
     if self.len() < bytes {
       Err(EpeeError::Short(bytes))?;
     }
