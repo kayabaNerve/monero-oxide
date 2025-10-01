@@ -64,8 +64,10 @@ impl<'encoding> BytesLike<'encoding> for &'encoding [u8] {
   #[inline(always)]
   fn read_into_slice(&mut self, slice: &mut [u8]) -> Result<(), EpeeError> {
     /*
-      To satisfy the API, we do have to perform this copy here despite it being unnecessary for
-      this literal type. Thankfully, we only call this method for a max of just eight bytes.
+      Ideally, we could return a immutable slice here as to avoid allocating the destination (even
+      if on the stack) and copying into it. That's only possible as this is itself a slice however,
+      so we can return a subslice. Allowing distinct containers does effectively require this
+      pattern. Thankfully, we only call this method for a max of just eight bytes.
     */
     slice.copy_from_slice(self.read_bytes(slice.len())?.1);
     Ok(())
