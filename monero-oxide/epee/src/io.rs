@@ -126,17 +126,11 @@ impl<'encoding, B: BytesLike<'encoding>> String<'encoding, B> {
   pub fn len(&self) -> usize {
     self.bytes.len(self.len)
   }
-}
-impl<'encoding, B: BytesLike<'encoding>> AsRef<B> for String<'encoding, B> {
+
+  /// Consume this into its underlying bytes.
   #[inline(always)]
-  fn as_ref(&self) -> &B {
-    &self.bytes
-  }
-}
-impl<'encoding, B: BytesLike<'encoding>> AsMut<B> for String<'encoding, B> {
-  #[inline(always)]
-  fn as_mut(&mut self) -> &mut B {
-    &mut self.bytes
+  pub fn consume(self) -> B {
+    self.bytes
   }
 }
 
