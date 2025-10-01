@@ -95,20 +95,22 @@ impl Type {
 /// Read a entry's key.
 // https://github.com/monero-project/monero/blob/8d4c625713e3419573dfcc7119c8848f47cabbaa
 //   /contrib/epee/include/storages/portable_storage_from_bin.h#143-L152
-fn read_key<'encoding, B: BytesLike<'encoding>>(reader: &mut B) -> Result<B, EpeeError> {
+fn read_key<'encoding, B: BytesLike<'encoding>>(
+  reader: &mut B,
+) -> Result<String<'encoding, B>, EpeeError> {
   let len = usize::from(reader.read_byte()?);
   if len == 0 {
     Err(EpeeError::EmptyKey)?;
   }
-  reader.read_bytes(len)
+  let (len, bytes) = reader.read_bytes(len)?;
+  Ok(String { len, bytes, _encoding: PhantomData })
 }
 
 /// The result from a single step of the decoder.
 pub(crate) enum SingleStepResult<'encoding, B: BytesLike<'encoding>> {
   Object { fields: u64 },
-  Entry { key: B, kind: Type, len: u64 },
-  // One of these have to have `PhantomData`, why not `Unit` which we never match on?
-  Unit(PhantomData<&'encoding ()>),
+  Entry { key: String<'encoding, B>, kind: Type, len: u64 },
+  Unit,
 }
 
 impl Stack {
@@ -169,7 +171,7 @@ impl Stack {
         return Ok(Some(SingleStepResult::Entry { key, kind, len }));
       }
     }
-    Ok(Some(SingleStepResult::Unit(PhantomData)))
+    Ok(Some(SingleStepResult::Unit))
   }
 
   /// Step through the entirety of the next item.

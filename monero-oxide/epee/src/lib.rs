@@ -146,8 +146,10 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> FieldIterator<'encoding, 'pare
   /// solutions (primarily using inlined code instead of functions, callbacks) before presenting
   /// itself as a complete solution. Please refer to it if you have difficulties calling this
   /// method for context.
-  #[allow(clippy::should_implement_trait)]
-  pub fn next(&mut self) -> Option<Result<(B, EpeeEntry<'encoding, '_, B>), EpeeError>> {
+  #[allow(clippy::type_complexity, clippy::should_implement_trait)]
+  pub fn next(
+    &mut self,
+  ) -> Option<Result<(String<'encoding, B>, EpeeEntry<'encoding, '_, B>), EpeeError>> {
     self.len = self.len.checked_sub(1)?;
     let (key, kind, len) = match self.root.stack.single_step(&mut self.root.current_encoding_state)
     {
@@ -331,7 +333,7 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> EpeeEntry<'encoding, 'parent, 
 
   /// Get the current item as a 'string' (represented as a `B`).
   #[inline(always)]
-  pub fn to_str(mut self) -> Result<B, EpeeError> {
+  pub fn to_str(mut self) -> Result<String<'encoding, B>, EpeeError> {
     if (self.kind != Type::String) || (self.len != 1) {
       Err(EpeeError::TypeError)?;
     }
@@ -345,7 +347,7 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> EpeeEntry<'encoding, 'parent, 
   ///
   /// This will error if the result is not actually the expected length.
   #[inline(always)]
-  pub fn to_fixed_len_str(self, len: usize) -> Result<B, EpeeError> {
+  pub fn to_fixed_len_str(self, len: usize) -> Result<String<'encoding, B>, EpeeError> {
     let str = self.to_str()?;
     if str.len() != len {
       Err(EpeeError::TypeError)?;
