@@ -36,7 +36,7 @@ struct PackedTypes([u8; MAX_OBJECT_DEPTH.div_ceil(2)]);
 impl PackedTypes {
   fn get(&self, i: usize) -> TypeOrEntry {
     let mut entry = self.0[i / 2];
-    entry >>= (entry & 1) * 4;
+    entry >>= (i & 1) * 4;
     entry &= 0b1111;
     match entry {
       0 => TypeOrEntry::Entry,
