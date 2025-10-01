@@ -31,14 +31,44 @@ const EPEE_LIB_MAX_OBJECT_DEPTH: usize = 100;
 */
 const MAX_OBJECT_DEPTH: usize = EPEE_LIB_MAX_OBJECT_DEPTH + 2;
 
-/*
-  `TypeOrEntry` is a branching `enum`, yet has less than 256 possible instantiations. Accordingly
-  it is representable with just a `u8`. This checks Rust is smart enough to realize this and that
-  we don't have to define our own `u8` encoder to achieve this small of a representation.
-*/
-#[cfg(test)]
-const _ASSERT_SINGLE_BYTE_TYPE_OR_ENTRY: [(); 1 - core::mem::size_of::<TypeOrEntry>()] =
-  [(); 1 - core::mem::size_of::<TypeOrEntry>()];
+/// An array of `TypeOrEntry`, using `u4` for each value.
+struct PackedTypes([u8; MAX_OBJECT_DEPTH.div_ceil(2)]);
+impl PackedTypes {
+  fn get(&self, i: usize) -> TypeOrEntry {
+    let mut entry = self.0[i / 2];
+    entry >>= (entry & 1) * 4;
+    entry &= 0b1111;
+    match entry {
+      0 => TypeOrEntry::Entry,
+      1 => TypeOrEntry::Type(Type::Int64),
+      2 => TypeOrEntry::Type(Type::Int32),
+      3 => TypeOrEntry::Type(Type::Int16),
+      4 => TypeOrEntry::Type(Type::Int8),
+      5 => TypeOrEntry::Type(Type::Uint64),
+      6 => TypeOrEntry::Type(Type::Uint32),
+      7 => TypeOrEntry::Type(Type::Uint16),
+      8 => TypeOrEntry::Type(Type::Uint8),
+      9 => TypeOrEntry::Type(Type::Double),
+      10 => TypeOrEntry::Type(Type::String),
+      11 => TypeOrEntry::Type(Type::Bool),
+      12 => TypeOrEntry::Type(Type::Object),
+      13 ..= 15 => panic!("`PackedTypes` was written to with a non-existent `TypeOrEntry`"),
+      _ => unreachable!("masked by 0b1111"),
+    }
+  }
+
+  fn set(&mut self, i: usize, kind: TypeOrEntry) {
+    let four_bits = match kind {
+      TypeOrEntry::Entry => 0,
+      TypeOrEntry::Type(kind) => kind as u8,
+    };
+    let shift = (i & 1) * 4;
+    // Clear the existing value in this slot
+    self.0[i / 2] &= 0b11110000 >> shift;
+    // Set the new value
+    self.0[i / 2] |= four_bits << shift;
+  }
+}
 
 /// A non-allocating `Vec`.
 ///
@@ -51,10 +81,11 @@ pub(crate) struct Stack {
     size of the state is solely a function of depth, not width.
 
     The following two arrays are separate as Rust would pad `(TypeOrEntry, u64)` to 16 bytes, when
-    it only requires 9 bytes to represent.
+    it only requires 9 bytes to represent. Additionally, as there's less than 2**4 possible states
+    for a `TypeOrEntry`, we represent it with a `u4` (via `PackedTypes`).
   */
   /// The type of the item being read.
-  types: [TypeOrEntry; MAX_OBJECT_DEPTH],
+  types: PackedTypes,
   /// The amount remaining for the item being read.
   amounts: [NonZero<u64>; MAX_OBJECT_DEPTH],
 
@@ -81,14 +112,13 @@ impl Stack {
     /*
       Zero-initialize the arrays.
 
-      Because `TypeOrEntry` does not have a 'zero' defined, we simply use `TypeOrEntry::Entry` to
-      avoid `unsafe` code here for a minor performance benefit. Because we require `amounts` to be
-      non-zero, we use `NonZero::MIN`.
+      Because we require `amounts` to be non-zero, we use `NonZero::MIN`. Alternatively, we'd need
+      to use `unsafe` for the uninitialized memory.
     */
-    let mut types = [TypeOrEntry::Entry; MAX_OBJECT_DEPTH];
+    let mut types = PackedTypes([0; MAX_OBJECT_DEPTH.div_ceil(2)]);
     let mut amounts = [NonZero::<u64>::MIN; MAX_OBJECT_DEPTH];
 
-    types[0] = TypeOrEntry::Type(Type::Object);
+    types.set(0, TypeOrEntry::Type(Type::Object));
     amounts[0] = NonZero::<u64>::MIN; // 1
 
     Self { types, amounts, depth: 1 }
@@ -104,14 +134,14 @@ impl Stack {
   #[inline(always)]
   pub(crate) fn peek(&self) -> Option<(TypeOrEntry, NonZero<u64>)> {
     let i = self.depth().checked_sub(1)?;
-    Some((self.types[i], self.amounts[i]))
+    Some((self.types.get(i), self.amounts[i]))
   }
 
   /// Pop the next item from the stack.
   pub(crate) fn pop(&mut self) -> Option<TypeOrEntry> {
     let i = self.depth().checked_sub(1)?;
 
-    let kind = self.types[i];
+    let kind = self.types.get(i);
 
     // This will not panic as `amount` is unsigned and non-zero.
     let amount = self.amounts[i].get() - 1;
@@ -138,7 +168,7 @@ impl Stack {
     };
 
     // These will not panic due to our depth check at the start of the function
-    self.types[self.depth()] = kind;
+    self.types.set(self.depth(), kind);
     self.amounts[self.depth()] = amount;
     self.depth += 1;
 
