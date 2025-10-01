@@ -57,7 +57,7 @@ macro_rules! optional_field {
         Ok(entry) => entry,
         Err(e) => Err(EpeeError(e))?,
       };
-      if entry.0 == $field.as_bytes() {
+      if *entry.0.as_ref() == $field.as_bytes() {
         break Ok(Some($body(entry.1).map_err(EpeeError)?));
       }
     }
@@ -81,7 +81,7 @@ impl FixedLenStr {
     self,
     entry: EpeeEntry<'encoding, 'parent, &'encoding [u8]>,
   ) -> Result<&'encoding [u8], monero_epee::EpeeError> {
-    entry.to_fixed_len_str(self.0)
+    entry.to_fixed_len_str(self.0).map(|str| *str.as_ref())
   }
 }
 
@@ -90,7 +90,7 @@ pub(super) fn check_status(epee: &[u8]) -> Result<(), InterfaceError> {
   let mut epee = Epee::new(epee).map_err(EpeeError)?;
   let mut epee = epee.entry().map_err(EpeeError)?.fields().map_err(EpeeError)?;
   let status = field!(epee, "status", EpeeEntry::to_str)?;
-  if status != b"OK" {
+  if *status.as_ref() != b"OK" {
     return Err(InterfaceError::InvalidInterface("epee `status` wasn't \"OK\"".to_string()));
   }
   Ok(())
@@ -138,9 +138,7 @@ fn epee_32<'encoding, 'parent>(
   entry: EpeeEntry<'encoding, 'parent, &'encoding [u8]>,
 ) -> Result<[u8; 32], EpeeError> {
   Ok(
-    entry
-      .to_fixed_len_str(32)
-      .map_err(EpeeError)?
+    (*entry.to_fixed_len_str(32).map_err(EpeeError)?.as_ref())
       .try_into()
       .expect("32-byte string couldn't be converted to a 32-byte array"),
   )
@@ -168,7 +166,7 @@ pub(super) fn accumulate_outs(
 
     while let Some(out) = out.next() {
       let (item_key, value) = out.map_err(EpeeError)?;
-      match item_key {
+      match *item_key.as_ref() {
         b"height" => block_number = Some(value.to_u64().map_err(EpeeError)?),
         b"key" => key = Some(CompressedPoint(epee_32(value)?)),
         b"mask" => commitment = Some(CompressedPoint(epee_32(value)?)),
@@ -218,7 +216,7 @@ pub(super) fn extract_blocks_from_blocks_bin(
   let mut all_output_indexes = vec![];
   while let Some(epee) = epee.next() {
     let (key, value) = epee.map_err(EpeeError)?;
-    match key {
+    match *key.as_ref() {
       b"blocks" => {
         let mut blocks = value.iterate().map_err(EpeeError)?;
         while let Some(block) = blocks.next() {
@@ -227,13 +225,13 @@ pub(super) fn extract_blocks_from_blocks_bin(
           let mut transactions = vec![];
           while let Some(field) = block_fields.next() {
             let (key, value) = field.map_err(EpeeError)?;
-            match key {
+            match *key.as_ref() {
               b"block" => {
                 let mut encoding = value.to_str().map_err(EpeeError)?;
-                block = Some(Block::read(&mut encoding).map_err(|e| {
+                block = Some(Block::read(encoding.as_mut()).map_err(|e| {
                   InterfaceError::InvalidInterface(format!("invalid block: {e:?}"))
                 })?);
-                if !encoding.is_empty() {
+                if !encoding.as_ref().is_empty() {
                   Err(InterfaceError::InvalidInterface(
                     "block had extraneous bytes after it".to_string(),
                   ))?;
@@ -247,14 +245,14 @@ pub(super) fn extract_blocks_from_blocks_bin(
                   let mut prunable_hash = None;
                   while let Some(field) = fields.next() {
                     let (key, value) = field.map_err(EpeeError)?;
-                    match key {
+                    match *key.as_ref() {
                       b"blob" => {
                         let mut encoding = value.to_str().map_err(EpeeError)?;
                         transaction =
-                          Some(Transaction::<Pruned>::read(&mut encoding).map_err(|e| {
+                          Some(Transaction::<Pruned>::read(encoding.as_mut()).map_err(|e| {
                             InterfaceError::InvalidInterface(format!("invalid transaction: {e:?}"))
                           })?);
-                        if !encoding.is_empty() {
+                        if !encoding.as_ref().is_empty() {
                           Err(InterfaceError::InvalidInterface(
                             "transaction had extraneous bytes after it".to_string(),
                           ))?;

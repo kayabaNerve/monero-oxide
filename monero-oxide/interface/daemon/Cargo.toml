@@ -28,7 +28,7 @@ monero-oxide = { path = "../..", default-features = false }
 monero-address = { path = "../../wallet/address", default-features = false }
 monero-interface = { path = "..", default-features = false }
 
-monero-epee = { git = "https://github.com/kayabaNerve/monero-oxide", rev = "769ea96433ba57a22445bc71a2859f6dec4f60cc"}
+monero-epee = { git = "https://github.com/kayabaNerve/monero-oxide", rev = "1bed5d9319b4761df6a8557d2e0774428ba90bff"}
 
 [features]
 std = [
