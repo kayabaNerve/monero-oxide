@@ -1,3 +1,4 @@
+use core::default::Default;
 use alloc::{vec, vec::Vec};
 
 use crate::{BytesLike, EpeeError, EpeeEntry, EpeeDecode};
@@ -26,7 +27,7 @@ impl<T: 'static + EpeeDecode> EpeeDecode for Vec<T> {
   }
 }
 
-impl<T: 'static + EpeeDecode, const N: usize> EpeeDecode for [T; N] {
+impl<T: 'static + Default + EpeeDecode, const N: usize> EpeeDecode for [T; N] {
   fn decode<'encoding, 'parent, B: BytesLike<'encoding>>(
     entry: EpeeEntry<'encoding, 'parent, B>,
   ) -> Result<Self, EpeeError> {
@@ -49,6 +50,17 @@ impl<T: 'static + EpeeDecode, const N: usize> EpeeDecode for [T; N] {
       return Ok(casted);
     }
 
-    Vec::<T>::decode(entry)?.try_into().map_err(|_| EpeeError::TypeError)
+    if entry.len() != u64::try_from(N).expect("decoding into an array of length > u64::MAX") {
+      Err(EpeeError::TypeError)?;
+    }
+
+    let mut res = core::array::from_fn(|_| Default::default());
+    let mut i = 0;
+    let mut iter = entry.iterate()?;
+    while let Some(item) = iter.next() {
+      res[i] = T::decode(item?)?;
+      i += 1;
+    }
+    Ok(res)
   }
 }
