@@ -10,7 +10,7 @@ impl<T: 'static + EpeeDecode> EpeeDecode for Vec<T> {
     if core::any::TypeId::of::<T>() == core::any::TypeId::of::<u8>() {
       let mut str = entry.to_str()?;
       let mut res = vec![0; str.len()];
-      str.read_into_slice(&mut res)?;
+      str.as_mut().read_into_slice(&mut res)?;
 
       // We know these types are equivalent, making this an effective NOP and safe
       let res = unsafe { core::mem::transmute::<Vec<u8>, Vec<T>>(res) };
@@ -34,7 +34,7 @@ impl<T: 'static + Default + EpeeDecode, const N: usize> EpeeDecode for [T; N] {
     if core::any::TypeId::of::<T>() == core::any::TypeId::of::<u8>() {
       let mut str = entry.to_fixed_len_str(N)?;
       let mut original = [0; N];
-      str.read_into_slice(&mut original)?;
+      str.as_mut().read_into_slice(&mut original)?;
 
       /*
         We know these types are equivalent, making this an effective NOP and safe. Unlike with

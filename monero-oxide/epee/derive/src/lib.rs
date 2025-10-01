@@ -189,7 +189,7 @@ pub fn derive_epee_decode(object: TokenStream) -> TokenStream {
           }}
           let key = {{
             let key_len = key.len();
-            key.read_into_slice(&mut key_bytes[.. key_len])?;
+            key.as_mut().read_into_slice(&mut key_bytes[.. key_len])?;
             &key_bytes[.. key_len]
           }};
 
