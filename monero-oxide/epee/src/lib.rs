@@ -59,7 +59,7 @@ pub struct Epee<'encoding, B: BytesLike<'encoding>> {
 pub struct EpeeEntry<'encoding, 'parent, B: BytesLike<'encoding>> {
   root: Option<&'parent mut Epee<'encoding, B>>,
   kind: Type,
-  len: u64,
+  len: usize,
 }
 
 // When this entry is dropped, advance the decoder past it
@@ -118,7 +118,7 @@ impl<'encoding, B: BytesLike<'encoding>> Epee<'encoding, B> {
 /// An iterator over fields.
 pub struct FieldIterator<'encoding, 'parent, B: BytesLike<'encoding>> {
   root: &'parent mut Epee<'encoding, B>,
-  len: u64,
+  len: usize,
 }
 
 // When this object is dropped, advance the decoder past the unread items
@@ -167,7 +167,7 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> FieldIterator<'encoding, 'pare
 pub struct ArrayIterator<'encoding, 'parent, B: BytesLike<'encoding>> {
   root: &'parent mut Epee<'encoding, B>,
   kind: Type,
-  len: u64,
+  len: usize,
 }
 
 // When this array is dropped, advance the decoder past the unread items
@@ -216,7 +216,7 @@ impl<'encoding, 'parent, B: BytesLike<'encoding>> EpeeEntry<'encoding, 'parent, 
   /// The amount of items present within this entry.
   #[allow(clippy::len_without_is_empty)]
   #[inline(always)]
-  pub fn len(&self) -> u64 {
+  pub fn len(&self) -> usize {
     self.len
   }
 

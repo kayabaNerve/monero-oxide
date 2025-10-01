@@ -75,19 +75,19 @@ impl PackedTypes {
 /// This has a maximum depth premised on the bound for an EPEE's object depth.
 pub(crate) struct Stack {
   /*
-    We represent items to decode as `(TypeOrEntry, u64)` so that if told to decode a vector with
+    We represent items to decode as `(TypeOrEntry, usize)` so that if told to decode a vector with
     one billion entries, we don't have to allocate
     `vec![TypeOrEntry::Entry(Type::*), 1_000_000_000]` to keep track of the state. Instead, the
     size of the state is solely a function of depth, not width.
 
-    The following two arrays are separate as Rust would pad `(TypeOrEntry, u64)` to 16 bytes, when
-    it only requires 9 bytes to represent. Additionally, as there's less than 2**4 possible states
-    for a `TypeOrEntry`, we represent it with a `u4` (via `PackedTypes`).
+    The following two arrays are separate as Rust would pad `(TypeOrEntry, usize)` to 16 bytes,
+    when it only requires 9 bytes to represent. Additionally, as there's less than 2**4 possible
+    states for a `TypeOrEntry`, we represent it with a `u4` (via `PackedTypes`).
   */
   /// The type of the item being read.
   types: PackedTypes,
   /// The amount remaining for the item being read.
-  amounts: [NonZero<u64>; MAX_OBJECT_DEPTH],
+  amounts: [NonZero<usize>; MAX_OBJECT_DEPTH],
 
   /// The current depth of the stack.
   ///
@@ -116,10 +116,10 @@ impl Stack {
       to use `unsafe` for the uninitialized memory.
     */
     let mut types = PackedTypes([0; MAX_OBJECT_DEPTH.div_ceil(2)]);
-    let mut amounts = [NonZero::<u64>::MIN; MAX_OBJECT_DEPTH];
+    let mut amounts = [NonZero::<usize>::MIN; MAX_OBJECT_DEPTH];
 
     types.set(0, TypeOrEntry::Type(Type::Object));
-    amounts[0] = NonZero::<u64>::MIN; // 1
+    amounts[0] = NonZero::<usize>::MIN; // 1
 
     Self { types, amounts, depth: 1 }
   }
@@ -132,7 +132,7 @@ impl Stack {
 
   /// Peek the current item on the stack.
   #[inline(always)]
-  pub(crate) fn peek(&self) -> Option<(TypeOrEntry, NonZero<u64>)> {
+  pub(crate) fn peek(&self) -> Option<(TypeOrEntry, NonZero<usize>)> {
     let i = self.depth().checked_sub(1)?;
     Some((self.types.get(i), self.amounts[i]))
   }
@@ -156,7 +156,7 @@ impl Stack {
   }
 
   /// Push an item onto the stack.
-  pub(crate) fn push(&mut self, kind: TypeOrEntry, amount: u64) -> Result<(), EpeeError> {
+  pub(crate) fn push(&mut self, kind: TypeOrEntry, amount: usize) -> Result<(), EpeeError> {
     // Assert the maximum depth for an object
     if self.depth() == MAX_OBJECT_DEPTH {
       Err(EpeeError::DepthLimitExceeded)?;

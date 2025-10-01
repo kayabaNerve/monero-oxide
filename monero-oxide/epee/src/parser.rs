@@ -108,8 +108,8 @@ fn read_key<'encoding, B: BytesLike<'encoding>>(
 
 /// The result from a single step of the decoder.
 pub(crate) enum SingleStepResult<'encoding, B: BytesLike<'encoding>> {
-  Object { fields: u64 },
-  Entry { key: String<'encoding, B>, kind: Type, len: u64 },
+  Object { fields: usize },
+  Entry { key: String<'encoding, B>, kind: Type, len: usize },
   Unit,
 }
 
@@ -161,12 +161,16 @@ impl Stack {
       }
       TypeOrEntry::Type(Type::Object) => {
         let fields = read_varint(encoding)?;
+        // Since the amount of fields exceeds our virtual address space, claim the encoding is
+        // short
+        let fields = usize::try_from(fields).map_err(|_| EpeeError::Short(usize::MAX))?;
         self.push(TypeOrEntry::Entry, fields)?;
         return Ok(Some(SingleStepResult::Object { fields }));
       }
       TypeOrEntry::Entry => {
         let key = read_key(encoding)?;
         let (kind, len) = Type::read(encoding)?;
+        let len = usize::try_from(len).map_err(|_| EpeeError::Short(usize::MAX))?;
         self.push(TypeOrEntry::Type(kind), len)?;
         return Ok(Some(SingleStepResult::Entry { key, kind, len }));
       }
