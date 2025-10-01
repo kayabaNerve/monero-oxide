@@ -121,6 +121,12 @@ pub struct String<'encoding, B: BytesLike<'encoding>> {
 }
 
 impl<'encoding, B: BytesLike<'encoding>> String<'encoding, B> {
+  /// If this string is empty.
+  #[inline(always)]
+  pub fn is_empty(&self) -> bool {
+    self.bytes.len(self.len) == 0
+  }
+
   /// The length of this string.
   #[inline(always)]
   pub fn len(&self) -> usize {

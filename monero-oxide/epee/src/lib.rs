@@ -10,7 +10,7 @@ mod stack;
 mod parser;
 
 pub(crate) use io::*;
-pub use io::BytesLike;
+pub use io::{BytesLike, String};
 pub(crate) use stack::*;
 pub use parser::*;
 
