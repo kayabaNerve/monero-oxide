@@ -128,8 +128,8 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     // https://github.com/monero-project/monero/issues/10118
     {
       const BATCH_REQUEST: &str = r#"[
-       { "jsonrpc": "2.0", "method": "get_block", "params": {{ "height": 0 }}, "id": 0 },
-       { "jsonrpc": "2.0", "method": "get_block", "params": {{ "height": 0 }}, "id": 1 }
+       { "jsonrpc": "2.0", "method": "get_block", "params": { "height": 0 }, "id": 0 },
+       { "jsonrpc": "2.0", "method": "get_block", "params": { "height": 0 }, "id": 1 }
       ]"#;
       let response: serde_json::Value = result
         .rpc_call_internal("json_rpc", Some(BATCH_REQUEST.to_string()), BASE_RESPONSE_SIZE)
@@ -248,7 +248,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     let req = if let Some(params) = params {
       format!(r#"{{ "jsonrpc": "2.0", "method": "{method}", "params": {params}, "id": 0 }}"#)
     } else {
-      format!(r#"{{ "jsonrpc": "2.0", "method": "{method}", "id": 0 }}"#)
+      format!(r#"{{ "jsonrpc": "2.0", "method": "{method}", "params": [], "id": 0 }}"#)
     };
 
     Ok(
