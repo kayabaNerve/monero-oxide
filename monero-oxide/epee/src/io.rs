@@ -127,7 +127,12 @@ impl<'encoding, B: BytesLike<'encoding>> String<'encoding, B> {
     self.bytes.len(self.len)
   }
 }
-
+impl<'encoding, B: BytesLike<'encoding>> AsRef<B> for String<'encoding, B> {
+  #[inline(always)]
+  fn as_ref(&self) -> &B {
+    &self.bytes
+  }
+}
 impl<'encoding, B: BytesLike<'encoding>> AsMut<B> for String<'encoding, B> {
   #[inline(always)]
   fn as_mut(&mut self) -> &mut B {
