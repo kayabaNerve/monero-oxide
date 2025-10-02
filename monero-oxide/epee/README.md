@@ -16,9 +16,9 @@ Our library has the following exceptions:
   removing it entirely.
 - We may accept a _wider_ class of inputs than the `epee` library itself. Our
   definition of compatibility is explicitly if we can decode anything encoded
-  by the `epee` library and all encodings we produce may be decoded by the
-  `epee` library. We do not expect completeness, so some successfully decoded
-  objects may not be able to be encoded, and vice versa.
+  by the `epee` library _it itself will decode_ and all encodings we produce
+  may be decoded by the `epee` library. We do not expect completeness, so some
+  successfully decoded objects may not be able to be encoded, and vice versa.
 
 At this time, we do not support:
 - Encoding objects
