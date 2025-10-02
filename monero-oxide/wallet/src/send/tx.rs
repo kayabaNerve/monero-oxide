@@ -238,15 +238,17 @@ impl SignableTransaction {
     };
 
     // We now have the base weight, without the fee encoded
-    // The fee itself will impact the weight as its encoding is [1, 9] bytes long
-    let mut possible_weights = Vec::with_capacity(9);
-    for i in 1 ..= 9 {
+    // The fee itself will impact the weight as its encoding takes up a variable amount of bytes
+    let mut possible_weights = Vec::with_capacity(<u64 as VarInt>::UPPER_BOUND);
+    // Assert LOWER_BOUND == 1, which this code assumes
+    const _LOWER_BOUND_IS_LTE_ONE: [(); 1 - <u64 as VarInt>::LOWER_BOUND] = [(); _];
+    const _LOWER_BOUND_IS_GTE_ONE: [(); <u64 as VarInt>::LOWER_BOUND - 1] = [(); _];
+    for i in <u64 as VarInt>::LOWER_BOUND ..= <u64 as VarInt>::UPPER_BOUND {
       possible_weights.push(base_weight + i);
     }
-    debug_assert_eq!(possible_weights.len(), 9);
 
     // We now calculate the fee which would be used for each weight
-    let mut possible_fees = Vec::with_capacity(9);
+    let mut possible_fees = Vec::with_capacity(<u64 as VarInt>::UPPER_BOUND);
     for weight in possible_weights {
       possible_fees.push(self.fee_rate.calculate_fee_from_weight(weight));
     }
@@ -254,9 +256,8 @@ impl SignableTransaction {
     // We now look for the fee whose length matches the length used to derive it
     let mut weight_and_fee = None;
     for (fee_len, possible_fee) in possible_fees.into_iter().enumerate() {
+      // Increment by one as the enumeration is zero-indexed
       let fee_len = 1 + fee_len;
-      debug_assert!(1 <= fee_len);
-      debug_assert!(fee_len <= 9);
 
       // We use the first fee whose encoded length is not larger than the length used within this
       // weight

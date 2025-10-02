@@ -183,9 +183,9 @@ impl Block {
   /// Get the hash of this block.
   pub fn hash(&self) -> [u8; 32] {
     let mut hashable = self.serialize_pow_hash();
-    // Monero pre-appends a VarInt of the block-to-hash'ss length before getting the block hash,
+    // Monero pre-appends a VarInt of the block-to-hash's length before getting the block hash,
     // but doesn't do this when getting the proof of work hash :)
-    let mut hashing_blob = Vec::with_capacity(9 + hashable.len());
+    let mut hashing_blob = Vec::with_capacity(<usize as VarInt>::UPPER_BOUND + hashable.len());
     VarInt::write(
       &u64::try_from(hashable.len()).expect("length of block hash's preimage exceeded u64::MAX"),
       &mut hashing_blob,

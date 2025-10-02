@@ -133,7 +133,7 @@ impl Output {
 
   /// Write the Output to a `Vec<u8>`.
   pub fn serialize(&self) -> Vec<u8> {
-    let mut res = Vec::with_capacity(8 + 1 + 32);
+    let mut res = Vec::with_capacity(<u64 as VarInt>::UPPER_BOUND + 1 + 32 + 1);
     self.write(&mut res).expect("write failed but <Vec as io::Write> doesn't fail");
     res
   }
