@@ -29,7 +29,11 @@ pub enum Type {
   Bool = 11,
   /// An object.
   Object = 12,
-  // Array = 13, // Unused and unsupported
+  /*
+    Unused and unsupported. See
+    https://github.com/monero-project/monero/pull/10138 for more info.
+  */
+  // Array = 13,
 }
 
 /// A bitflag for if the field is actually an array.

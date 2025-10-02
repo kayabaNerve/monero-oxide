@@ -1,14 +1,19 @@
 # Monero EPEE
 
-`epee` is a bespoke serialization format seen within the Monero project without
-any official documentation. The best specification is available [here](
-  https://github.com/jeffro256/serde_epee/tree/cbebe75475fb2c6073f7b2e058c88ceb2531de17/PORTABLE_STORAGE.md
-).
+`epee` is a bespoke library with various utilities, primarily seen today due to
+its continued usage within the Monero project. Originating without
+documentation, it contained a self-describing typed binary format referred to
+as 'portable storage'. We refer to it as `epee`, after the library introducing
+it, within this library and throughout our ecosystem. Thankfully, the
+[Monero project now hosts a description](
+  https://github.com/monero-project/monero/blob/8e9ab9677f90492bca3c7555a246f2a8677bd570/docs/PORTABLE_STORAGE.md
+) which is sufficient to understand and implement it.
 
-This library implements the `epee` 'portable storage' encoding (itself referred
-to as EPEE throughout this library), with the following exceptions:
+Our library has the following exceptions:
 - We don't support the `Array` type (type 13) as it's unused in practice and
-  lacking documentation
+  lacking documentation. See
+  https://github.com/monero-project/monero/pull/10138 for a PR to Monero
+  removing it entirely.
 - We may accept a _wider_ class of inputs than the `epee` library itself. Our
   definition of compatibility is explicitly if we can decode anything encoded
   by the `epee` library and all encodings we produce may be decoded by the
@@ -23,7 +28,7 @@ Instead, we support indexing `epee`-encoded values and decoding individual
 fields in a manner comparable to `serde_json::Value` (albeit without
 allocating, recursing, or using a proc macro). This is sufficient for basic
 needs, much simpler, and should be trivial to verify won't panic/face various
-exhaustion attacks compared to more complex implementations.
+resource exhaustion attacks compared to more complex implementations.
 
 Because of this, we are also able to support no-`std` and no-`alloc`, without
 any dependencies other than `core`, while only consuming approximately one
