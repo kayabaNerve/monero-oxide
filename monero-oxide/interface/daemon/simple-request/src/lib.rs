@@ -81,11 +81,8 @@ impl SimpleRequestTransport {
       // Parse out the username and password
       let url_clone = Zeroizing::new(url);
       let split_url = url_clone.split('@').collect::<Vec<_>>();
-      if split_url.len() != 2 {
-        Err(InterfaceError::InterfaceError("invalid amount of login specifications".to_string()))?;
-      }
       let mut userpass = split_url[0];
-      url = split_url[1].to_string();
+      url = split_url[1 ..].join("@");
 
       // If there was additionally a protocol string, restore that to the daemon URL
       if userpass.contains("://") {
@@ -100,9 +97,6 @@ impl SimpleRequestTransport {
       }
 
       let split_userpass = userpass.split(':').collect::<Vec<_>>();
-      if split_userpass.len() > 2 {
-        Err(InterfaceError::InterfaceError("invalid amount of passwords".to_string()))?;
-      }
 
       let client = Client::without_connection_pool(&url)
         .map_err(|_| InterfaceError::InterfaceError("invalid URL".to_string()))?;
@@ -120,7 +114,7 @@ impl SimpleRequestTransport {
       )?;
       Authentication::Authenticated {
         username: Zeroizing::new(split_userpass[0].to_string()),
-        password: Zeroizing::new((*split_userpass.get(1).unwrap_or(&"")).to_string()),
+        password: Zeroizing::new(split_userpass[1 ..].join(":")),
         connection: Arc::new(Mutex::new((challenge, client))),
       }
     } else {
