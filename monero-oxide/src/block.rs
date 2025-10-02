@@ -175,6 +175,7 @@ impl Block {
       &merkle_root(transactions)
         .expect("the tree will not be empty, the miner tx is always present"),
     );
+
     write_varint(&(1 + self.transactions.len()), &mut blob)
       .expect("write failed but <Vec as io::Write> doesn't fail");
     blob
