@@ -63,16 +63,21 @@ impl SimpleRequestTransport {
 
   /// Create a new HTTP(S) RPC connection.
   ///
+  /// The URL is parsed with a bespoke parser. It does not attempt to follow any specific
+  /// specification, and should be used carefully accordingly. It does attempt to reasonably work
+  /// with all URLs a caller would provide, and does so without a minimal amount of code (avoiding
+  /// external dependencies). If your usage exhibits unexpected behavior, please open an issue to
+  /// to let us know.
+  ///
   /// A daemon requiring authentication can be used via including the username and password in the
-  /// URL.
+  /// URL (`scheme://username:password@domain.tld`).
   pub async fn new(url: String) -> Result<MoneroDaemon<SimpleRequestTransport>, InterfaceError> {
     Self::with_custom_timeout(url, DEFAULT_TIMEOUT).await
   }
 
   /// Create a new HTTP(S) RPC connection with a custom timeout.
   ///
-  /// A daemon requiring authentication can be used via including the username and password in the
-  /// URL.
+  /// Please refer to [`SimpleRequestTransport::new`] for more information.
   pub async fn with_custom_timeout(
     mut url: String,
     request_timeout: Duration,
