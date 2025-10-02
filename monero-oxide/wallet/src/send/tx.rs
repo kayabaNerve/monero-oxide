@@ -6,7 +6,7 @@ use curve25519_dalek::{
 };
 
 use crate::{
-  io::{varint_len, write_varint, CompressedPoint},
+  io::{VarInt, CompressedPoint},
   primitives::Commitment,
   ringct::{
     clsag::Clsag, bulletproofs::Bulletproof, EncryptedAmount, RctType, RctBase, RctPrunable,
@@ -184,7 +184,7 @@ impl SignableTransaction {
             push_scalar(&mut bp);
           }
           for _ in 0 .. 2 {
-            write_varint(&lr_len, &mut bp)
+            VarInt::write(&lr_len, &mut bp)
               .expect("write failed but <Vec as io::Write> doesn't fail");
             for _ in 0 .. lr_len {
               push_point(&mut bp);
@@ -209,7 +209,7 @@ impl SignableTransaction {
             push_scalar(&mut bp);
           }
           for _ in 0 .. 2 {
-            write_varint(&lr_len, &mut bp)
+            VarInt::write(&lr_len, &mut bp)
               .expect("write failed but <Vec as io::Write> doesn't fail");
             for _ in 0 .. lr_len {
               push_point(&mut bp);
@@ -262,7 +262,7 @@ impl SignableTransaction {
       // weight
       // This should be because the lengths are equal, yet means if somehow none are equal, this
       // will still terminate successfully
-      if varint_len(possible_fee) <= fee_len {
+      if possible_fee.varint_len() <= fee_len {
         weight_and_fee = Some((base_weight + fee_len, possible_fee));
         break;
       }
