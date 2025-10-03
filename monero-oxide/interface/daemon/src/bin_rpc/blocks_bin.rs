@@ -8,7 +8,7 @@ use monero_oxide::{
 
 use monero_interface::*;
 
-use crate::{MAX_RPC_RESPONSE_SIZE, HttpTransport, MoneroDaemon};
+use crate::{MAX_RESPONSE_SIZE, HttpTransport, MoneroDaemon};
 
 use super::epee;
 
@@ -92,7 +92,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
 
       debug_assert_eq!(expected_request_len, request.len());
 
-      let epee = self.bin_call("get_blocks.bin", request.clone(), MAX_RPC_RESPONSE_SIZE).await?;
+      let epee = self.bin_call("get_blocks.bin", request.clone(), MAX_RESPONSE_SIZE).await?;
 
       let blocks_received = {
         let mut blocks_received = 0;

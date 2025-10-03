@@ -37,8 +37,8 @@ enum Authentication {
 /// An HTTP(S) transport to connect to a Monero daemon.
 #[derive(Clone, Debug)]
 pub struct SimpleRequestTransport {
+  read_response_before_next_request: Arc<Mutex<()>>,
   authentication: Authentication,
-  url: String,
   request_timeout: Duration,
 }
 
@@ -106,6 +106,7 @@ impl SimpleRequestTransport {
       let client = Client::without_connection_pool(&url)
         .map_err(|_| InterfaceError::InterfaceError("invalid URL".to_string()))?;
       // Obtain the initial challenge, which also somewhat validates this connection
+      // TODO: We don't enforce any response size limit here yet should
       let challenge = Self::digest_auth_challenge(
         &tokio::time::timeout(
           request_timeout,
@@ -123,12 +124,17 @@ impl SimpleRequestTransport {
         connection: Arc::new(Mutex::new((challenge, client))),
       }
     } else {
-      Authentication::Unauthenticated(Client::with_connection_pool().map_err(|e| {
+      Authentication::Unauthenticated(Client::without_connection_pool(&url).map_err(|e| {
         InterfaceError::InternalError(format!("couldn't create client with connection pool: {e:?}"))
       })?)
     };
 
-    MoneroDaemon::new(SimpleRequestTransport { authentication, url, request_timeout }).await
+    MoneroDaemon::new(SimpleRequestTransport {
+      read_response_before_next_request: Arc::new(Mutex::new(())),
+      authentication,
+      request_timeout,
+    })
+    .await
   }
 }
 
@@ -139,10 +145,23 @@ impl SimpleRequestTransport {
     body: Vec<u8>,
     response_size_limit: Option<usize>,
   ) -> Result<Vec<u8>, InterfaceError> {
+    /*
+      The documentation for `monero-daemon-rpc` requires we receive the response _before_ we allow
+      further requests to be made. Accordingly, we obtain a lock on a `Mutex` here to stop
+      simultaneous requests from co-occurring.
+    */
+    let _read_response_before_next_request = self.read_response_before_next_request.lock().await;
+
     let request_fn = |uri| {
       Request::post(uri)
         .body(body.clone().into())
         .map_err(|e| InterfaceError::InterfaceError(format!("couldn't make request: {e:?}")))
+    };
+
+    let apply_response_size_limit = |request: Request<_>| -> simple_request::Request {
+      let mut request = simple_request::Request::from(request);
+      request.set_response_size_limit(response_size_limit);
+      request
     };
 
     async fn body_from_response(response: Response<'_>) -> Result<Vec<u8>, InterfaceError> {
@@ -161,7 +180,7 @@ impl SimpleRequestTransport {
         Authentication::Unauthenticated(client) => {
           body_from_response(
             client
-              .request(request_fn(self.url.clone() + "/" + route)?)
+              .request(apply_response_size_limit(request_fn("/".to_string() + route)?))
               .await
               .map_err(|e| InterfaceError::InterfaceError(format!("{e:?}")))?,
           )
@@ -177,7 +196,7 @@ impl SimpleRequestTransport {
             connection_lock.0 = Self::digest_auth_challenge(
               &connection_lock
                 .1
-                .request(request)
+                .request(apply_response_size_limit(request))
                 .await
                 .map_err(|e| InterfaceError::InterfaceError(format!("{e:?}")))?,
             )?;
@@ -219,12 +238,9 @@ impl SimpleRequestTransport {
             );
           }
 
-          let mut request = simple_request::Request::from(request);
-          request.set_response_size_limit(response_size_limit);
-
           let response = connection_lock
             .1
-            .request(request)
+            .request(apply_response_size_limit(request))
             .await
             .map_err(|e| InterfaceError::InterfaceError(format!("{e:?}")));
 

@@ -14,7 +14,10 @@ use monero_oxide::{
 
 use monero_interface::*;
 
-use crate::{BASE_RESPONSE_SIZE, TRANSACTION_SIZE_BOUND, HttpTransport, MoneroDaemon};
+use crate::{
+  MAX_RESPONSE_SIZE, MIN_RESPONSE_SIZE_IN_BYTES_ESTIMATE, HTTP_OVERHEAD_ESTIMATE,
+  REQUEST_SIZE_TARGET, TRANSACTION_SIZE_BOUND, HttpTransport, MoneroDaemon,
+};
 
 mod epee;
 
@@ -34,6 +37,10 @@ mod blocks_bin;
 impl<T: HttpTransport> MoneroDaemon<T> {
   /// Perform a binary call to the specified route with the provided parameters.
   ///
+  /// The `response_size_limit` is expected to be in terms of the amount of bytes of data
+  /// communicated with the response. A flat amount for the overhead of HTTP will be automatically
+  /// applied.
+  ///
   /// This method is NOT guaranteed by SemVer and may be removed in a future release. No guarantees
   /// on the safety nor correctness of bespoke calls made with this function are guaranteed.
   #[doc(hidden)]
@@ -43,6 +50,12 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     params: Vec<u8>,
     response_size_limit: usize,
   ) -> Result<Vec<u8>, InterfaceError> {
+    let response_size_limit = {
+      let response_size_limit = response_size_limit.max(MIN_RESPONSE_SIZE_IN_BYTES_ESTIMATE);
+      let full_response_size_limit = HTTP_OVERHEAD_ESTIMATE.saturating_add(response_size_limit);
+      full_response_size_limit.min(MAX_RESPONSE_SIZE)
+    };
+
     let mut res = self
       .transport
       .post(route, params, self.response_size_limits.then_some(response_size_limit))
@@ -80,13 +93,8 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
       .concat();
 
       const OUTPUTS_AMOUNT_BOUND: usize = TRANSACTION_SIZE_BOUND.div_ceil(Output::SIZE_LOWER_BOUND);
-      let epee = self
-        .bin_call(
-          "get_o_indexes.bin",
-          request,
-          BASE_RESPONSE_SIZE.saturating_add(OUTPUTS_AMOUNT_BOUND * 8),
-        )
-        .await?;
+      let epee =
+        self.bin_call("get_o_indexes.bin", request, OUTPUTS_AMOUNT_BOUND.saturating_mul(8)).await?;
 
       epee::extract_output_indexes(&epee)
     }
@@ -99,7 +107,9 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
     async move {
       // https://github.com/monero-project/monero/blob/cc73fe71162d564ffda8e549b79a350bca53c454
       //   /src/rpc/core_rpc_server.cpp#L67
-      const MAX_OUTS: usize = 5000;
+      const EXPLICIT_MAX_OUTS: usize = 5000;
+      const IMPLICIT_MAX_OUTS: usize = REQUEST_SIZE_TARGET / 32;
+      const MAX_OUTS: usize = crate::const_min(EXPLICIT_MAX_OUTS, IMPLICIT_MAX_OUTS);
 
       let expected_request_header_len = 19;
       let expected_request_len =
@@ -151,11 +161,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
         const BOUND_PER_OUT: usize = 2 * (8 + 8 + 32 + 32 + 32 + 1);
 
         let outs = self
-          .bin_call(
-            "get_outs.bin",
-            request.clone(),
-            BASE_RESPONSE_SIZE.saturating_add(indexes.len().saturating_mul(BOUND_PER_OUT)),
-          )
+          .bin_call("get_outs.bin", request.clone(), indexes.len().saturating_mul(BOUND_PER_OUT))
           .await?;
 
         epee::accumulate_outs(&outs, indexes.len(), &mut res)?;
@@ -239,8 +245,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
         .bin_call(
           "get_output_distribution.bin",
           request,
-          BASE_RESPONSE_SIZE
-            .saturating_add(to.saturating_sub(from).saturating_add(2).saturating_mul(8)),
+          to.saturating_sub(from).saturating_add(2).saturating_mul(8),
         )
         .await?;
 

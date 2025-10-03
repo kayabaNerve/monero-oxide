@@ -23,13 +23,45 @@ use monero_interface::*;
 mod blocks;
 mod bin_rpc;
 
-// https://github.com/monero-project/monero/blob/b591866fcfed400bc89631686655aa769ec5f2dd
-//   /contrib/epee/include/net/abstract_tcp_server2.h#L68
-const MAX_RPC_RESPONSE_SIZE: usize = 100 * 1024 * 1024;
+// https://github.com/monero-project/monero/blob/8e9ab9677f90492bca3c7555a246f2a8677bd570
+//   /src/cryptonote_config.h#L134
+// https://github.com/monero-project/monero/blob/8e9ab9677f90492bca3c7555a246f2a8677bd570
+//   /src/rpc/core_rpc_server.cpp#L427
+// https://github.com/monero-project/monero/blob/8e9ab9677f90492bca3c7555a246f2a8677bd57
+//   /contrib/epee/include/net/http_protocol_handler.inl#L283
+const MAX_REQUEST_SIZE: usize = 1024 * 1024;
+
+/*
+  Monero has two distinct limits on responses. The first is the maximum size for the queue of
+  messages to send, which is 100 MiB.
+
+  https://github.com/monero-project/monero/blob/b591866fcfed400bc89631686655aa769ec5f2dd
+    /contrib/epee/include/net/abstract_tcp_server2.h#L68
+
+  The second is the maximum size for the amount of in-flight bytes when a new response is queued,
+  which is 25 MiB.
+
+  https://github.com/monero-project/monero/blob/8e9ab9677f90492bca3c7555a246f2a8677bd570/
+    src/cryptonote_config.h#L133
+  https://github.com/monero-project/monero/blob/8e9ab9677f90492bca3c7555a246f2a8677bd570
+    /src/rpc/core_rpc_server.cpp#L3922-L3925
+
+  We only apply the former bound per the following comment:
+
+  https://github.com/monero-project/monero/blob/8e9ab9677f90492bca3c7555a246f2a8677bd570
+    /contrib/epee/include/net/abstract_tcp_server2.inl#L793-L797
+
+  and our documented bound that the transport completely read a response _before_ reusing it for
+  the next request.
+*/
+const MAX_RESPONSE_SIZE: usize = 100 * 1024 * 1024;
 
 // These are our own constants used for determining our own bounds on response sizes
-const BASE_RESPONSE_SIZE: usize = u16::MAX as usize;
-const BYTE_FACTOR_IN_JSON_RESPONSE_SIZE: usize = 8;
+const HTTP_OVERHEAD_ESTIMATE: usize = u16::MAX as usize;
+const REQUEST_SIZE_TARGET: usize = MAX_REQUEST_SIZE - HTTP_OVERHEAD_ESTIMATE - 2048;
+const JSON_BYTE_OVERHEAD_FACTOR_ESTIMATE: usize = 8;
+// Every response should have _some_ amount of bytes, for which this is an estimate
+const MIN_RESPONSE_SIZE_IN_BYTES_ESTIMATE: usize = 1024;
 
 const fn const_min(a: usize, b: usize) -> usize {
   if a < b {
@@ -92,6 +124,10 @@ struct JsonRpcResponse<T> {
 pub trait HttpTransport: Sync + Clone {
   /// Perform a POST request to the specified route with the specified body.
   ///
+  /// The response must be read in full BEFORE the underlying connection is reused for another
+  /// request. This is due to `monerod` terminating connections which have additional responses
+  /// sent while more than 25 MB from prior responses has yet to be read.
+  ///
   /// The implementor is left to handle anything such as authentication.
   fn post(
     &self,
@@ -128,12 +164,11 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     // https://github.com/monero-project/monero/issues/10118
     {
       const BATCH_REQUEST: &str = r#"[
-       { "jsonrpc": "2.0", "method": "get_block", "params": { "height": 0 }, "id": 0 },
-       { "jsonrpc": "2.0", "method": "get_block", "params": { "height": 0 }, "id": 1 }
+       { "jsonrpc": "2.0", "method": "on_get_block_hash", "params": [0], "id": 0 },
+       { "jsonrpc": "2.0", "method": "on_get_block_hash", "params": [1], "id": 1 }
       ]"#;
-      let response: serde_json::Value = result
-        .rpc_call_internal("json_rpc", Some(BATCH_REQUEST.to_string()), BASE_RESPONSE_SIZE)
-        .await?;
+      let response: serde_json::Value =
+        result.rpc_call_internal("json_rpc", Some(BATCH_REQUEST.to_string()), 0).await?;
       if let Some(error) = response.get("error") {
         /*
           If the server failed to parse our valid JSON, we assume it's because it's expecting an
@@ -185,12 +220,20 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     params: Option<String>,
     response_size_limit: usize,
   ) -> Result<String, InterfaceError> {
+    let response_size_limit = {
+      let response_size_limit = response_size_limit.max(MIN_RESPONSE_SIZE_IN_BYTES_ESTIMATE);
+      let json_response_size_limt =
+        JSON_BYTE_OVERHEAD_FACTOR_ESTIMATE.saturating_mul(response_size_limit);
+      let full_response_size_limit = HTTP_OVERHEAD_ESTIMATE.saturating_add(json_response_size_limt);
+      full_response_size_limit.min(MAX_RESPONSE_SIZE)
+    };
+
     let mut res = self
       .transport
       .post(
         route,
         if let Some(params) = params { params.into_bytes() } else { vec![] },
-        self.response_size_limits.then_some(response_size_limit.max(MAX_RPC_RESPONSE_SIZE)),
+        self.response_size_limits.then_some(response_size_limit),
       )
       .await?;
 
@@ -221,6 +264,10 @@ impl<T: HttpTransport> MoneroDaemon<T> {
   ///
   /// This is NOT a JSON-RPC call. They use a route of "json_rpc" and are available via
   /// `json_rpc_call`.
+  ///
+  /// The `response_size_limit` is expected to be in terms of the amount of bytes of data
+  /// communicated with the response. A scaling factor for the overhead of JSON, and a flat amount
+  /// for the overhead of HTTP, will be automatically applied.
   ///
   /// This method is NOT guaranteed by SemVer and may be removed in a future release. No guarantees
   /// on the safety nor correctness of bespoke calls made with this function are guaranteed.
@@ -261,6 +308,10 @@ impl<T: HttpTransport> MoneroDaemon<T> {
 
   /// Perform a JSON-RPC call with the specified method with the provided parameters.
   ///
+  /// The `response_size_limit` is expected to be in terms of the amount of bytes of data
+  /// communicated with the response. A scaling factor for the overhead of JSON, and a flat amount
+  /// for the overhead of HTTP, will be automatically applied.
+  ///
   /// This method is NOT guaranteed by SemVer and may be removed in a future release. No guarantees
   /// on the safety nor correctness of bespoke calls made with this function are guaranteed.
   #[doc(hidden)]
@@ -296,9 +347,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
       .json_rpc_call_internal::<BlocksResponse>(
         "generateblocks",
         Some(format!(r#"{{ "wallet_address": "{address}", "amount_of_blocks": {block_count} }}"#)),
-        BASE_RESPONSE_SIZE.saturating_add(
-          BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(block_count.saturating_mul(32)),
-        ),
+        block_count.saturating_mul(32),
       )
       .await?;
 
@@ -317,10 +366,7 @@ impl<T: HttpTransport> ProvidesBlockchainMeta for MoneroDaemon<T> {
       struct HeightResponse {
         height: usize,
       }
-      let res = self
-        .rpc_call_internal::<HeightResponse>("get_height", None, BASE_RESPONSE_SIZE)
-        .await?
-        .height;
+      let res = self.rpc_call_internal::<HeightResponse>("get_height", None, 0).await?.height;
       res.checked_sub(1).ok_or_else(|| {
         InterfaceError::InvalidInterface(
           "node claimed the blockchain didn't even have the genesis block".to_string(),
@@ -339,10 +385,15 @@ mod provides_transaction {
     https://github.com/monero-project/monero/blob/cc73fe71162d564ffda8e549b79a350bca53c454
       /src/rpc/core_rpc_server.cpp#L75
   */
-  const TRANSACTIONS_PER_REQUEST_LIMIT: usize = 100;
+  const EXPLICIT_TRANSACTIONS_PER_REQUEST_LIMIT: usize = 100;
+  const IMPLICIT_TRANSACTIONS_PER_REQUEST_LIMIT: usize =
+    REQUEST_SIZE_TARGET / (JSON_BYTE_OVERHEAD_FACTOR_ESTIMATE.saturating_mul(32));
+  const TRANSACTIONS_PER_REQUEST_LIMIT: usize =
+    const_min(EXPLICIT_TRANSACTIONS_PER_REQUEST_LIMIT, IMPLICIT_TRANSACTIONS_PER_REQUEST_LIMIT);
+
   // And of course, the response limit also applies here
   const TRANSACTIONS_PER_RESPONSE_LIMIT: usize =
-    (MAX_RPC_RESPONSE_SIZE - BASE_RESPONSE_SIZE).div_ceil(TRANSACTION_SIZE_BOUND);
+    (MAX_RESPONSE_SIZE - HTTP_OVERHEAD_ESTIMATE).div_ceil(TRANSACTION_SIZE_BOUND);
 
   const TRANSACTIONS_LIMIT: usize =
     const_min(TRANSACTIONS_PER_REQUEST_LIMIT, TRANSACTIONS_PER_RESPONSE_LIMIT);
@@ -378,7 +429,7 @@ mod provides_transaction {
             .rpc_call_internal(
               "get_transactions",
               Some(format!(r#"{{ "txs_hashes": [{txs}] }}"#)),
-              BASE_RESPONSE_SIZE.saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(this_count.saturating_mul(TRANSACTION_SIZE_BOUND))),
+              this_count.saturating_mul(TRANSACTION_SIZE_BOUND),
             )
             .await?;
 
@@ -444,7 +495,7 @@ mod provides_transaction {
             .rpc_call_internal(
               "get_transactions",
               Some(format!(r#"{{ "txs_hashes": [{txs}], "prune": true }}"#)),
-              BASE_RESPONSE_SIZE.saturating_add(BYTE_FACTOR_IN_JSON_RESPONSE_SIZE.saturating_mul(this_count.saturating_mul(TRANSACTION_SIZE_BOUND))),
+              this_count.saturating_mul(TRANSACTION_SIZE_BOUND),
             )
             .await?;
 
@@ -521,7 +572,7 @@ impl<T: HttpTransport> PublishTransaction for MoneroDaemon<T> {
             r#"{{ "tx_as_hex": "{}", "do_sanity_checks": false }}"#,
             hex::encode(tx.serialize())
           )),
-          BASE_RESPONSE_SIZE,
+          0,
         )
         .await?;
 
@@ -560,7 +611,7 @@ mod provides_fee_rates {
           .json_rpc_call_internal(
             "get_fee_estimate",
             Some(format!(r#"{{ "grace_blocks": {GRACE_BLOCKS_FOR_FEE_ESTIMATE} }}"#)),
-            BASE_RESPONSE_SIZE,
+            0,
           )
           .await?;
 

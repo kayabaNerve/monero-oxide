@@ -13,8 +13,9 @@ use monero_oxide::block::{BlockHeader, Block};
 use monero_interface::*;
 
 use crate::{
-  MAX_RPC_RESPONSE_SIZE, BASE_RESPONSE_SIZE, BYTE_FACTOR_IN_JSON_RESPONSE_SIZE, HttpTransport,
-  MoneroDaemon, JsonRpcResponse, rpc_hex, hash_hex,
+  MAX_RESPONSE_SIZE, HTTP_OVERHEAD_ESTIMATE, REQUEST_SIZE_TARGET,
+  JSON_BYTE_OVERHEAD_FACTOR_ESTIMATE, HttpTransport, MoneroDaemon, JsonRpcResponse, rpc_hex,
+  hash_hex,
 };
 
 #[derive(Deserialize)]
@@ -58,9 +59,10 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
     const GENEROUS_TRANSACTIONS_PER_BLOCK_ESTIMATE: usize = 1000;
     const BLOCK_SIZE_ESTIMATE: usize =
       BlockHeader::SIZE_UPPER_BOUND + 10 + (GENEROUS_TRANSACTIONS_PER_BLOCK_ESTIMATE * 32);
-    const BLOCK_JSON_SIZE_ESTIMATE: usize = BYTE_FACTOR_IN_JSON_RESPONSE_SIZE * BLOCK_SIZE_ESTIMATE;
+    const BLOCK_JSON_SIZE_ESTIMATE: usize =
+      JSON_BYTE_OVERHEAD_FACTOR_ESTIMATE * BLOCK_SIZE_ESTIMATE;
     const BLOCKS_PER_RESPONSE_ESTIMATE: usize =
-      (MAX_RPC_RESPONSE_SIZE - BASE_RESPONSE_SIZE) / BLOCK_JSON_SIZE_ESTIMATE;
+      (MAX_RESPONSE_SIZE - HTTP_OVERHEAD_ESTIMATE) / BLOCK_JSON_SIZE_ESTIMATE;
 
     async move {
       let mut res =
@@ -78,27 +80,46 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
 
         // Prepare a new request
         let start = *range.start();
-        let end =
-          start.checked_add(blocks_per_request - 1).unwrap_or(*range.end()).min(*range.end());
-        let request_len = end - start + 1;
+        let mut end = start.saturating_add(blocks_per_request - 1).min(*range.end());
+        let mut requested_blocks = end - start + 1;
 
         let single_block = start == end;
         let request = if single_block {
           block_request(start)
         } else {
-          let mut request = String::with_capacity(request_len * 30);
+          let mut request = String::with_capacity(requested_blocks.saturating_mul(30));
           request.push('[');
-          for number in start ..= end {
-            request.push_str(&block_request(number));
-            request.push(',');
+
+          {
+            let mut number = start;
+            while start <= end {
+              let next_request = block_request(number);
+              // If this would exceed the request's size target, stop this batch early
+              if request.len().saturating_add(next_request.len()) >= REQUEST_SIZE_TARGET {
+                // This is safe on the assumption a single request didn't exceed the target
+                end = number - 1;
+                requested_blocks = end - start + 1;
+                break;
+              }
+
+              request.push_str(&next_request);
+              request.push(',');
+
+              let Some(next) = number.checked_add(1) else {
+                // This may occur when `start == end == usize::MAX`
+                break;
+              };
+              number = next;
+            }
           }
+
           request.pop(); // Pop the trailing comma
           request.push(']');
           request
         };
 
         let json_blocks =
-          match self.rpc_call_core("json_rpc", Some(request), MAX_RPC_RESPONSE_SIZE).await {
+          match self.rpc_call_core("json_rpc", Some(request), MAX_RESPONSE_SIZE).await {
             Ok(json_blocks) => json_blocks,
             Err(e) => {
               // If we only requested a single block, propagate the error
@@ -123,9 +144,9 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
           )
         })?;
 
-        if json_blocks.len() != request_len {
+        if json_blocks.len() != requested_blocks {
           Err(InterfaceError::InvalidInterface(format!(
-            "requested {request_len} blocks but received {}",
+            "requested {requested_blocks} blocks but received {}",
             json_blocks.len()
           )))?;
         }
@@ -144,7 +165,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
         }
 
         // Update the range
-        range = (match range.start().checked_add(request_len) {
+        range = (match range.start().checked_add(requested_blocks) {
           Some(new_start) => new_start,
           // We've completed the request as an unrepresentable number is greater than the
           // representable end
@@ -152,7 +173,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
         }) ..= *range.end();
 
         // Update the amount to request
-        const TARGET_RESPONSE_SIZE: usize = ((MAX_RPC_RESPONSE_SIZE - BASE_RESPONSE_SIZE) * 4) / 5;
+        const TARGET_RESPONSE_SIZE: usize = ((MAX_RESPONSE_SIZE - HTTP_OVERHEAD_ESTIMATE) * 4) / 5;
         // If this is less than the targetted response size, increase the next request's length
         // by up to 50%
         if response_byte_length < TARGET_RESPONSE_SIZE {
@@ -178,7 +199,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
         .json_rpc_call_internal(
           "get_block",
           Some(format!(r#"{{ "hash": "{}" }}"#, hex::encode(hash))),
-          MAX_RPC_RESPONSE_SIZE,
+          MAX_RESPONSE_SIZE,
         )
         .await?;
 
@@ -192,13 +213,8 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
     number: usize,
   ) -> impl Send + Future<Output = Result<[u8; 32], InterfaceError>> {
     async move {
-      let hash: String = self
-        .json_rpc_call_internal(
-          "on_get_block_hash",
-          Some(format!(r#"[{number}]"#)),
-          BASE_RESPONSE_SIZE,
-        )
-        .await?;
+      let hash: String =
+        self.json_rpc_call_internal("on_get_block_hash", Some(format!(r#"[{number}]"#)), 0).await?;
       let hash = hash_hex(&hash)?;
 
       // https://github.com/monero-project/monero/pull/10109
