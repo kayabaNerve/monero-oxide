@@ -30,7 +30,9 @@ pub enum Input {
 
 impl Input {
   /// The lower bound for the size of an input which isn't `Input::Gen(_)`.
-  const NON_GEN_SIZE_LOWER_BOUND: LowerBound<usize> = LowerBound(1 + 1 + 1 + 32);
+  // `<usize as VarInt>::LOWER_BOUND` is used for the lower-bound of a `Vec`'s encoding's length
+  const NON_GEN_SIZE_LOWER_BOUND: LowerBound<usize> =
+    LowerBound(1 + <u64 as VarInt>::LOWER_BOUND + <usize as VarInt>::LOWER_BOUND + 32);
 
   /// Write the Input.
   pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
@@ -97,7 +99,7 @@ pub struct Output {
 
 impl Output {
   /// The lower bound on the size of an output.
-  pub const SIZE_LOWER_BOUND: LowerBound<usize> = LowerBound(1 + 1 + 32);
+  pub const SIZE_LOWER_BOUND: LowerBound<usize> = LowerBound(<u64 as VarInt>::LOWER_BOUND + 1 + 32);
   /// The upper bound on the size of an output.
   pub const SIZE_UPPER_BOUND: UpperBound<usize> =
     UpperBound(<u64 as VarInt>::UPPER_BOUND + 1 + 32 + 1);
@@ -233,11 +235,11 @@ pub struct TransactionPrefix {
 }
 
 impl TransactionPrefix {
-  /// The amount of inputs allowed within a miner transaction.
+  /// The amount of inputs within a miner transaction.
   pub const MINER_INPUTS: usize = 1;
   /// The amount of inputs allowed within a non-miner transaction.
   // This is defined as the amount of whole (minimally-sized) inputs which would fit in the largest
-  // possible transactions.
+  // possible transaction.
   pub const NON_MINER_INPUTS_UPPER_BOUND: UpperBound<usize> = UpperBound(
     Transaction::<NotPruned>::NON_MINER_SIZE_UPPER_BOUND.0 / Input::NON_GEN_SIZE_LOWER_BOUND.0,
   );
@@ -286,6 +288,7 @@ impl TransactionPrefix {
       outputs: read_vec(|r| Output::read((!is_miner_tx) && (version == 2), r), max_outputs, r)?,
       extra: vec![],
     };
+    // Miner transactions have no limits on their size within the Monero protocol, unfortunately
     let max_extra =
       if is_miner_tx { None } else { Some(Transaction::<NotPruned>::NON_MINER_SIZE_UPPER_BOUND.0) };
     prefix.extra = read_vec(read_byte, max_extra, r)?;
