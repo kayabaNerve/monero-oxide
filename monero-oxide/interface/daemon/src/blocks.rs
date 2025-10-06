@@ -8,7 +8,10 @@ use alloc::{
 
 use serde::Deserialize;
 
-use monero_oxide::block::{BlockHeader, Block};
+use monero_oxide::{
+  io::VarInt,
+  block::{BlockHeader, Block},
+};
 
 use monero_interface::*;
 
@@ -57,8 +60,9 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
     mut range: RangeInclusive<usize>,
   ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>> {
     const GENEROUS_TRANSACTIONS_PER_BLOCK_ESTIMATE: usize = 1000;
-    const BLOCK_SIZE_ESTIMATE: usize =
-      BlockHeader::SIZE_UPPER_BOUND + 10 + (GENEROUS_TRANSACTIONS_PER_BLOCK_ESTIMATE * 32);
+    const BLOCK_SIZE_ESTIMATE: usize = BlockHeader::SIZE_UPPER_BOUND +
+      <usize as VarInt>::UPPER_BOUND +
+      (GENEROUS_TRANSACTIONS_PER_BLOCK_ESTIMATE * 32);
     const BLOCK_JSON_SIZE_ESTIMATE: usize =
       JSON_BYTE_OVERHEAD_FACTOR_ESTIMATE * BLOCK_SIZE_ESTIMATE;
     const BLOCKS_PER_RESPONSE_ESTIMATE: usize =

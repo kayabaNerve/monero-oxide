@@ -90,6 +90,7 @@ const fn const_max(a: usize, b: usize) -> usize {
   https://github.com/seraphis-migration/monero/pull/104
 */
 const MINER_TRANSACTION_OUTPUT_BOUND: usize = 10_000;
+// 2048 is used an approximation for the bounded size of the prefix for a miner transaction
 const MINER_TRANSACTION_SIZE_BOUND: usize =
   2048 + (MINER_TRANSACTION_OUTPUT_BOUND * Output::SIZE_UPPER_BOUND);
 const TRANSACTION_SIZE_BOUND: usize =

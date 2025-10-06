@@ -121,17 +121,13 @@ pub struct Output {
 impl Output {
   /// A lower bound on the size of an output as of the latest supported hard fork.
   ///
-  /// This is not the lower bound on the size of an output throughout the lifetime of the entire
-  /// Monero protocol. It is solely used as a hint when working with bytes. This is not guaranteed
-  /// to be a maximal bound.
-  pub const SIZE_LOWER_BOUND: usize = 1 + 32;
+  /// Please see https://github.com/monero-oxide/monero-oxide/pull/97 for more information.
+  pub const SIZE_LOWER_BOUND: usize = <u64 as VarInt>::LOWER_BOUND + 1 + 32;
 
   /// An upper bound on the size of an output as of the latest supported hard fork.
   ///
-  /// This is not the upper bound on the size of an output throughout the lifetime of the entire
-  /// Monero protocol. It is solely used as a hint when working with bytes. This is not guaranteed
-  /// to be a minimal bound.
-  pub const SIZE_UPPER_BOUND: usize = 9 + 1 + 32 + 1;
+  /// Please see https://github.com/monero-oxide/monero-oxide/pull/97 for more information.
+  pub const SIZE_UPPER_BOUND: usize = <u64 as VarInt>::UPPER_BOUND + 1 + 32 + 1;
 
   /// Write the Output.
   pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
