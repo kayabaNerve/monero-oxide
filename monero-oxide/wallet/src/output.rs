@@ -197,11 +197,9 @@ impl Metadata {
       w.write_all(&[0])?;
     }
 
-    write_varint(&self.arbitrary_data.len(), w)?;
+    VarInt::write(&self.arbitrary_data.len(), w)?;
     for part in &self.arbitrary_data {
-      // TODO: Define our own collection whose `len` function returns `u8` to ensure this bound
-      // with types
-      const _ASSERT_MAX_ARB_DATA_SIZE_FITS_WITHIN_U8: [();
+      const _ASSERT_MAX_ARBITRARY_DATA_SIZE_FITS_WITHIN_U8: [();
         (u8::MAX as usize) - MAX_ARBITRARY_DATA_SIZE] = [(); _];
       w.write_all(&[
         u8::try_from(part.len()).expect("piece of arbitrary data exceeded max length of u8::MAX")
@@ -238,7 +236,7 @@ impl Metadata {
       arbitrary_data: {
         let mut data = vec![];
         let mut total_len = 0usize;
-        for _ in 0 .. read_varint::<_, usize>(r)? {
+        for _ in 0 .. <usize as VarInt>::read(r)? {
           let len = read_byte(r)?;
           let chunk = read_raw_vec(read_byte, usize::from(len), r)?;
           total_len = total_len.saturating_add(chunk.len());
