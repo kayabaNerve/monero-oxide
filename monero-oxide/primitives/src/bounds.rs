@@ -3,7 +3,7 @@
   and copying these docstrings would be very annoying.
 */
 
-/// A constant-time variant of the `max` function.
+/// A `const`-context variant of the `max` function.
 ///
 /// This is hidden as it's not to be considered part of our API commitment and is not guaranteed to
 /// be available/usable. It's implemented as a macro to work with any type, as we can't express an
@@ -20,7 +20,7 @@ macro_rules! const_max {
   };
 }
 
-/// A constant-time variant of the `min` function.
+/// A `const`-context variant of the `min` function.
 ///
 /// This is hidden as it's not to be considered part of our API commitment and is not guaranteed to
 /// be available/usable. It's implemented as a macro to work with any type, as we can't express an
