@@ -15,7 +15,7 @@ use alloc::{
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::Value;
 
-use monero_oxide::transaction::{MAX_NON_MINER_TRANSACTION_SIZE, Input, Output, Pruned, Transaction};
+use monero_oxide::transaction::{Input, Output, NotPruned, Pruned, Transaction};
 use monero_address::Address;
 
 use monero_interface::*;
@@ -63,21 +63,6 @@ const JSON_BYTE_OVERHEAD_FACTOR_ESTIMATE: usize = 8;
 // Every response should have _some_ amount of bytes, for which this is an estimate
 const MIN_RESPONSE_SIZE_IN_BYTES_ESTIMATE: usize = 1024;
 
-const fn const_min(a: usize, b: usize) -> usize {
-  if a < b {
-    a
-  } else {
-    b
-  }
-}
-const fn const_max(a: usize, b: usize) -> usize {
-  if a > b {
-    a
-  } else {
-    b
-  }
-}
-
 /*
   Monero doesn't have a size limit on miner transactions and accordingly doesn't have a size limit
   on transactions, yet we would like _a_ bound (even if absurd) to limit a malicious remote node
@@ -92,9 +77,11 @@ const fn const_max(a: usize, b: usize) -> usize {
 const MINER_TRANSACTION_OUTPUT_BOUND: usize = 10_000;
 // 2048 is used an approximation for the bounded size of the prefix for a miner transaction
 const MINER_TRANSACTION_SIZE_BOUND: usize =
-  2048 + (MINER_TRANSACTION_OUTPUT_BOUND * Output::SIZE_UPPER_BOUND);
-const TRANSACTION_SIZE_BOUND: usize =
-  const_max(MINER_TRANSACTION_SIZE_BOUND, MAX_NON_MINER_TRANSACTION_SIZE);
+  2048 + (MINER_TRANSACTION_OUTPUT_BOUND * Output::SIZE_UPPER_BOUND.0);
+const TRANSACTION_SIZE_BOUND: usize = monero_oxide::primitives::const_max!(
+  MINER_TRANSACTION_SIZE_BOUND,
+  Transaction::<NotPruned>::NON_MINER_SIZE_UPPER_BOUND.0
+);
 
 fn rpc_hex(value: &str) -> Result<Vec<u8>, InterfaceError> {
   hex::decode(value)
@@ -389,15 +376,19 @@ mod provides_transaction {
   const EXPLICIT_TRANSACTIONS_PER_REQUEST_LIMIT: usize = 100;
   const IMPLICIT_TRANSACTIONS_PER_REQUEST_LIMIT: usize =
     REQUEST_SIZE_TARGET / (JSON_BYTE_OVERHEAD_FACTOR_ESTIMATE.saturating_mul(32));
-  const TRANSACTIONS_PER_REQUEST_LIMIT: usize =
-    const_min(EXPLICIT_TRANSACTIONS_PER_REQUEST_LIMIT, IMPLICIT_TRANSACTIONS_PER_REQUEST_LIMIT);
+  const TRANSACTIONS_PER_REQUEST_LIMIT: usize = monero_oxide::primitives::const_min!(
+    EXPLICIT_TRANSACTIONS_PER_REQUEST_LIMIT,
+    IMPLICIT_TRANSACTIONS_PER_REQUEST_LIMIT
+  );
 
   // And of course, the response limit also applies here
   const TRANSACTIONS_PER_RESPONSE_LIMIT: usize =
     (MAX_RESPONSE_SIZE - HTTP_OVERHEAD_ESTIMATE).div_ceil(TRANSACTION_SIZE_BOUND);
 
-  const TRANSACTIONS_LIMIT: usize =
-    const_min(TRANSACTIONS_PER_REQUEST_LIMIT, TRANSACTIONS_PER_RESPONSE_LIMIT);
+  const TRANSACTIONS_LIMIT: usize = monero_oxide::primitives::const_min!(
+    TRANSACTIONS_PER_REQUEST_LIMIT,
+    TRANSACTIONS_PER_RESPONSE_LIMIT
+  );
 
   #[derive(Deserialize)]
   struct TransactionResponse {

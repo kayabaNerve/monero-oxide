@@ -60,7 +60,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedBlockchain for MoneroDaemon<T> {
     mut range: RangeInclusive<usize>,
   ) -> impl Send + Future<Output = Result<Vec<Block>, InterfaceError>> {
     const GENEROUS_TRANSACTIONS_PER_BLOCK_ESTIMATE: usize = 1000;
-    const BLOCK_SIZE_ESTIMATE: usize = BlockHeader::SIZE_UPPER_BOUND +
+    const BLOCK_SIZE_ESTIMATE: usize = BlockHeader::SIZE_UPPER_BOUND.0 +
       <usize as VarInt>::UPPER_BOUND +
       (GENEROUS_TRANSACTIONS_PER_BLOCK_ESTIMATE * 32);
     const BLOCK_JSON_SIZE_ESTIMATE: usize =

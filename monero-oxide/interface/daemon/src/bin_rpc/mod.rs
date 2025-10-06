@@ -92,7 +92,8 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
       ]
       .concat();
 
-      const OUTPUTS_AMOUNT_BOUND: usize = TRANSACTION_SIZE_BOUND.div_ceil(Output::SIZE_LOWER_BOUND);
+      const OUTPUTS_AMOUNT_BOUND: usize =
+        TRANSACTION_SIZE_BOUND.div_ceil(Output::SIZE_LOWER_BOUND.0);
       let epee =
         self.bin_call("get_o_indexes.bin", request, OUTPUTS_AMOUNT_BOUND.saturating_mul(8)).await?;
 
@@ -109,7 +110,8 @@ impl<T: HttpTransport> ProvidesUnvalidatedOutputs for MoneroDaemon<T> {
       //   /src/rpc/core_rpc_server.cpp#L67
       const EXPLICIT_MAX_OUTS: usize = 5000;
       const IMPLICIT_MAX_OUTS: usize = REQUEST_SIZE_TARGET / 32;
-      const MAX_OUTS: usize = crate::const_min(EXPLICIT_MAX_OUTS, IMPLICIT_MAX_OUTS);
+      const MAX_OUTS: usize =
+        monero_oxide::primitives::const_min!(EXPLICIT_MAX_OUTS, IMPLICIT_MAX_OUTS);
 
       let expected_request_header_len = 19;
       let expected_request_len =
