@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "monero-oxide/io",
+  "monero-oxide/ed25519",
   "monero-oxide/generators",
   "monero-oxide/primitives",
   "monero-oxide/ringct/mlsag",

@@ -23,7 +23,7 @@ use frost::{
 };
 
 use monero_generators::biased_hash_to_point;
-use monero_io::CompressedPoint;
+use monero_ed25519::CompressedPoint;
 
 use crate::{ClsagContext, Clsag};
 

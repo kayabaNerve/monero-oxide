@@ -24,8 +24,9 @@ use curve25519_dalek::{
 };
 
 use monero_io::*;
+use monero_ed25519::*;
 use monero_generators::biased_hash_to_point;
-use monero_primitives::{INV_EIGHT, G_PRECOMP, Commitment, Decoys, keccak256_to_scalar};
+use monero_primitives::{INV_EIGHT, Commitment, Decoys, keccak256_to_scalar};
 
 #[cfg(feature = "multisig")]
 mod multisig;
@@ -34,6 +35,22 @@ pub use multisig::{ClsagMultisigMaskSender, ClsagAddendum, ClsagMultisig};
 
 #[cfg(all(feature = "std", test))]
 mod tests;
+
+#[cfg(feature = "std")]
+static G_PRECOMP_CELL: LazyLock<VartimeEdwardsPrecomputation> =
+  LazyLock::new(|| VartimeEdwardsPrecomputation::new([ED25519_BASEPOINT_POINT]));
+/// A cached (if std) pre-computation of the Ed25519 generator, G.
+#[cfg(feature = "std")]
+#[allow(non_snake_case)]
+pub fn G_PRECOMP() -> &'static VartimeEdwardsPrecomputation {
+  &G_PRECOMP_CELL
+}
+/// A cached (if std) pre-computation of the Ed25519 generator, G.
+#[cfg(not(feature = "std"))]
+#[allow(non_snake_case)]
+pub fn G_PRECOMP() -> VartimeEdwardsPrecomputation {
+  VartimeEdwardsPrecomputation::new([ED25519_BASEPOINT_POINT])
+}
 
 /// Errors when working with CLSAGs.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, thiserror::Error)]

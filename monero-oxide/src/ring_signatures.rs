@@ -7,7 +7,7 @@ use zeroize::Zeroize;
 
 use curve25519_dalek::{EdwardsPoint, Scalar};
 
-use crate::{io::*, generators::biased_hash_to_point, primitives::keccak256_to_scalar};
+use crate::{io::*, ed25519::*, generators::biased_hash_to_point, primitives::keccak256_to_scalar};
 
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub(crate) struct Signature {

@@ -3,49 +3,17 @@
 #![deny(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use std_shims::{sync::LazyLock, vec::Vec};
+use std_shims::prelude::*;
 
 use sha3::{Digest, Keccak256};
 
-use curve25519_dalek::{constants::ED25519_BASEPOINT_POINT, edwards::EdwardsPoint};
+use curve25519_dalek::{EdwardsPoint, edwards::CompressedEdwardsY};
 
-use monero_io::{VarInt, CompressedPoint};
-
-mod hash_to_point;
-pub use hash_to_point::biased_hash_to_point;
-
-#[cfg(test)]
-mod tests;
+use monero_io::VarInt;
+use monero_ed25519::Point;
 
 fn keccak256(data: &[u8]) -> [u8; 32] {
   Keccak256::digest(data).into()
-}
-
-/// Monero's `H` generator.
-///
-/// Contrary to convention (`G` for values, `H` for randomness), `H` is used by Monero for amounts
-/// within Pedersen commitments.
-#[allow(non_snake_case)]
-pub static H: LazyLock<EdwardsPoint> = LazyLock::new(|| {
-  CompressedPoint::from(keccak256(&ED25519_BASEPOINT_POINT.compress().to_bytes()))
-    .decompress()
-    .expect("known on-curve point wasn't on-curve")
-    .mul_by_cofactor()
-});
-
-static H_POW_2_CELL: LazyLock<[EdwardsPoint; 64]> = LazyLock::new(|| {
-  let mut res = [*H; 64];
-  for i in 1 .. 64 {
-    res[i] = res[i - 1] + res[i - 1];
-  }
-  res
-});
-/// Monero's `H` generator, multiplied by 2**i for i in 1 ..= 64.
-///
-/// This table is useful when working with amounts, which are u64s.
-#[allow(non_snake_case)]
-pub fn H_pow_2() -> &'static [EdwardsPoint; 64] {
-  &H_POW_2_CELL
 }
 
 /// The maximum amount of commitments provable for within a single Bulletproof(+).
@@ -57,8 +25,10 @@ pub const COMMITMENT_BITS: usize = 64;
 #[allow(non_snake_case)]
 pub struct Generators {
   /// The G (bold) vector of generators.
+  #[doc(hidden)]
   pub G: Vec<EdwardsPoint>,
   /// The H (bold) vector of generators.
+  #[doc(hidden)]
   pub H: Vec<EdwardsPoint>,
 }
 
@@ -70,7 +40,7 @@ pub fn bulletproofs_generators(dst: &'static [u8]) -> Generators {
   // The maximum amount of bits used within a single range proof.
   const MAX_MN: usize = MAX_BULLETPROOF_COMMITMENTS * COMMITMENT_BITS;
 
-  let mut preimage = H.compress().to_bytes().to_vec();
+  let mut preimage = monero_ed25519::CompressedPoint::H.to_bytes().to_vec();
   preimage.extend(dst);
 
   let mut res = Generators { G: Vec::with_capacity(MAX_MN), H: Vec::with_capacity(MAX_MN) };
@@ -80,11 +50,19 @@ pub fn bulletproofs_generators(dst: &'static [u8]) -> Generators {
 
     let mut even = preimage.clone();
     VarInt::write(&i, &mut even).expect("write failed but <Vec as io::Write> doesn't fail");
-    res.H.push(biased_hash_to_point(keccak256(&even)));
+    res.H.push(
+      CompressedEdwardsY(Point::biased_hash(keccak256(&even)).compress().to_bytes())
+        .decompress()
+        .expect("couldn't decompress point we just compressed"),
+    );
 
     let mut odd = preimage.clone();
     VarInt::write(&(i + 1), &mut odd).expect("write failed but <Vec as io::Write> doesn't fail");
-    res.G.push(biased_hash_to_point(keccak256(&odd)));
+    res.G.push(
+      CompressedEdwardsY(Point::biased_hash(keccak256(&odd)).compress().to_bytes())
+        .decompress()
+        .expect("couldn't decompress point we just compressed"),
+    );
   }
   res
 }

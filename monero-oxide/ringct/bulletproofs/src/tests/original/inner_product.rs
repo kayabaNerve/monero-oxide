@@ -4,8 +4,6 @@ use rand_core::OsRng;
 
 use curve25519_dalek::Scalar;
 
-use monero_generators::H;
-
 use crate::{
   scalar_vector::ScalarVector,
   point_vector::PointVector,
@@ -40,7 +38,7 @@ fn test_inner_product() {
   verifier.0.g_bold = vec![Scalar::ZERO; 32];
   verifier.0.h_bold = vec![Scalar::ZERO; 32];
   for i in [1, 2, 4, 8, 16, 32] {
-    let g = *H;
+    let g = monero_ed25519::CompressedPoint::H.decompress().unwrap().into();
     let mut g_bold = vec![];
     let mut h_bold = vec![];
     for i in 0 .. i {

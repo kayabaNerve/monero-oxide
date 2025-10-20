@@ -1,8 +1,7 @@
 use rand_core::{RngCore, OsRng};
 
-use curve25519_dalek::Scalar;
-
-use monero_primitives::Commitment;
+use curve25519_dalek::Scalar as DScalar;
+use monero_ed25519::{Scalar, Commitment};
 
 use crate::{
   batch_verifier::BulletproofsPlusBatchVerifier,
@@ -15,9 +14,13 @@ fn test_aggregate_range_proof() {
   for m in 1 ..= 16 {
     let mut commitments = vec![];
     for _ in 0 .. m {
-      commitments.push(Commitment::new(Scalar::random(&mut OsRng), OsRng.next_u64()));
+      commitments.push(Commitment::new(
+        Scalar::read(&mut DScalar::random(&mut OsRng).to_bytes().as_slice()).unwrap(),
+        OsRng.next_u64(),
+      ));
     }
-    let commitment_points = commitments.iter().map(Commitment::calculate).collect::<Vec<_>>();
+    let commitment_points =
+      commitments.iter().map(|commitment| commitment.commit().into()).collect::<Vec<_>>();
     let statement = AggregateRangeStatement::new(&commitment_points).unwrap();
     let witness = AggregateRangeWitness::new(commitments).unwrap();
 

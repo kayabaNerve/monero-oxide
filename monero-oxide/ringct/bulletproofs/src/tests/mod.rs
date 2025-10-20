@@ -1,8 +1,8 @@
 use rand_core::{RngCore, OsRng};
 
-use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::Scalar as DScalar;
 
-use monero_primitives::Commitment;
+use monero_ed25519::{Scalar, Commitment};
 use crate::{batch_verifier::BatchVerifier, Bulletproof, BulletproofError};
 
 mod original;
@@ -16,7 +16,12 @@ macro_rules! bulletproofs_tests {
       let mut verifier = BatchVerifier::new();
       for i in 1 ..= 16 {
         let commitments = (1 ..= i)
-          .map(|_| Commitment::new(Scalar::random(&mut OsRng), OsRng.next_u64()))
+          .map(|_| {
+            Commitment::new(
+              Scalar::read(&mut DScalar::random(&mut OsRng).to_bytes().as_slice()).unwrap(),
+              OsRng.next_u64(),
+            )
+          })
           .collect::<Vec<_>>();
 
         let bp = if $plus {
@@ -27,7 +32,7 @@ macro_rules! bulletproofs_tests {
 
         let commitments = commitments
           .iter()
-          .map(Commitment::calculate)
+          .map(Commitment::commit)
           .map(|p| p.compress().into())
           .collect::<Vec<_>>();
         assert!(bp.verify(&mut OsRng, &commitments));
