@@ -36,6 +36,7 @@ frost = { package = "modular-frost", version = "0.11", default-features = false,
 
 # Other Monero dependencies
 monero-io = { path = "../../io", version = "0.1", default-features = false }
+monero-ed25519 = { path = "../../ed25519", version = "0.1", default-features = false }
 monero-generators = { path = "../../generators", version = "0.4", default-features = false }
 monero-primitives = { path = "../../primitives", version = "0.1", default-features = false }
 
@@ -56,6 +57,7 @@ std = [
   "group?/alloc",
 
   "monero-io/std",
+  "monero-ed25519/std",
   "monero-generators/std",
   "monero-primitives/std",
 ]

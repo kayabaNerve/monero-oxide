@@ -18,16 +18,12 @@ workspace = true
 [dependencies]
 std-shims = { version = "0.1.5", default-features = false }
 
-subtle = { version = "^2.4", default-features = false }
-
 sha3 = { version = "0.10", default-features = false }
 
-group = { version = "0.13", default-features = false, features = ["alloc"] }
 curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "zeroize"] }
-crypto-bigint = { version = "0.5", default-features = false, features = ["alloc"] }
-dalek-ff-group = { version = "0.5", default-features = false }
 
 monero-io = { path = "../io", version = "0.1", default-features = false }
+monero-ed25519 = { path = "../ed25519", version = "0.1", default-features = false }
 
 [dev-dependencies]
 hex = "0.4"
@@ -36,12 +32,9 @@ hex = "0.4"
 std = [
   "std-shims/std",
 
-  "subtle/std",
-
   "sha3/std",
 
-  "dalek-ff-group/std",
-
-  "monero-io/std"
+  "monero-io/std",
+  "monero-ed25519/std",
 ]
 default = ["std"]
