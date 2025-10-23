@@ -68,6 +68,14 @@ impl CompressedPoint {
     108, 114,  81, 213,  65,  84, 207, 169,  44,  23,  58,  13, 211, 156,  31, 148,
   ]);
 
+  /// A `const fn` equivalent to `Point::biased_hash`.
+  ///
+  /// This is hidden as it is not part of our API commitment. No guarantees are made for it.
+  #[doc(hidden)]
+  pub const fn biased_hash(bytes: [u8; 32]) -> Self {
+    Self(crate::hash_to_point::const_map(bytes))
+  }
+
   /// Read a [`CompressedPoint`] without checking if this point can be decompressed.
   pub fn read<R: Read>(r: &mut R) -> io::Result<CompressedPoint> {
     Ok(CompressedPoint(read_bytes(r)?))
@@ -82,7 +90,7 @@ impl CompressedPoint {
   ///
   /// This does not ensure these bytes represent a point of any validity, with no guarantees on
   /// their contents.
-  pub fn to_bytes(&self) -> [u8; 32] {
+  pub const fn to_bytes(&self) -> [u8; 32] {
     self.0
   }
 

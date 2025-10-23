@@ -706,6 +706,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "keccak-const"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57d8d8ce877200136358e0bbff3a77965875db3af755a11e1fa6b1b3e2df13ea"
+
+[[package]]
 name = "libc"
 version = "0.2.175"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -848,8 +854,8 @@ version = "0.1.0"
 dependencies = [
  "curve25519-dalek",
  "hex-literal",
+ "keccak-const",
  "monero-ed25519",
- "monero-generators",
  "monero-io",
  "monero-primitives",
  "rand_core",
@@ -868,7 +874,6 @@ dependencies = [
  "group",
  "modular-frost",
  "monero-ed25519",
- "monero-generators",
  "monero-io",
  "monero-primitives",
  "rand_chacha",
@@ -885,25 +890,12 @@ version = "0.1.0"
 dependencies = [
  "crypto-bigint",
  "curve25519-dalek",
- "dalek-ff-group 0.5.0",
- "group",
+ "keccak-const",
  "monero-io",
  "sha3",
  "std-shims",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "monero-generators"
-version = "0.4.0"
-dependencies = [
- "curve25519-dalek",
- "hex",
- "monero-ed25519",
- "monero-io",
- "sha3",
- "std-shims",
 ]
 
 [[package]]
@@ -936,7 +928,6 @@ dependencies = [
  "monero-bulletproofs",
  "monero-clsag",
  "monero-ed25519",
- "monero-generators",
  "monero-io",
  "monero-mlsag",
  "monero-primitives",

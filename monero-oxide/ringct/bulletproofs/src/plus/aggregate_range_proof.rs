@@ -8,8 +8,9 @@ use curve25519_dalek::{traits::Identity, scalar::Scalar, edwards::EdwardsPoint};
 use monero_ed25519::{Point, CompressedPoint, Commitment};
 
 use crate::{
+  MAX_COMMITMENTS, COMMITMENT_BITS,
   batch_verifier::BulletproofsPlusBatchVerifier,
-  core::{MAX_COMMITMENTS, COMMITMENT_BITS, multiexp, multiexp_vartime},
+  core::{multiexp, multiexp_vartime},
   plus::{
     ScalarVector, PointVector, GeneratorsList, BpPlusGenerators,
     transcript::*,

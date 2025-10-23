@@ -1,7 +1,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![allow(non_snake_case)]
 
 use std_shims::{
@@ -17,8 +17,8 @@ use curve25519_dalek::EdwardsPoint;
 
 use monero_io::*;
 use monero_ed25519::*;
-pub use monero_generators::MAX_BULLETPROOF_COMMITMENTS as MAX_COMMITMENTS;
-use monero_generators::COMMITMENT_BITS;
+
+pub(crate) mod generators;
 
 pub(crate) mod scalar_vector;
 pub(crate) mod point_vector;
@@ -43,6 +43,14 @@ use crate::plus::{
 
 #[cfg(test)]
 mod tests;
+
+/// The maximum amount of commitments provable for within a single Bulletproof(+).
+pub const MAX_COMMITMENTS: usize = 16;
+
+/// The amount of bits a value within a commitment may use.
+pub const COMMITMENT_BITS: usize = 64;
+// The maximum amount of bits used within a single range proof.
+const MAX_MN: usize = MAX_COMMITMENTS * COMMITMENT_BITS;
 
 // The logarithm (over 2) of the amount of bits a value within a commitment may use.
 const LOG_COMMITMENT_BITS: usize = COMMITMENT_BITS.ilog2() as usize;

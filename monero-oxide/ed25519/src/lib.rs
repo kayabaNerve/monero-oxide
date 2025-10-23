@@ -8,6 +8,8 @@ pub use scalar::Scalar;
 mod unreduced_scalar;
 pub use unreduced_scalar::UnreducedScalar;
 
+mod hash_to_point;
+
 mod point;
 pub use point::Point;
 mod compressed_point;

@@ -1,25 +1,33 @@
 use std_shims::{sync::LazyLock, vec::Vec};
 
-use rand_core::{RngCore, CryptoRng};
-
 use zeroize::Zeroize;
 
-use curve25519_dalek::{constants::ED25519_BASEPOINT_POINT, Scalar, EdwardsPoint};
+use rand_core::{RngCore, CryptoRng};
 
+use curve25519_dalek::{constants::ED25519_BASEPOINT_POINT, Scalar, EdwardsPoint};
 use monero_ed25519::{CompressedPoint, Commitment};
-use monero_generators::{Generators, COMMITMENT_BITS};
 
 use crate::{
-  core::{MAX_COMMITMENTS, multiexp},
-  scalar_vector::ScalarVector,
-  MONERO_H, BulletproofsBatchVerifier,
+  core::multiexp, scalar_vector::ScalarVector, MONERO_H, MAX_COMMITMENTS, COMMITMENT_BITS,
+  BulletproofsBatchVerifier,
 };
 
 pub(crate) mod inner_product;
 use inner_product::*;
 pub(crate) use inner_product::IpProof;
 
-include!(concat!(env!("OUT_DIR"), "/generators.rs"));
+#[cfg(feature = "compile-time-generators")]
+#[allow(long_running_const_eval)]
+static BULLETPROOF_GENERATORS: (
+  [CompressedPoint; crate::MAX_MN],
+  [CompressedPoint; crate::MAX_MN],
+) = crate::generators::generate(b"bulletproof");
+#[cfg(feature = "compile-time-generators")]
+pub(crate) static GENERATORS: LazyLock<crate::generators::Generators> =
+  LazyLock::new(|| crate::generators::decompress(BULLETPROOF_GENERATORS));
+#[cfg(not(feature = "compile-time-generators"))]
+pub(crate) static GENERATORS: LazyLock<crate::generators::Generators> =
+  LazyLock::new(|| crate::generators::decompress(crate::generators::generate_alloc(b"bulletproof")));
 
 const INV_EIGHT: monero_ed25519::Scalar = monero_ed25519::Scalar::INV_EIGHT;
 

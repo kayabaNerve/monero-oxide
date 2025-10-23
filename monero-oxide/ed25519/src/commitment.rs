@@ -1,4 +1,4 @@
-use std_shims::{sync::LazyLock, io};
+use std_shims::{prelude::*, sync::LazyLock, io};
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 

@@ -3,7 +3,6 @@ resolver = "2"
 members = [
   "monero-oxide/io",
   "monero-oxide/ed25519",
-  "monero-oxide/generators",
   "monero-oxide/primitives",
   "monero-oxide/ringct/mlsag",
   "monero-oxide/ringct/clsag",
@@ -37,7 +36,7 @@ dalek-ff-group = { opt-level = 3 }
 multiexp = { opt-level = 3 }
 
 monero-io = { opt-level = 3 }
-monero-generators = { opt-level = 3 }
+monero-ed25519 = { opt-level = 3 }
 monero-primitives = { opt-level = 3 }
 monero-mlsag = { opt-level = 3 }
 monero-clsag = { opt-level = 3 }

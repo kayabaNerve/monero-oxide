@@ -20,24 +20,19 @@ std-shims = { version = "0.1.5", default-features = false }
 
 thiserror = { version = "2", default-features = false }
 
-rand_core = { version = "0.6", default-features = false }
 zeroize = { version = "^1.5", default-features = false, features = ["zeroize_derive"] }
+rand_core = { version = "0.6", default-features = false }
 
-# Cryptographic dependencies
-curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "zeroize"] }
+keccak-const = { version = "0.2", default-features = false }
+curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "zeroize", "rand_core"] }
 
-# Other Monero dependencies
 monero-io = { path = "../../io", version = "0.1", default-features = false }
 monero-ed25519 = { path = "../../ed25519", version = "0.1", default-features = false }
-monero-generators = { path = "../../generators", version = "0.4", default-features = false }
 monero-primitives = { path = "../../primitives", version = "0.1", default-features = false }
-
-[build-dependencies]
-curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "zeroize"] }
-monero-generators = { path = "../../generators", version = "0.4", default-features = false }
 
 [dev-dependencies]
 hex-literal = { version = ">= 0.4, <= 1", default-features = false }
+rand_core = { version = "0.6", default-features = false, features = ["std"] }
 
 [features]
 std = [
@@ -50,7 +45,6 @@ std = [
 
   "monero-io/std",
   "monero-ed25519/std",
-  "monero-generators/std",
   "monero-primitives/std",
 ]
 compile-time-generators = ["curve25519-dalek/precomputed-tables"]
