@@ -70,10 +70,13 @@ impl CompressedPoint {
 
   /// A `const fn` equivalent to `Point::biased_hash` which executes for a batch, in variable time.
   ///
-  /// This is hidden as it is not part of our API commitment. No guarantees are made for it.
+  /// This is hidden as it is not part of our API commitment. No guarantees are made for any of its
+  /// safety or behavior.
   #[doc(hidden)]
-  pub const fn biased_hash_vartime<const N: usize>(bytes: [[u8; 32]; N]) -> [Self; N] {
-    crate::hash_to_point::const_map_batch(bytes)
+  pub const fn biased_hash_vartime<const N: usize, const TWO_N: usize>(
+    bytes: [[u8; 32]; N],
+  ) -> [Self; N] {
+    crate::hash_to_point::const_map_batch::<N, TWO_N>(bytes)
   }
 
   /// Read a [`CompressedPoint`] without checking if this point can be decompressed.

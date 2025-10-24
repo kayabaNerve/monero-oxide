@@ -43,7 +43,7 @@ impl Field25519 {
         break;
       }
       carry = carry_bool as Word;
-      i += 1;
+      i = i.wrapping_add(1);
     }
 
     if (limbs[LAST_LIMB].0 & HIGH_BIT) != 0 {
@@ -66,7 +66,7 @@ impl Field25519 {
           break;
         }
         carry = carry_bool as Word;
-        i += 1;
+        i = i.wrapping_add(1);
       }
     }
 
@@ -74,17 +74,7 @@ impl Field25519 {
   }
 
   #[allow(clippy::cast_possible_truncation)]
-  const fn wide_reduce_256(mut lo: U256, hi: U256) -> Self {
-    let lo_limbs = lo.as_limbs_mut();
-    let hi = hi.as_limbs();
-
-    let mut i = 0;
-    let mut carry = Limb(0);
-    while i < U256::LIMBS {
-      (lo_limbs[i], carry) = lo_limbs[i].mac(hi[i], Limb(38), carry);
-      i += 1;
-    }
-
+  const fn wide_reduce_limb_256(lo: U256, carry: Limb) -> Self {
     let mut result = Self::reduce(lo).0;
     let limbs = result.as_limbs_mut();
     let mut i = 0;
@@ -96,9 +86,24 @@ impl Field25519 {
         break;
       }
       carry = carry_bool as Word;
-      i += 1;
+      i = i.wrapping_add(1);
     }
     Self(result)
+  }
+
+  #[allow(clippy::cast_possible_truncation)]
+  const fn wide_reduce_256(mut lo: U256, hi: U256) -> Self {
+    let lo_limbs = lo.as_limbs_mut();
+    let hi = hi.as_limbs();
+
+    let mut i = 0;
+    let mut carry = Limb(0);
+    while i < U256::LIMBS {
+      (lo_limbs[i], carry) = lo_limbs[i].mac(hi[i], Limb(38), carry);
+      i = i.wrapping_add(1);
+    }
+
+    Self::wide_reduce_limb_256(lo, carry)
   }
 
   const fn wide_reduce(lo: U256, hi: U256) -> Self {
@@ -116,7 +121,20 @@ impl Field25519 {
     let mut carry_bool = true;
     while i < U256::LIMBS {
       (limbs[0].0, carry_bool) = limbs[0].0.overflowing_add(carry_bool as Word);
-      i += 1;
+      i = i.wrapping_add(1);
+    }
+    Self::reduce_once(self.0)
+  }
+
+  pub(crate) const fn add_limb(mut self, limb: Limb) -> Self {
+    let limbs = self.0.as_limbs_mut();
+    let mut i = 0;
+    let mut carry = limb.0;
+    while i < U256::LIMBS {
+      let carry_bool;
+      (limbs[0].0, carry_bool) = limbs[0].0.overflowing_add(carry);
+      carry = carry_bool as Word;
+      i = i.wrapping_add(1);
     }
     Self::reduce_once(self.0)
   }
@@ -133,7 +151,7 @@ impl Field25519 {
     let mut i = 0;
     while i < U256::LIMBS {
       (limbs[i], borrow) = modulus[i].sbb(limbs[i], borrow);
-      i += 1;
+      i = i.wrapping_add(1);
     }
     self
   }
@@ -145,7 +163,7 @@ impl Field25519 {
     let mut i = 0;
     while i < U256::LIMBS {
       (limbs[i], borrow) = limbs[i].sbb(other[i], borrow);
-      i += 1;
+      i = i.wrapping_add(1);
     }
     if borrow.0 != 0 {
       self.0 = self.0.wrapping_add(&MODULUS);
@@ -159,7 +177,7 @@ impl Field25519 {
     let mut i = 0;
     while i < U256::LIMBS {
       (limbs[i].0, borrow) = limbs[i].0.overflowing_sub(borrow as Word);
-      i += 1;
+      i = i.wrapping_add(1);
     }
     if borrow {
       self.0 = self.0.wrapping_add(&MODULUS);
@@ -174,6 +192,11 @@ impl Field25519 {
   pub(crate) const fn square(&self) -> Self {
     let (lo, hi) = self.0.square_wide();
     Self::wide_reduce(lo, hi)
+  }
+
+  pub(crate) const fn mul_limb(&self, other: Limb) -> Self {
+    let (lo, hi) = self.0.split_mul(&U256::from_word(other.0));
+    Self::reduce_once(Self::wide_reduce_limb_256(lo, hi.to_limbs()[0]).0)
   }
 
   // Multiplication functions which reduce to 256 bits, not by the modulus.
@@ -204,7 +227,7 @@ impl Field25519 {
         result_used = true;
         result = result.chained_mul(*self);
       }
-      i -= 1;
+      i = i.wrapping_sub(1);
     }
     result = result.chained_square();
     if exp.bit_vartime(i) {
@@ -232,7 +255,7 @@ impl Field25519 {
     let other = other.0.as_limbs();
     while i < U256::LIMBS {
       eq &= limbs[i].0 == other[i].0;
-      i += 1;
+      i = i.wrapping_add(1);
     }
     eq
   }

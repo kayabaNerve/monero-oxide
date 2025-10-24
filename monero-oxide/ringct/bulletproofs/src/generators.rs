@@ -49,7 +49,7 @@ pub(crate) const fn generate(
     preimages[MAX_MN + i] = preimage(dst, (2 * i) + 1);
     i += 1;
   }
-  let joint = CompressedPoint::biased_hash_vartime(preimages);
+  let joint = CompressedPoint::biased_hash_vartime::<{ 2 * MAX_MN }, { 2 * 2 * MAX_MN }>(preimages);
 
   let mut result = unsafe {
     core::mem::MaybeUninit::<([CompressedPoint; MAX_MN], [CompressedPoint; MAX_MN])>::uninit()
@@ -69,8 +69,8 @@ pub(crate) fn generate_alloc(dst: &'static [u8]) -> (Vec<CompressedPoint>, Vec<C
   let mut result = (vec![CompressedPoint::G; MAX_MN], vec![CompressedPoint::G; MAX_MN]);
   let mut i = 0;
   while i < MAX_MN {
-    result.0[i] = CompressedPoint::biased_hash_vartime(preimage(dst, 2 * i));
-    result.1[i] = CompressedPoint::biased_hash_vartime(preimage(dst, (2 * i) + 1));
+    result.0[i] = CompressedPoint::biased_hash_vartime::<1, 2>(preimage(dst, 2 * i));
+    result.1[i] = CompressedPoint::biased_hash_vartime::<1, 2>(preimage(dst, (2 * i) + 1));
     i += 1;
   }
   result

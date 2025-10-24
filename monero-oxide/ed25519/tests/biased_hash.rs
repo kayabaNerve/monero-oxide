@@ -28,7 +28,7 @@ fn biased_hash() {
 
   for (actual, constant) in batch
     .into_iter()
-    .zip(CompressedPoint::biased_hash_vartime::<256>(preimages.try_into().unwrap()))
+    .zip(CompressedPoint::biased_hash_vartime::<256, 512>(preimages.try_into().unwrap()))
   {
     assert_eq!(actual, constant);
   }
