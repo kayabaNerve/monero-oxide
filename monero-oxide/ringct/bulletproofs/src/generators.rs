@@ -43,29 +43,31 @@ pub(crate) const fn generate(
 ) -> ([CompressedPoint; MAX_MN], [CompressedPoint; MAX_MN]) {
   let mut result = ([CompressedPoint::G; MAX_MN], [CompressedPoint::G; MAX_MN]);
   let mut i = 0;
-  while i < 1 {
-    result.0[i] = CompressedPoint::biased_hash(preimage(dst, 2 * i));
-    result.1[i] = CompressedPoint::biased_hash(preimage(dst, (2 * i) + 1));
+  while i < MAX_MN {
+    result.0[i] = CompressedPoint::biased_hash_vartime(preimage(dst, 2 * i));
+    result.1[i] = CompressedPoint::biased_hash_vartime(preimage(dst, (2 * i) + 1));
     i += 1;
   }
   result
 }
 
-pub(crate) fn generate_alloc(
-  dst: &'static [u8],
-) -> (Vec<CompressedPoint>, Vec<CompressedPoint>) {
+#[cfg(not(feature = "compile-time-generators"))]
+pub(crate) fn generate_alloc(dst: &'static [u8]) -> (Vec<CompressedPoint>, Vec<CompressedPoint>) {
   let mut result = (vec![CompressedPoint::G; MAX_MN], vec![CompressedPoint::G; MAX_MN]);
   let mut i = 0;
   while i < MAX_MN {
-    result.0[i] = CompressedPoint::biased_hash(preimage(dst, 2 * i));
-    result.1[i] = CompressedPoint::biased_hash(preimage(dst, (2 * i) + 1));
+    result.0[i] = CompressedPoint::biased_hash_vartime(preimage(dst, 2 * i));
+    result.1[i] = CompressedPoint::biased_hash_vartime(preimage(dst, (2 * i) + 1));
     i += 1;
   }
   result
 }
 
 pub(crate) fn decompress(
-  generators: (impl IntoIterator<Item = CompressedPoint>, impl IntoIterator<Item = CompressedPoint>),
+  generators: (
+    impl IntoIterator<Item = CompressedPoint>,
+    impl IntoIterator<Item = CompressedPoint>,
+  ),
 ) -> Generators {
   Generators {
     G: generators

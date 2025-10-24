@@ -42,8 +42,9 @@ static BULLETPROOF_PLUS_GENERATORS: (
 pub(crate) static GENERATORS: LazyLock<crate::generators::Generators> =
   LazyLock::new(|| crate::generators::decompress(BULLETPROOF_PLUS_GENERATORS));
 #[cfg(not(feature = "compile-time-generators"))]
-pub(crate) static GENERATORS: LazyLock<crate::generators::Generators> =
-  LazyLock::new(|| crate::generators::decompress(crate::generators::generate_alloc(b"bulletproof_plus")));
+pub(crate) static GENERATORS: LazyLock<crate::generators::Generators> = LazyLock::new(|| {
+  crate::generators::decompress(crate::generators::generate_alloc(b"bulletproof_plus"))
+});
 
 impl BpPlusGenerators {
   #[allow(clippy::new_without_default)]

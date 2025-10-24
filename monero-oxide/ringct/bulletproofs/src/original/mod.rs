@@ -26,8 +26,9 @@ static BULLETPROOF_GENERATORS: (
 pub(crate) static GENERATORS: LazyLock<crate::generators::Generators> =
   LazyLock::new(|| crate::generators::decompress(BULLETPROOF_GENERATORS));
 #[cfg(not(feature = "compile-time-generators"))]
-pub(crate) static GENERATORS: LazyLock<crate::generators::Generators> =
-  LazyLock::new(|| crate::generators::decompress(crate::generators::generate_alloc(b"bulletproof")));
+pub(crate) static GENERATORS: LazyLock<crate::generators::Generators> = LazyLock::new(|| {
+  crate::generators::decompress(crate::generators::generate_alloc(b"bulletproof"))
+});
 
 const INV_EIGHT: monero_ed25519::Scalar = monero_ed25519::Scalar::INV_EIGHT;
 

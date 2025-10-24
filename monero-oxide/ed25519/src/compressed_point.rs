@@ -68,11 +68,11 @@ impl CompressedPoint {
     108, 114,  81, 213,  65,  84, 207, 169,  44,  23,  58,  13, 211, 156,  31, 148,
   ]);
 
-  /// A `const fn` equivalent to `Point::biased_hash`.
+  /// A `const fn` equivalent to `Point::biased_hash` which executes in variable time.
   ///
   /// This is hidden as it is not part of our API commitment. No guarantees are made for it.
   #[doc(hidden)]
-  pub const fn biased_hash(bytes: [u8; 32]) -> Self {
+  pub const fn biased_hash_vartime(bytes: [u8; 32]) -> Self {
     Self(crate::hash_to_point::const_map(bytes))
   }
 

@@ -15,9 +15,9 @@ fn biased_hash() {
       "hash_to_ec" => {
         let preimage = hex::decode(words.next().unwrap());
         let actual = Point::biased_hash(preimage);
-        assert_eq!(actual.compress(), CompressedPoint::biased_hash(preimage));
         let expected = hex::decode(words.next().unwrap());
         assert_eq!(actual.compress().to_bytes(), expected);
+        assert_eq!(actual.compress(), CompressedPoint::biased_hash_vartime(preimage));
       }
       _ => unreachable!("unknown command"),
     }
