@@ -110,6 +110,17 @@ impl Field25519 {
     Self::reduce_once(unreduced)
   }
 
+  pub(crate) const fn add_one(mut self) -> Self {
+    let limbs = self.0.as_limbs_mut();
+    let mut i = 0;
+    let mut carry_bool = true;
+    while i < U256::LIMBS {
+      (limbs[0].0, carry_bool) = limbs[0].0.overflowing_add(carry_bool as Word);
+      i += 1;
+    }
+    Self::reduce_once(self.0)
+  }
+
   pub(crate) const fn double(&self) -> Self {
     let unreduced = self.0.wrapping_shl(1);
     Self::reduce_once(unreduced)
@@ -137,6 +148,20 @@ impl Field25519 {
       i += 1;
     }
     if borrow.0 != 0 {
+      self.0 = self.0.wrapping_add(&MODULUS);
+    }
+    self
+  }
+
+  pub(crate) const fn sub_one(mut self) -> Self {
+    let limbs = self.0.as_limbs_mut();
+    let mut borrow = true;
+    let mut i = 0;
+    while i < U256::LIMBS {
+      (limbs[i].0, borrow) = limbs[i].0.overflowing_sub(borrow as Word);
+      i += 1;
+    }
+    if borrow {
       self.0 = self.0.wrapping_add(&MODULUS);
     }
     self
@@ -212,7 +237,7 @@ impl Field25519 {
     eq
   }
 
-  pub(crate) const fn retrieve(self) -> U256 {
+  pub(crate) const fn retrieve(&self) -> U256 {
     self.0
   }
 }
