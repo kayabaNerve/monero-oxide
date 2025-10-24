@@ -1,9 +1,9 @@
-#![allow(clippy::uninit_assumed_init)]
-
 use crypto_bigint::{Limb, U256};
 
 mod field25519;
 use field25519::Field25519;
+
+use crate::CompressedPoint;
 
 /*
   Curve25519 is a Montgomery curve with equation `v^2 = u^3 + 486662 u^2 + u`.
@@ -16,26 +16,35 @@ const A: Field25519 = Field25519::reduce(U256::from_u64(486662));
 
 const SQRT_NEG_A_2: Field25519 = A.add(Field25519::reduce(U256::from_u8(2))).neg().sqrt().unwrap();
 
-const fn batch_invert<const N: usize>(to_invert: [Field25519; N]) -> [Field25519; N] {
-  let mut scratch = unsafe { core::mem::MaybeUninit::<[Field25519; N]>::uninit().assume_init() };
+const fn batch_invert<const N: usize>(to_invert: &mut [Field25519; N], scratch: &mut [Field25519]) {
   scratch[0] = to_invert[0];
-  let mut i = 1;
-  while i < N {
-    scratch[i] = scratch[i.wrapping_sub(1)].mul(to_invert[i]);
-    i = i.wrapping_add(1);
+  unsafe {
+    let mut scratch = &raw mut scratch[1];
+    let mut to_invert = &raw mut to_invert[1];
+    let mut i = 1;
+    while i < N {
+      *scratch = (*scratch.offset(-1)).mul(*to_invert);
+      scratch = scratch.offset(1);
+      to_invert = to_invert.offset(1);
+      i = i.wrapping_add(1);
+    }
   }
   let mut accum = scratch[N.wrapping_sub(1)].inv();
 
-  let mut res = unsafe { core::mem::MaybeUninit::<[Field25519; N]>::uninit().assume_init() };
-  let mut i = N.wrapping_sub(1);
-  while i > 0 {
-    res[i] = accum.mul(scratch[i.wrapping_sub(1)]);
-    accum = accum.mul(to_invert[i]);
-    i = i.wrapping_sub(1);
+  unsafe {
+    let mut i = N.wrapping_sub(1);
+    let mut scratch = &raw mut scratch[i];
+    let mut to_invert = &raw mut to_invert[i];
+    while i > 0 {
+      scratch = scratch.offset(-1);
+      let res_i = accum.mul(*scratch);
+      accum = accum.mul(*to_invert);
+      *to_invert = res_i;
+      to_invert = to_invert.offset(-1);
+      i = i.wrapping_sub(1);
+    }
   }
-  res[0] = accum;
-
-  res
+  to_invert[0] = accum;
 }
 
 const fn curve_equation(u: Field25519) -> Field25519 {
@@ -43,121 +52,160 @@ const fn curve_equation(u: Field25519) -> Field25519 {
 }
 
 pub(crate) const fn const_map_batch<const N: usize, const TWO_N: usize>(
-  preimages: [[u8; 32]; N],
-) -> [crate::CompressedPoint; N] {
-  let one_plus_ur_square_inv = {
-    let mut one_plus_ur_square =
-      unsafe { core::mem::MaybeUninit::<[Field25519; N]>::uninit().assume_init() };
-    let mut i = 0;
-    while i < N {
-      let r = Field25519::reduce(U256::from_le_slice(
-        &keccak_const::Keccak256::new().update(&preimages[i]).finalize(),
-      ));
-      let ur_square = r.square().double();
-      one_plus_ur_square[i] = ur_square.add_one();
+  mut preimages: [[u8; 32]; N],
+) -> [CompressedPoint; N] {
+  let mut scratch =
+    unsafe { core::mem::MaybeUninit::<[Field25519; TWO_N]>::zeroed().assume_init() };
 
-      i = i.wrapping_add(1);
-    }
-
-    batch_invert(one_plus_ur_square)
-  };
-
-  let mut u_epsilon =
-    unsafe { core::mem::MaybeUninit::<[(Field25519, u8); N]>::uninit().assume_init() };
-  let mut x_and_y_denom =
-    unsafe { core::mem::MaybeUninit::<[Field25519; TWO_N]>::uninit().assume_init() };
-  let mut i = 0;
-  while i < N {
-    let upsilon = one_plus_ur_square_inv[i].mul_limb(A_LIMB).neg();
-
-    let (u_i, epsilon_i);
-    (u_i, x_and_y_denom[i], epsilon_i) = if let Some(upsilon_v) = curve_equation(upsilon).sqrt() {
-      (upsilon, upsilon_v, 1)
-    } else {
-      let other_candidate = upsilon.add_limb(A_LIMB).neg();
-      (
-        other_candidate,
-        curve_equation(other_candidate)
-          .sqrt()
-          .expect("one of these options will be a quadratic residue"),
-        0,
-      )
-    };
-    u_epsilon[i] = (u_i, epsilon_i);
-
-    i = i.wrapping_add(1);
-  }
-
-  // Map to Ed25519
-  let mut i = 0;
-  while i < N {
-    x_and_y_denom[N.wrapping_add(i)] = u_epsilon[i].0.add_one();
-    i = i.wrapping_add(1);
-  }
-  let x_and_y_denom = batch_invert(x_and_y_denom);
-
-  let mut xy =
-    unsafe { core::mem::MaybeUninit::<[(Field25519, Field25519); N]>::uninit().assume_init() };
-  let mut z = unsafe { core::mem::MaybeUninit::<[Field25519; N]>::uninit().assume_init() };
-  let mut i = 0;
-  while i < N {
-    let (u_i, epsilon_i) = u_epsilon[i];
-    let mut x_i = {
-      let x_candidate = SQRT_NEG_A_2.mul(u_i.mul(x_and_y_denom[i]));
-      // If the parity of our candidate is distinct from epsilon, negate it
-      if ((x_candidate.retrieve().as_limbs()[0].0 % 2) as u8) != epsilon_i {
-        x_candidate.neg()
-      } else {
-        x_candidate
-      }
-    };
-    let mut y_i = u_i.sub_one().mul(x_and_y_denom[N.wrapping_add(i)]);
-    let mut z_i = Field25519::ONE;
-
-    // Clear the cofactor
-    // dbl-2008-hwcd, optimized for `a = -1`
-    {
-      let mut i = 0usize;
-      while i < 3 {
-        let a = x_i.square();
-        let b = y_i.square();
-        let c = (if i == 0 { z_i } else { z_i.square() }).double();
-        let d = a.neg();
-        let e = x_i.add(y_i).square().sub(a).sub(b);
-        let g = d.add(b);
-        let f = g.sub(c);
-        let h = d.sub(b);
-        x_i = e.mul(f);
-        y_i = g.mul(h);
-        z_i = f.mul(g);
+  let mut one_plus_ur_square_inv =
+    unsafe { core::mem::MaybeUninit::<[Field25519; N]>::zeroed().assume_init() };
+  {
+    unsafe {
+      let mut preimages = &raw const preimages[0];
+      let mut one_plus_ur_square_inv = &raw mut one_plus_ur_square_inv[0];
+      let mut i = 0;
+      while i < N {
+        let r = Field25519::reduce(U256::from_le_slice(
+          &keccak_const::Keccak256::new().update(&*preimages).finalize(),
+        ));
+        preimages = preimages.offset(1);
+        let ur_square = r.square().double();
+        *one_plus_ur_square_inv = ur_square.add_one();
+        one_plus_ur_square_inv = one_plus_ur_square_inv.offset(1);
 
         i = i.wrapping_add(1);
       }
     }
 
-    xy[i] = (x_i, y_i);
-    z[i] = z_i;
+    batch_invert(&mut one_plus_ur_square_inv, &mut scratch);
+  }
 
-    i = i.wrapping_add(1);
+  let mut u_epsilon =
+    unsafe { core::mem::MaybeUninit::<[(Field25519, u8); N]>::zeroed().assume_init() };
+  let mut x_and_y_denom =
+    unsafe { core::mem::MaybeUninit::<[Field25519; TWO_N]>::zeroed().assume_init() };
+  unsafe {
+    let mut one_plus_ur_square_inv = &raw mut one_plus_ur_square_inv[0];
+    let mut u_epsilon = &raw mut u_epsilon[0];
+    let mut x_and_y_denom = &raw mut x_and_y_denom[0];
+    let mut i = 0;
+    while i < N {
+      let upsilon = (*one_plus_ur_square_inv).mul_limb(A_LIMB).neg();
+      one_plus_ur_square_inv = one_plus_ur_square_inv.offset(1);
+
+      let (u_i, epsilon_i);
+      (u_i, *x_and_y_denom, epsilon_i) = if let Some(upsilon_v) = curve_equation(upsilon).sqrt() {
+        (upsilon, upsilon_v, 1)
+      } else {
+        let other_candidate = upsilon.add_limb(A_LIMB).neg();
+        (
+          other_candidate,
+          curve_equation(other_candidate)
+            .sqrt()
+            .expect("one of these options will be a quadratic residue"),
+          0,
+        )
+      };
+      x_and_y_denom = x_and_y_denom.offset(1);
+      *u_epsilon = (u_i, epsilon_i);
+      u_epsilon = u_epsilon.offset(1);
+
+      i = i.wrapping_add(1);
+    }
+  }
+
+  // Map to Ed25519
+  unsafe {
+    let mut u_epsilon = &raw const u_epsilon[0];
+    let mut i = 0;
+    while i < N {
+      x_and_y_denom[N.wrapping_add(i)] = (*u_epsilon).0.add_one();
+      u_epsilon = u_epsilon.offset(1);
+      i = i.wrapping_add(1);
+    }
+  }
+  batch_invert(&mut x_and_y_denom, &mut scratch);
+
+  let mut xy =
+    unsafe { core::mem::MaybeUninit::<[(Field25519, Field25519); N]>::zeroed().assume_init() };
+  // Re-use the scratch space from the no-longer-used `one_plus_ur_square`
+  let z = &mut one_plus_ur_square_inv;
+  unsafe {
+    let mut z = &raw mut z[0];
+    let mut u_epsilon = &raw const u_epsilon[0];
+    let mut x_and_y_denom = &raw mut x_and_y_denom[0];
+    let mut xy = &raw mut xy[0];
+    let mut i = 0;
+    while i < N {
+      let (u_i, epsilon_i) = *u_epsilon;
+      u_epsilon = u_epsilon.offset(1);
+      let mut x_i = {
+        let x_candidate = SQRT_NEG_A_2.mul(u_i.mul(*x_and_y_denom));
+        // If the parity of our candidate is distinct from epsilon, negate it
+        if ((x_candidate.retrieve().as_limbs()[0].0 % 2) as u8) != epsilon_i {
+          x_candidate.neg()
+        } else {
+          x_candidate
+        }
+      };
+      let mut y_i = u_i.sub_one().mul(*x_and_y_denom.add(N));
+      x_and_y_denom = x_and_y_denom.offset(1);
+      let mut z_i = Field25519::ONE;
+
+      // Clear the cofactor
+      // dbl-2008-hwcd, optimized for `a = -1`
+      {
+        let mut i = 0usize;
+        while i < 3 {
+          let a = x_i.square();
+          let b = y_i.square();
+          let c = (if i == 0 { z_i } else { z_i.square() }).double();
+          let d = a.neg();
+          let e = x_i.add(y_i).square().sub(a).sub(b);
+          let g = d.add(b);
+          let f = g.sub(c);
+          let h = d.sub(b);
+          x_i = e.mul(f);
+          y_i = g.mul(h);
+          z_i = f.mul(g);
+
+          i = i.wrapping_add(1);
+        }
+      }
+
+      *xy = (x_i, y_i);
+      xy = xy.offset(1);
+      *z = z_i;
+      z = z.offset(1);
+
+      i = i.wrapping_add(1);
+    }
   }
 
   // Normalize, encode these points
-  let z = batch_invert(z);
-  let mut res =
-    unsafe { core::mem::MaybeUninit::<[crate::CompressedPoint; N]>::uninit().assume_init() };
-  let mut i = 0;
-  while i < N {
-    let z = z[i];
-    let (x, y) = xy[i];
-    let x = x.mul(z);
-    let y = y.mul(z);
-    // Encode the result
-    let y = y.retrieve();
-    let mut this = y.to_le_bytes();
-    this[31] |= ((x.retrieve().as_limbs()[0].0 % 2) as u8) << 7;
-    res[i] = crate::CompressedPoint(this);
+  batch_invert(z, &mut scratch);
+  let mut res = unsafe { *(&raw mut preimages as *mut [CompressedPoint; N]) };
+  unsafe {
+    let mut z = &raw mut z[0];
+    let mut xy = &raw mut xy[0];
+    let mut res = &raw mut res[0];
+    let mut i = 0;
+    while i < N {
+      let z_i = *z;
+      z = z.offset(1);
+      let (x, y) = *xy;
+      xy = xy.offset(1);
+      let x = x.mul(z_i);
+      let y = y.mul(z_i);
+      // Encode the result
+      let y = y.retrieve();
+      let mut this = y.to_le_bytes();
+      this[31] |= ((x.retrieve().as_limbs()[0].0 % 2) as u8) << 7;
+      *res = CompressedPoint(this);
+      res = res.offset(1);
 
-    i = i.wrapping_add(1);
+      i = i.wrapping_add(1);
+    }
   }
 
   res
