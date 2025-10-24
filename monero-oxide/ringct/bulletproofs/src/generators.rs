@@ -37,15 +37,28 @@ const fn preimage(dst: &'static [u8], mut i: usize) -> [u8; 32] {
 }
 
 #[cfg(feature = "compile-time-generators")]
-#[allow(clippy::large_stack_arrays)]
+#[allow(clippy::uninit_assumed_init, clippy::large_stack_arrays)]
 pub(crate) const fn generate(
   dst: &'static [u8],
 ) -> ([CompressedPoint; MAX_MN], [CompressedPoint; MAX_MN]) {
-  let mut result = ([CompressedPoint::G; MAX_MN], [CompressedPoint::G; MAX_MN]);
+  let mut preimages =
+    unsafe { core::mem::MaybeUninit::<[[u8; 32]; 2 * MAX_MN]>::uninit().assume_init() };
   let mut i = 0;
   while i < MAX_MN {
-    result.0[i] = CompressedPoint::biased_hash_vartime(preimage(dst, 2 * i));
-    result.1[i] = CompressedPoint::biased_hash_vartime(preimage(dst, (2 * i) + 1));
+    preimages[i] = preimage(dst, 2 * i);
+    preimages[MAX_MN + i] = preimage(dst, (2 * i) + 1);
+    i += 1;
+  }
+  let joint = CompressedPoint::biased_hash_vartime(preimages);
+
+  let mut result = unsafe {
+    core::mem::MaybeUninit::<([CompressedPoint; MAX_MN], [CompressedPoint; MAX_MN])>::uninit()
+      .assume_init()
+  };
+  let mut i = 0;
+  while i < MAX_MN {
+    result.0[i] = joint[i];
+    result.1[i] = joint[MAX_MN + i];
     i += 1;
   }
   result
