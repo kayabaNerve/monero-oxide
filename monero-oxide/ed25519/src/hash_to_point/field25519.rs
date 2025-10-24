@@ -2,8 +2,8 @@ use crypto_bigint::{Limb, Word, U256};
 
 const LAST_LIMB: usize = U256::LIMBS - 1;
 const HIGH_BIT: Word = 1 << (Limb::BITS - 1);
-const HIGH_TWO_BITS: Word = (1 << (Limb::BITS - 1)) | (1 << (Limb::BITS - 2));
 const ALL_BUT_HIGH_BIT: Word = !HIGH_BIT;
+const HIGH_TWO_BITS: Word = HIGH_BIT | (1 << (Limb::BITS - 2));
 
 const MODULUS: U256 =
   U256::from_be_hex("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed");
@@ -35,9 +35,14 @@ impl Field25519 {
     }
 
     let mut i = 0;
-    let mut carry = Limb(19);
+    let mut carry = 19;
     while i < U256::LIMBS {
-      (limbs[i], carry) = limbs[i].adc(carry, Limb::ZERO);
+      let carry_bool;
+      (limbs[i].0, carry_bool) = limbs[i].0.overflowing_add(carry);
+      if !carry_bool {
+        break;
+      }
+      carry = carry_bool as Word;
       i += 1;
     }
 
@@ -53,9 +58,14 @@ impl Field25519 {
     if (limbs[LAST_LIMB].0 & HIGH_BIT) != 0 {
       limbs[LAST_LIMB].0 &= ALL_BUT_HIGH_BIT;
       let mut i = 0;
-      let mut carry = Limb(19);
+      let mut carry = 19;
       while i < U256::LIMBS {
-        (limbs[i], carry) = limbs[i].adc(carry, Limb::ZERO);
+        let carry_bool;
+        (limbs[i].0, carry_bool) = limbs[i].0.overflowing_add(carry);
+        if !carry_bool {
+          break;
+        }
+        carry = carry_bool as Word;
         i += 1;
       }
     }
@@ -63,12 +73,13 @@ impl Field25519 {
     Self::reduce_once(value)
   }
 
-  const fn wide_reduce(mut lo: U256, hi: U256) -> Self {
+  #[allow(clippy::cast_possible_truncation)]
+  const fn wide_reduce_256(mut lo: U256, hi: U256) -> Self {
     let lo_limbs = lo.as_limbs_mut();
     let hi = hi.as_limbs();
 
     let mut i = 0;
-    let mut carry = Limb::ZERO;
+    let mut carry = Limb(0);
     while i < U256::LIMBS {
       (lo_limbs[i], carry) = lo_limbs[i].mac(hi[i], Limb(38), carry);
       i += 1;
@@ -77,12 +88,21 @@ impl Field25519 {
     let mut result = Self::reduce(lo).0;
     let limbs = result.as_limbs_mut();
     let mut i = 0;
-    let mut carry = Limb(carry.0 * 38);
+    let mut carry = carry.0 * 38;
     while i < U256::LIMBS {
-      (limbs[i], carry) = limbs[i].adc(Limb::ZERO, carry);
+      let carry_bool;
+      (limbs[i].0, carry_bool) = limbs[i].0.overflowing_add(carry);
+      if !carry_bool {
+        break;
+      }
+      carry = carry_bool as Word;
       i += 1;
     }
-    Self::reduce_once(result)
+    Self(result)
+  }
+
+  const fn wide_reduce(lo: U256, hi: U256) -> Self {
+    Self::reduce_once(Self::wide_reduce_256(lo, hi).0)
   }
 
   pub(crate) const fn add(&self, other: Self) -> Self {
@@ -131,27 +151,41 @@ impl Field25519 {
     Self::wide_reduce(lo, hi)
   }
 
+  // Multiplication functions which reduce to 256 bits, not by the modulus.
+  //
+  // These allow correctly chaining multiplicative operations with less overhead.
+  const fn chained_mul(&self, other: Self) -> Self {
+    let (lo, hi) = self.0.split_mul(&other.0);
+    Self::wide_reduce_256(lo, hi)
+  }
+  const fn chained_square(&self) -> Self {
+    let (lo, hi) = self.0.square_wide();
+    Self::wide_reduce_256(lo, hi)
+  }
+
   pub(crate) const fn inv(&self) -> Self {
     Self(INVERTER.inv_vartime(&self.0).expect("requested inverse of number without inverse"))
   }
 
   const fn pow(&self, exp: U256) -> Self {
     let mut result = Self::ONE;
+    let mut result_used = false;
     let mut i = 255;
     while i > 0 {
-      if !result.eq(Self::ONE) {
-        result = result.square();
+      if result_used {
+        result = result.chained_square();
       }
       if exp.bit_vartime(i) {
-        result = result.mul(*self);
+        result_used = true;
+        result = result.chained_mul(*self);
       }
       i -= 1;
     }
-    result = result.square();
+    result = result.chained_square();
     if exp.bit_vartime(i) {
-      result = result.mul(*self);
+      result = result.chained_mul(*self);
     }
-    result
+    Self::reduce_once(result.0)
   }
 
   pub(crate) const fn sqrt(&self) -> Option<Self> {
