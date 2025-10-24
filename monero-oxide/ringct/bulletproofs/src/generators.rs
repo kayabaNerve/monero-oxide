@@ -60,18 +60,11 @@ pub(crate) const fn generate(
       .assume_init()
   };
   unsafe {
-    let mut result_0 = &raw mut result.0[0];
-    let mut result_1 = &raw mut result.1[0];
-    let mut joint = &raw const joint[0];
-    let mut i = 0;
-    while i < MAX_MN {
-      *result_0 = *joint;
-      *result_1 = *joint.add(MAX_MN);
-      result_0 = result_0.offset(1);
-      result_1 = result_1.offset(1);
-      joint = joint.offset(1);
-      i += 1;
-    }
+    let result_0 = &raw mut result.0[0];
+    let result_1 = &raw mut result.1[0];
+    let joint = &raw const joint[0];
+    joint.copy_to_nonoverlapping(result_0, MAX_MN);
+    joint.add(MAX_MN).copy_to_nonoverlapping(result_1, MAX_MN);
   }
   result
 }

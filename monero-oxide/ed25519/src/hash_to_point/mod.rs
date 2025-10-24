@@ -106,6 +106,7 @@ pub(crate) const fn const_map_batch<const N: usize, const TWO_N: usize>(
           0,
         )
       };
+      *x_and_y_denom.add(N) = u_i.add_one();
       x_and_y_denom = x_and_y_denom.offset(1);
       *u_epsilon = (u_i, epsilon_i);
       u_epsilon = u_epsilon.offset(1);
@@ -115,17 +116,7 @@ pub(crate) const fn const_map_batch<const N: usize, const TWO_N: usize>(
   }
 
   // Map to Ed25519
-  unsafe {
-    let mut u_epsilon = &raw const u_epsilon[0];
-    let mut i = 0;
-    while i < N {
-      x_and_y_denom[N.wrapping_add(i)] = (*u_epsilon).0.add_one();
-      u_epsilon = u_epsilon.offset(1);
-      i = i.wrapping_add(1);
-    }
-  }
   batch_invert(&mut x_and_y_denom, &mut scratch);
-
   let mut xy =
     unsafe { core::mem::MaybeUninit::<[(Field25519, Field25519); N]>::zeroed().assume_init() };
   // Re-use the scratch space from the no-longer-used `one_plus_ur_square`
