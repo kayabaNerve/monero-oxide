@@ -19,11 +19,12 @@ const INVERTER: crypto_bigint::modular::SafeGcdInverter<
 // (p + 3) // 8
 const SQRT_EXP: U256 = MODULUS.shr_vartime(3).wrapping_add(&U256::ONE);
 // 2^{(p - 1) // 4}
-const Z: Field25519 = Field25519(U256::from_u8(2)).pow(MODULUS.shr_vartime(2));
+pub(crate) const Z: Field25519 = Field25519(U256::from_u8(2)).pow(MODULUS.shr_vartime(2));
 
 #[derive(Clone, Copy)]
 pub(crate) struct Field25519(U256);
 impl Field25519 {
+  pub(crate) const ZERO: Self = Self(U256::ZERO);
   pub(crate) const ONE: Self = Self(U256::ONE);
 
   const fn reduce_once(value: U256) -> Self {
@@ -202,11 +203,11 @@ impl Field25519 {
   // Multiplication functions which reduce to 256 bits, not by the modulus.
   //
   // These allow correctly chaining multiplicative operations with less overhead.
-  const fn chained_mul(&self, other: Self) -> Self {
+  pub(crate) const fn chained_mul(&self, other: Self) -> Self {
     let (lo, hi) = self.0.split_mul(&other.0);
     Self::wide_reduce_256(lo, hi)
   }
-  const fn chained_square(&self) -> Self {
+  pub(crate) const fn chained_square(&self) -> Self {
     let (lo, hi) = self.0.square_wide();
     Self::wide_reduce_256(lo, hi)
   }
@@ -233,7 +234,7 @@ impl Field25519 {
     if exp.bit_vartime(i) {
       result = result.chained_mul(*self);
     }
-    Self::reduce_once(result.0)
+    Self::reduce(result.0)
   }
 
   pub(crate) const fn sqrt(&self) -> Option<Self> {

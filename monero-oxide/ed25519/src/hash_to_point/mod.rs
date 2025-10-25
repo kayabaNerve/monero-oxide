@@ -1,7 +1,7 @@
 use crypto_bigint::{Limb, U256};
 
 mod field25519;
-use field25519::Field25519;
+use field25519::{Field25519, Z};
 
 use crate::CompressedPoint;
 
@@ -23,7 +23,7 @@ const fn batch_invert<const N: usize>(to_invert: &mut [Field25519; N], scratch: 
     let mut to_invert = &raw mut to_invert[1];
     let mut i = 1;
     while i < N {
-      *scratch = (*scratch.offset(-1)).mul(*to_invert);
+      *scratch = (*scratch.offset(-1)).chained_mul(*to_invert);
       scratch = scratch.offset(1);
       to_invert = to_invert.offset(1);
       i = i.wrapping_add(1);
@@ -38,17 +38,62 @@ const fn batch_invert<const N: usize>(to_invert: &mut [Field25519; N], scratch: 
     while i > 0 {
       scratch = scratch.offset(-1);
       let res_i = accum.mul(*scratch);
-      accum = accum.mul(*to_invert);
+      accum = accum.chained_mul(*to_invert);
       *to_invert = res_i;
       to_invert = to_invert.offset(-1);
       i = i.wrapping_sub(1);
     }
   }
-  to_invert[0] = accum;
+  to_invert[0] = Field25519::reduce(accum.retrieve());
+}
+
+const fn batch_sqrt<const N: usize>(
+  to_sqrt: &mut [Field25519; N],
+  scratch_1: &mut [Field25519; N],
+  scratch_2: &mut [Field25519],
+) {
+  let mut originals = [Field25519::ZERO; N];
+  originals.copy_from_slice(&*to_sqrt);
+
+  // We want $x^{\floor (p + 3) / 8 \rfloor}$ where $\floor (p + 3) / 8 \rfloor = 2^{253} - 2$
+  let mut i = 0;
+  while i < to_sqrt.len() {
+    if to_sqrt[i].eq(Field25519::ZERO) {
+      scratch_1[i] = Field25519::ONE;
+    } else {
+      let mut square = to_sqrt[i].square();
+      scratch_1[i] = square;
+      let mut j = 2;
+      while j < 253 {
+        square = square.chained_square();
+        j += 1;
+      }
+      to_sqrt[i] = square;
+    }
+    i += 1;
+  }
+
+  batch_invert(scratch_1, scratch_2);
+
+  let mut i = 0;
+  while i < to_sqrt.len() {
+    let y = to_sqrt[i].chained_mul(scratch_1[i]);
+    if y.square().eq(originals[i]) {
+      to_sqrt[i] = Field25519::reduce(y.retrieve());
+    } else {
+      let other = y.chained_mul(Z);
+      if other.square().eq(originals[i]) {
+        to_sqrt[i] = Field25519::reduce(other.retrieve());
+      } else {
+        to_sqrt[i] = Field25519::ZERO;
+      }
+    }
+    i += 1;
+  }
 }
 
 const fn curve_equation(u: Field25519) -> Field25519 {
-  u.add_limb(A_LIMB).mul(u.square()).add(u)
+  u.add_limb(A_LIMB).mul(u.chained_square()).add(u)
 }
 
 pub(crate) const fn const_map_batch<const N: usize, const TWO_N: usize>(
@@ -80,37 +125,77 @@ pub(crate) const fn const_map_batch<const N: usize, const TWO_N: usize>(
     batch_invert(&mut one_plus_ur_square_inv, &mut scratch);
   }
 
+  let mut upsilon = unsafe { core::mem::MaybeUninit::<[Field25519; N]>::zeroed().assume_init() };
+  let mut sqrt_buf = unsafe { core::mem::MaybeUninit::<[Field25519; N]>::zeroed().assume_init() };
+  unsafe {
+    let mut one_plus_ur_square_inv = &raw mut one_plus_ur_square_inv[0];
+    let mut upsilon = &raw mut upsilon[0];
+    let mut sqrt_buf = &raw mut sqrt_buf[0];
+    let mut i = 0;
+    while i < N {
+      *upsilon = (*one_plus_ur_square_inv).mul_limb(A_LIMB).neg();
+      *sqrt_buf = curve_equation(*upsilon);
+      one_plus_ur_square_inv = one_plus_ur_square_inv.offset(1);
+      upsilon = upsilon.offset(1);
+      sqrt_buf = sqrt_buf.offset(1);
+
+      i = i.wrapping_add(1);
+    }
+  }
+
+  let mut sqrt_scratch =
+    unsafe { core::mem::MaybeUninit::<[Field25519; N]>::zeroed().assume_init() };
+  batch_sqrt(&mut sqrt_buf, &mut sqrt_scratch, &mut scratch);
+
   let mut u_epsilon =
     unsafe { core::mem::MaybeUninit::<[(Field25519, u8); N]>::zeroed().assume_init() };
   let mut x_and_y_denom =
     unsafe { core::mem::MaybeUninit::<[Field25519; TWO_N]>::zeroed().assume_init() };
   unsafe {
-    let mut one_plus_ur_square_inv = &raw mut one_plus_ur_square_inv[0];
+    let mut upsilon = &raw mut upsilon[0];
+    let mut sqrt_buf = &raw mut sqrt_buf[0];
     let mut u_epsilon = &raw mut u_epsilon[0];
     let mut x_and_y_denom = &raw mut x_and_y_denom[0];
     let mut i = 0;
     while i < N {
-      let upsilon = (*one_plus_ur_square_inv).mul_limb(A_LIMB).neg();
-      one_plus_ur_square_inv = one_plus_ur_square_inv.offset(1);
-
-      let (u_i, epsilon_i);
-      (u_i, *x_and_y_denom, epsilon_i) = if let Some(upsilon_v) = curve_equation(upsilon).sqrt() {
-        (upsilon, upsilon_v, 1)
+      if (*sqrt_buf).eq(Field25519::ZERO) {
+        *upsilon = (*upsilon).add_limb(A_LIMB).neg();
+        *sqrt_buf = curve_equation(*upsilon);
       } else {
-        let other_candidate = upsilon.add_limb(A_LIMB).neg();
-        (
-          other_candidate,
-          curve_equation(other_candidate)
-            .sqrt()
-            .expect("one of these options will be a quadratic residue"),
-          0,
-        )
-      };
-      *x_and_y_denom.add(N) = u_i.add_one();
-      x_and_y_denom = x_and_y_denom.offset(1);
-      *u_epsilon = (u_i, epsilon_i);
-      u_epsilon = u_epsilon.offset(1);
+        *u_epsilon = (*upsilon, 1);
+        *x_and_y_denom = *sqrt_buf;
+        *x_and_y_denom.add(N) = (*upsilon).add_one();
+        *upsilon = Field25519::ZERO;
+        *sqrt_buf = Field25519::ZERO;
+      }
 
+      upsilon = upsilon.offset(1);
+      sqrt_buf = sqrt_buf.offset(1);
+      u_epsilon = u_epsilon.offset(1);
+      x_and_y_denom = x_and_y_denom.offset(1);
+      i = i.wrapping_add(1);
+    }
+  }
+
+  batch_sqrt(&mut sqrt_buf, &mut sqrt_scratch, &mut scratch);
+
+  unsafe {
+    let mut upsilon = &raw mut upsilon[0];
+    let mut sqrt_buf = &raw mut sqrt_buf[0];
+    let mut u_epsilon = &raw mut u_epsilon[0];
+    let mut x_and_y_denom = &raw mut x_and_y_denom[0];
+    let mut i = 0;
+    while i < N {
+      if !(*sqrt_buf).eq(Field25519::ZERO) {
+        *u_epsilon = (*upsilon, 0);
+        *x_and_y_denom = *sqrt_buf;
+        *x_and_y_denom.add(N) = (*upsilon).add_one();
+      }
+
+      upsilon = upsilon.offset(1);
+      sqrt_buf = sqrt_buf.offset(1);
+      u_epsilon = u_epsilon.offset(1);
+      x_and_y_denom = x_and_y_denom.offset(1);
       i = i.wrapping_add(1);
     }
   }
@@ -131,7 +216,7 @@ pub(crate) const fn const_map_batch<const N: usize, const TWO_N: usize>(
       let (u_i, epsilon_i) = *u_epsilon;
       u_epsilon = u_epsilon.offset(1);
       let mut x_i = {
-        let x_candidate = SQRT_NEG_A_2.mul(u_i.mul(*x_and_y_denom));
+        let x_candidate = SQRT_NEG_A_2.mul(u_i.chained_mul(*x_and_y_denom));
         // If the parity of our candidate is distinct from epsilon, negate it
         if ((x_candidate.retrieve().as_limbs()[0].0 % 2) as u8) != epsilon_i {
           x_candidate.neg()
@@ -158,7 +243,7 @@ pub(crate) const fn const_map_batch<const N: usize, const TWO_N: usize>(
           let h = d.sub(b);
           x_i = e.mul(f);
           y_i = g.mul(h);
-          z_i = f.mul(g);
+          z_i = f.chained_mul(g);
 
           i = i.wrapping_add(1);
         }
