@@ -23,7 +23,10 @@ const fn batch_invert<const N: usize>(to_invert: &mut [Field25519; N], scratch: 
     let mut to_invert = &raw mut to_invert[1];
     let mut i = 1;
     while i < N {
-      *scratch = (*scratch.offset(-1)).chained_mul(*to_invert);
+      *scratch = *scratch.offset(-1);
+      if !(*to_invert).eq(Field25519::ONE) {
+        *scratch = (*scratch).chained_mul(*to_invert);
+      }
       scratch = scratch.offset(1);
       to_invert = to_invert.offset(1);
       i = i.wrapping_add(1);
@@ -38,7 +41,9 @@ const fn batch_invert<const N: usize>(to_invert: &mut [Field25519; N], scratch: 
     while i > 0 {
       scratch = scratch.offset(-1);
       let res_i = accum.mul(*scratch);
-      accum = accum.chained_mul(*to_invert);
+      if !(*to_invert).eq(Field25519::ONE) {
+        accum = accum.chained_mul(*to_invert);
+      }
       *to_invert = res_i;
       to_invert = to_invert.offset(-1);
       i = i.wrapping_sub(1);
