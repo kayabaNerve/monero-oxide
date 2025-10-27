@@ -28,7 +28,7 @@ monero-base58 = { path = "../base58", default-features = false }
 [dev-dependencies]
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
 
-curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "zeroize"] }
+curve25519-dalek = { version = "4", default-features = false, features = ["rand_core", "precomputed-tables"] }
 
 hex-literal = { version = ">= 0.4, <= 1", default-features = false }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }

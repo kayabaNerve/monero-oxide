@@ -57,5 +57,6 @@ std = [
   "monero-io/std",
   "monero-ed25519/std",
 ]
+compile-time-generators = ["curve25519-dalek/precomputed-tables"]
 multisig = ["rand_chacha", "transcript", "group", "dalek-ff-group", "frost", "std"]
-default = ["std"]
+default = ["std", "compile-time-generators"]

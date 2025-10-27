@@ -65,16 +65,6 @@ impl Commitment {
     w.write_all(&self.amount.to_le_bytes())
   }
 
-  /// Serialize the `Commitment` to a `Vec<u8>`.
-  ///
-  /// This is not a Monero-protocol-defined struct, and this is accordingly not a
-  /// Monero-protocol-defined serialization.
-  pub fn serialize(&self) -> Vec<u8> {
-    let mut res = Vec::with_capacity(32 + 8);
-    self.write(&mut res).expect("write failed but <Vec as io::Write> doesn't fail");
-    res
-  }
-
   /// Read a `Commitment`.
   ///
   /// This is not a Monero-protocol-defined struct, and this is accordingly not a

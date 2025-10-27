@@ -6,7 +6,6 @@
 
 use core::ops::Deref;
 use std_shims::{
-  sync::LazyLock,
   vec,
   vec::Vec,
   io::{self, Read, Write},
@@ -18,11 +17,15 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 use subtle::{ConstantTimeEq, ConditionallySelectable};
 
 use curve25519_dalek::{
-  constants::{ED25519_BASEPOINT_TABLE, ED25519_BASEPOINT_POINT},
+  constants::ED25519_BASEPOINT_POINT,
   scalar::Scalar as DScalar,
   traits::{IsIdentity, MultiscalarMul, VartimePrecomputedMultiscalarMul},
   edwards::{EdwardsPoint, VartimeEdwardsPrecomputation},
 };
+#[cfg(feature = "compile-time-generators")]
+use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+#[cfg(not(feature = "compile-time-generators"))]
+use curve25519_dalek::constants::ED25519_BASEPOINT_POINT as ED25519_BASEPOINT_TABLE;
 
 use monero_io::*;
 use monero_ed25519::*;
@@ -39,18 +42,18 @@ pub use multisig::{ClsagMultisigMaskSender, ClsagAddendum, ClsagMultisig};
 mod tests;
 
 #[cfg(feature = "std")]
-static G_PRECOMP_CELL: LazyLock<VartimeEdwardsPrecomputation> =
-  LazyLock::new(|| VartimeEdwardsPrecomputation::new([ED25519_BASEPOINT_POINT]));
+static G_PRECOMP_CELL: std_shims::sync::LazyLock<VartimeEdwardsPrecomputation> =
+  std_shims::sync::LazyLock::new(|| VartimeEdwardsPrecomputation::new([ED25519_BASEPOINT_POINT]));
 /// A cached (if std) pre-computation of the Ed25519 generator, G.
 #[cfg(feature = "std")]
 #[allow(non_snake_case)]
-pub fn G_PRECOMP() -> &'static VartimeEdwardsPrecomputation {
+fn G_PRECOMP() -> &'static VartimeEdwardsPrecomputation {
   &G_PRECOMP_CELL
 }
 /// A cached (if std) pre-computation of the Ed25519 generator, G.
 #[cfg(not(feature = "std"))]
 #[allow(non_snake_case)]
-pub fn G_PRECOMP() -> VartimeEdwardsPrecomputation {
+fn G_PRECOMP() -> VartimeEdwardsPrecomputation {
   VartimeEdwardsPrecomputation::new([ED25519_BASEPOINT_POINT])
 }
 
