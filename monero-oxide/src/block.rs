@@ -6,7 +6,6 @@ use std_shims::{
 
 use crate::{
   io::*,
-  ed25519::*,
   primitives::keccak256,
   merkle::merkle_root,
   transaction::{Input, Transaction},
