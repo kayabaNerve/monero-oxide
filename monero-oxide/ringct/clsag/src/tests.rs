@@ -11,8 +11,7 @@ use transcript::{Transcript, RecommendedTranscript};
 use frost::curve::Ed25519;
 
 use monero_ed25519::{CompressedPoint, Point, Commitment};
-use monero_primitives::Decoys;
-use crate::{ClsagContext, Clsag};
+use crate::{Decoys, ClsagContext, Clsag};
 #[cfg(feature = "multisig")]
 use crate::ClsagMultisig;
 

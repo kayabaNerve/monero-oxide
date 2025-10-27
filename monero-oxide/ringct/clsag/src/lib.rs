@@ -26,7 +26,9 @@ use curve25519_dalek::{
 
 use monero_io::*;
 use monero_ed25519::*;
-use monero_primitives::Decoys;
+
+mod decoys;
+use decoys::Decoys;
 
 #[cfg(feature = "multisig")]
 mod multisig;
