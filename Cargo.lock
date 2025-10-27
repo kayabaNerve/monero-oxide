@@ -848,14 +848,26 @@ version = "0.1.0"
 dependencies = [
  "curve25519-dalek",
  "hex-literal",
+ "monero-bulletproofs-generators",
  "monero-ed25519",
- "monero-generators",
  "monero-io",
  "monero-primitives",
  "rand_core",
  "std-shims",
  "thiserror",
  "zeroize",
+]
+
+[[package]]
+name = "monero-bulletproofs-generators"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "hex",
+ "monero-ed25519",
+ "monero-io",
+ "monero-primitives",
+ "std-shims",
 ]
 
 [[package]]
@@ -868,7 +880,6 @@ dependencies = [
  "group",
  "modular-frost",
  "monero-ed25519",
- "monero-generators",
  "monero-io",
  "monero-primitives",
  "rand_chacha",
@@ -892,18 +903,6 @@ dependencies = [
  "std-shims",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "monero-generators"
-version = "0.4.0"
-dependencies = [
- "curve25519-dalek",
- "hex",
- "monero-ed25519",
- "monero-io",
- "sha3",
- "std-shims",
 ]
 
 [[package]]
@@ -936,7 +935,6 @@ dependencies = [
  "monero-bulletproofs",
  "monero-clsag",
  "monero-ed25519",
- "monero-generators",
  "monero-io",
  "monero-mlsag",
  "monero-primitives",

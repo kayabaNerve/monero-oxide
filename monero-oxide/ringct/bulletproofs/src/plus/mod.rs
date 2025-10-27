@@ -4,7 +4,7 @@ use std_shims::sync::LazyLock;
 
 use curve25519_dalek::{constants::ED25519_BASEPOINT_POINT, Scalar, EdwardsPoint};
 
-use monero_generators::Generators;
+use monero_bulletproofs_generators::Generators;
 
 pub(crate) use crate::{scalar_vector::ScalarVector, point_vector::PointVector, MONERO_H};
 

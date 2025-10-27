@@ -7,7 +7,7 @@ use curve25519_dalek::{
   edwards::EdwardsPoint,
 };
 
-use monero_generators::Generators;
+use monero_bulletproofs_generators::Generators;
 
 use crate::{MONERO_H, original, plus};
 

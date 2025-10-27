@@ -5,24 +5,22 @@
 
 use std_shims::prelude::*;
 
-use sha3::{Digest, Keccak256};
-
 use curve25519_dalek::{EdwardsPoint, edwards::CompressedEdwardsY};
 
 use monero_io::VarInt;
 use monero_ed25519::Point;
-
-fn keccak256(data: &[u8]) -> [u8; 32] {
-  Keccak256::digest(data).into()
-}
+use monero_primitives::keccak256;
 
 /// The maximum amount of commitments provable for within a single Bulletproof(+).
+#[doc(hidden)]
 pub const MAX_BULLETPROOF_COMMITMENTS: usize = 16;
 /// The amount of bits a value within a commitment may use.
+#[doc(hidden)]
 pub const COMMITMENT_BITS: usize = 64;
 
 /// Container struct for Bulletproofs(+) generators.
 #[allow(non_snake_case)]
+#[doc(hidden)]
 pub struct Generators {
   /// The G (bold) vector of generators.
   #[doc(hidden)]
@@ -36,6 +34,7 @@ pub struct Generators {
 ///
 /// Consumers should not call this function ad-hoc, yet call it within a build script or use a
 /// once-initialized static.
+#[doc(hidden)]
 pub fn bulletproofs_generators(dst: &'static [u8]) -> Generators {
   // The maximum amount of bits used within a single range proof.
   const MAX_MN: usize = MAX_BULLETPROOF_COMMITMENTS * COMMITMENT_BITS;

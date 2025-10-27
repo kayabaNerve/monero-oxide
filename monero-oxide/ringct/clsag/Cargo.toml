@@ -25,7 +25,7 @@ zeroize = { version = "^1.5", default-features = false, features = ["zeroize_der
 subtle = { version = "^2.4", default-features = false }
 
 # Cryptographic dependencies
-curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "zeroize"] }
+curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "zeroize", "rand_core"] }
 
 # Multisig dependencies
 rand_chacha = { version = "0.3", default-features = false, optional = true }
@@ -37,7 +37,6 @@ frost = { package = "modular-frost", version = "0.11", default-features = false,
 # Other Monero dependencies
 monero-io = { path = "../../io", version = "0.1", default-features = false }
 monero-ed25519 = { path = "../../ed25519", version = "0.1", default-features = false }
-monero-generators = { path = "../../generators", version = "0.4", default-features = false }
 monero-primitives = { path = "../../primitives", version = "0.1", default-features = false }
 
 [dev-dependencies]
@@ -58,7 +57,6 @@ std = [
 
   "monero-io/std",
   "monero-ed25519/std",
-  "monero-generators/std",
   "monero-primitives/std",
 ]
 multisig = ["rand_chacha", "transcript", "group", "dalek-ff-group", "frost", "std"]

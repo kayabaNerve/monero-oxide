@@ -17,8 +17,8 @@ use curve25519_dalek::EdwardsPoint;
 
 use monero_io::*;
 use monero_ed25519::*;
-pub use monero_generators::MAX_BULLETPROOF_COMMITMENTS as MAX_COMMITMENTS;
-use monero_generators::COMMITMENT_BITS;
+pub use monero_bulletproofs_generators::MAX_BULLETPROOF_COMMITMENTS as MAX_COMMITMENTS;
+use monero_bulletproofs_generators::COMMITMENT_BITS;
 
 pub(crate) mod scalar_vector;
 pub(crate) mod point_vector;
