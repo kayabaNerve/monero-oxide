@@ -158,7 +158,7 @@ impl Point {
     self.0
   }
 
-  /// Treat a point as a key image.
+  /// Interpret a point as a key image.
   ///
   /// This is hidden as it is not part of our API commitment. No guarantees are made for it.
   #[doc(hidden)]

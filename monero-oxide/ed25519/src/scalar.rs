@@ -64,7 +64,8 @@ impl Scalar {
   /// Create a `Scalar` from a `curve25519_dalek::Scalar`.
   ///
   /// This is not a public function as it is not part of our API commitment.
-  pub(crate) fn from(scalar: curve25519_dalek::Scalar) -> Self {
+  #[doc(hidden)]
+  pub fn from(scalar: curve25519_dalek::Scalar) -> Self {
     Self(scalar.to_bytes())
   }
 
