@@ -881,7 +881,6 @@ dependencies = [
  "modular-frost",
  "monero-ed25519",
  "monero-io",
- "monero-primitives",
  "rand_chacha",
  "rand_core",
  "std-shims",
@@ -896,8 +895,6 @@ version = "0.1.0"
 dependencies = [
  "crypto-bigint",
  "curve25519-dalek",
- "dalek-ff-group 0.5.0",
- "group",
  "monero-io",
  "sha3",
  "std-shims",
@@ -971,12 +968,7 @@ dependencies = [
 name = "monero-primitives"
 version = "0.1.0"
 dependencies = [
- "hex",
- "monero-ed25519",
- "monero-io",
  "sha3",
- "std-shims",
- "zeroize",
 ]
 
 [[package]]

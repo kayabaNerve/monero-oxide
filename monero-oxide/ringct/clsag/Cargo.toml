@@ -37,7 +37,6 @@ frost = { package = "modular-frost", version = "0.11", default-features = false,
 # Other Monero dependencies
 monero-io = { path = "../../io", version = "0.1", default-features = false }
 monero-ed25519 = { path = "../../ed25519", version = "0.1", default-features = false }
-monero-primitives = { path = "../../primitives", version = "0.1", default-features = false }
 
 [dev-dependencies]
 frost = { package = "modular-frost", version = "0.11", default-features = false, features = ["ed25519", "tests"] }
@@ -57,7 +56,6 @@ std = [
 
   "monero-io/std",
   "monero-ed25519/std",
-  "monero-primitives/std",
 ]
 multisig = ["rand_chacha", "transcript", "group", "dalek-ff-group", "frost", "std"]
 default = ["std"]
