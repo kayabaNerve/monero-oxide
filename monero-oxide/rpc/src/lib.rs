@@ -25,6 +25,7 @@ use serde_json::{Value, json};
 
 use monero_oxide::{
   io::*,
+  ed25519::CompressedPoint,
   transaction::{Input, Timelock, Pruned, Transaction},
   block::Block,
   DEFAULT_LOCK_WINDOW,
@@ -239,13 +240,15 @@ fn hash_hex(hash: &str) -> Result<[u8; 32], RpcError> {
 }
 
 fn rpc_point(point: &str) -> Result<EdwardsPoint, RpcError> {
-  CompressedPoint(
-    rpc_hex(point)?
-      .try_into()
-      .map_err(|_| RpcError::InvalidNode(format!("invalid point: {point}")))?,
+  Ok(
+    CompressedPoint::from(
+      <[u8; 32]>::try_from(rpc_hex(point)?)
+        .map_err(|_| RpcError::InvalidNode(format!("invalid point: {point}")))?,
+    )
+    .decompress()
+    .ok_or_else(|| RpcError::InvalidNode(format!("invalid point: {point}")))?
+    .into(),
   )
-  .decompress()
-  .ok_or_else(|| RpcError::InvalidNode(format!("invalid point: {point}")))
 }
 
 /// An RPC connection to a Monero daemon.
