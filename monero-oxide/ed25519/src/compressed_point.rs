@@ -57,10 +57,7 @@ impl CompressedPoint {
   ]);
   /// The `G` generator for the Monero protocol.
   #[rustfmt::skip]
-  pub const G: Self = Self([
-     88, 102, 102, 102, 102, 102, 102, 102, 102, 102, 102, 102, 102, 102, 102, 102,
-    102, 102, 102, 102, 102, 102, 102, 102, 102, 102, 102, 102, 102, 102, 102, 102,
-  ]);
+  pub const G: Self = Self(curve25519_dalek::constants::ED25519_BASEPOINT_COMPRESSED.to_bytes());
   /// The `H` generator for the Monero protocol.
   #[rustfmt::skip]
   pub const H: Self = Self([
