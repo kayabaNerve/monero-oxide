@@ -1,13 +1,15 @@
 use std_shims::{vec, vec::Vec};
 
-use curve25519_dalek::{
-  constants::{ED25519_BASEPOINT_COMPRESSED, ED25519_BASEPOINT_TABLE},
-  Scalar,
-};
+#[cfg(feature = "compile-time-generators")]
+use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+#[cfg(not(feature = "compile-time-generators"))]
+use curve25519_dalek::constants::ED25519_BASEPOINT_POINT as ED25519_BASEPOINT_TABLE;
+
+use curve25519_dalek::Scalar;
 
 use crate::{
   io::{VarInt, CompressedPoint},
-  primitives::Commitment,
+  ed25519::Commitment,
   ringct::{
     clsag::Clsag, bulletproofs::Bulletproof, EncryptedAmount, RctType, RctBase, RctPrunable,
     RctProofs,
@@ -131,9 +133,9 @@ impl SignableTransaction {
       let mut clsags = Vec::with_capacity(self.inputs.len());
       let mut pseudo_outs = Vec::with_capacity(self.inputs.len());
       for _ in &self.inputs {
-        key_images.push(CompressedPoint::from(ED25519_BASEPOINT_COMPRESSED));
+        key_images.push(CompressedPoint::G);
         clsags.push(Clsag {
-          D: CompressedPoint::from(ED25519_BASEPOINT_COMPRESSED),
+          D: CompressedPoint::G,
           s: vec![
             Scalar::ZERO;
             match self.rct_type {
@@ -144,7 +146,7 @@ impl SignableTransaction {
           ],
           c1: Scalar::ZERO,
         });
-        pseudo_outs.push(CompressedPoint::from(ED25519_BASEPOINT_COMPRESSED));
+        pseudo_outs.push(CompressedPoint::G);
       }
       let mut encrypted_amounts = Vec::with_capacity(self.payments.len());
       let mut bp_commitments = Vec::with_capacity(self.payments.len());
@@ -152,7 +154,7 @@ impl SignableTransaction {
       for _ in &self.payments {
         encrypted_amounts.push(EncryptedAmount::Compact { amount: [0; 8] });
         bp_commitments.push(Commitment::zero());
-        commitments.push(CompressedPoint::from(ED25519_BASEPOINT_COMPRESSED));
+        commitments.push(CompressedPoint::G);
       }
 
       let padded_log2 = {

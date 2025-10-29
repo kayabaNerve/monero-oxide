@@ -2,10 +2,15 @@ use core::ops::Deref;
 
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-use curve25519_dalek::{constants::ED25519_BASEPOINT_TABLE, Scalar, EdwardsPoint};
+#[cfg(feature = "compile-time-generators")]
+use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+#[cfg(not(feature = "compile-time-generators"))]
+use curve25519_dalek::constants::ED25519_BASEPOINT_POINT as ED25519_BASEPOINT_TABLE;
+
+use curve25519_dalek::EdwardsPoint;
 
 use crate::{
-  primitives::keccak256_to_scalar,
+  ed25519::Scalar,
   address::{Network, AddressType, SubaddressIndex, MoneroAddress},
 };
 
@@ -52,7 +57,7 @@ impl ViewPair {
   }
 
   pub(crate) fn subaddress_derivation(&self, index: SubaddressIndex) -> Scalar {
-    keccak256_to_scalar(Zeroizing::new(
+    Scalar::hash(Zeroizing::new(
       [
         b"SubAddr\0".as_slice(),
         Zeroizing::new(self.view.to_bytes()).as_slice(),

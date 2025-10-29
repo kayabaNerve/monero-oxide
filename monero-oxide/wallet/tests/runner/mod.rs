@@ -4,7 +4,12 @@ use std_shims::sync::LazyLock;
 use zeroize::Zeroizing;
 use rand_core::OsRng;
 
-use curve25519_dalek::{constants::ED25519_BASEPOINT_TABLE, scalar::Scalar};
+use curve25519_dalek::Scalar;
+
+#[cfg(feature = "compile-time-generators")]
+use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+#[cfg(not(feature = "compile-time-generators"))]
+use curve25519_dalek::constants::ED25519_BASEPOINT_POINT as ED25519_BASEPOINT_TABLE;
 
 use tokio::sync::Mutex;
 

@@ -10,7 +10,13 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 use rand_core::{RngCore, CryptoRng};
 use rand::seq::SliceRandom;
 
-use curve25519_dalek::{constants::ED25519_BASEPOINT_TABLE, Scalar};
+use curve25519_dalek::Scalar;
+
+#[cfg(feature = "compile-time-generators")]
+use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+#[cfg(not(feature = "compile-time-generators"))]
+use curve25519_dalek::constants::ED25519_BASEPOINT_POINT as ED25519_BASEPOINT_TABLE;
+
 #[cfg(feature = "multisig")]
 use frost::FrostError;
 

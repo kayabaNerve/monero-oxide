@@ -6,9 +6,12 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 use rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
-use curve25519_dalek::{constants::ED25519_BASEPOINT_TABLE, Scalar, EdwardsPoint};
+use curve25519_dalek::{Scalar, EdwardsPoint};
 
-use monero_oxide::io::CompressedPoint;
+#[cfg(feature = "compile-time-generators")]
+use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+#[cfg(not(feature = "compile-time-generators"))]
+use curve25519_dalek::constants::ED25519_BASEPOINT_POINT as ED25519_BASEPOINT_TABLE;
 
 use crate::{
   primitives::{keccak256, Commitment},

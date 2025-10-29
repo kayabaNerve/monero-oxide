@@ -23,7 +23,7 @@ thiserror = { version = "2", default-features = false }
 rand_core = { version = "0.6", default-features = false }
 zeroize = { version = "^1.5", default-features = false, features = ["zeroize_derive"] }
 
-curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "zeroize"] }
+curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "zeroize", "rand_core"] }
 
 monero-io = { path = "../../io", version = "0.1", default-features = false }
 monero-ed25519 = { path = "../../ed25519", version = "0.1", default-features = false }

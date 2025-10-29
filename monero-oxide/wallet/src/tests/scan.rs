@@ -1,6 +1,11 @@
 use zeroize::Zeroizing;
 
-use curve25519_dalek::{Scalar, constants::ED25519_BASEPOINT_TABLE};
+#[cfg(feature = "compile-time-generators")]
+use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+#[cfg(not(feature = "compile-time-generators"))]
+use curve25519_dalek::constants::ED25519_BASEPOINT_POINT as ED25519_BASEPOINT_TABLE;
+
+use curve25519_dalek::Scalar;
 
 use crate::{
   io::CompressedPoint,
