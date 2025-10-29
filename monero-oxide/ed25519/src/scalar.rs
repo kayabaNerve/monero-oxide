@@ -77,10 +77,11 @@ impl Scalar {
     curve25519_dalek::Scalar::from_canonical_bytes(self.0)
       .expect("`Scalar` instantiated with invalid contents")
   }
+
   /// Sample a scalar via hash function.
   ///
   /// The implementation of this is `keccak256(data) % l`, where `l` is the largest prime factor in
-  /// the amount of points on the Ed25519 elliptic curve.
+  /// the amount of points on the Ed25519 elliptic curve. Notably, this is not a wide reduction.
   ///
   /// This function panics if it finds a Keccak-256 preimage for an encoding of a multiple of `l`.
   pub fn hash(data: impl AsRef<[u8]>) -> Self {
