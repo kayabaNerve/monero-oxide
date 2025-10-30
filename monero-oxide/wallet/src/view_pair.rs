@@ -31,7 +31,7 @@ pub enum ViewPairError {
 /// This is composed of the public spend key and the private view key.
 #[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct ViewPair {
-  spend: Point,
+  pub(crate) spend: Point,
   pub(crate) view: Zeroizing<Scalar>,
 }
 

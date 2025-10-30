@@ -2,6 +2,7 @@
 use std_shims::prelude::*;
 use std_shims::io;
 
+use subtle::{Choice, ConstantTimeEq};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use monero_io::*;
@@ -35,6 +36,18 @@ const MAX_RING_SIZE: usize = u8::MAX as usize;
 
 #[allow(clippy::len_without_is_empty)]
 impl Decoys {
+  /// This equality runs in constant-time if the decoys are the same length.
+  ///
+  /// This is not a public function as it is not part of our API commitment.
+  #[doc(hidden)]
+  pub fn ct_eq(&self, other: &Self) -> Choice {
+    let ring = self.ring.len().ct_eq(&other.ring.len()) &
+      self.ring.iter().zip(&other.ring).fold(Choice::from(1u8), |accum, (lhs, rhs)| {
+        accum & lhs.as_slice().ct_eq(rhs.as_slice())
+      });
+    self.offsets.ct_eq(&other.offsets) & self.signer_index.ct_eq(&other.signer_index) & ring
+  }
+
   /// Create a new instance of decoy data.
   ///
   /// `offsets` are the positions of each ring member within the Monero blockchain, offset from the

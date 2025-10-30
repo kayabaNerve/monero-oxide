@@ -5,6 +5,7 @@ use std_shims::{
   string::{String, ToString},
 };
 
+use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use rand_core::{RngCore, CryptoRng};
@@ -55,6 +56,30 @@ enum ChangeEnum {
   Guaranteed { view_pair: GuaranteedViewPair, subaddress: Option<SubaddressIndex> },
 }
 
+impl PartialEq for ChangeEnum {
+  fn eq(&self, other: &Self) -> bool {
+    match (self, other) {
+      (ChangeEnum::AddressOnly(lhs), ChangeEnum::AddressOnly(rhs)) => lhs == rhs,
+      (
+        ChangeEnum::Standard { view_pair: lhs_vp, subaddress: lhs_s },
+        ChangeEnum::Standard { view_pair: rhs_vp, subaddress: rhs_s },
+      ) => {
+        bool::from(lhs_vp.spend.ct_eq(&rhs_vp.spend) & lhs_vp.view.ct_eq(&rhs_vp.view)) &
+          (lhs_s == rhs_s)
+      }
+      (
+        ChangeEnum::Guaranteed { view_pair: lhs_vp, subaddress: lhs_s },
+        ChangeEnum::Guaranteed { view_pair: rhs_vp, subaddress: rhs_s },
+      ) => {
+        bool::from(lhs_vp.0.spend.ct_eq(&rhs_vp.0.spend) & lhs_vp.0.view.ct_eq(&rhs_vp.0.view)) &
+          (lhs_s == rhs_s)
+      }
+      _ => false,
+    }
+  }
+}
+impl Eq for ChangeEnum {}
+
 impl ChangeEnum {
   fn address(&self) -> MoneroAddress {
     match self {
@@ -85,7 +110,7 @@ impl fmt::Debug for ChangeEnum {
 }
 
 /// Specification for a change output.
-#[derive(Clone, Zeroize)]
+#[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct Change(Option<ChangeEnum>);
 
 impl Change {
@@ -131,7 +156,7 @@ impl Change {
   }
 }
 
-#[derive(Clone, Debug, Zeroize)]
+#[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 enum InternalPayment {
   Payment(MoneroAddress, u64),
   Change(ChangeEnum),
@@ -147,7 +172,7 @@ impl InternalPayment {
 }
 
 /// An error while sending Monero.
-#[derive(Clone, Debug, thiserror::Error)]
+#[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
 pub enum SendError {
   /// The RingCT type to produce proofs for this transaction with weren't supported.
   #[error("this library doesn't yet support that RctType")]
@@ -230,6 +255,18 @@ pub struct SignableTransaction {
   data: Vec<Vec<u8>>,
   fee_rate: FeeRate,
 }
+
+impl PartialEq for SignableTransaction {
+  fn eq(&self, other: &Self) -> bool {
+    (self.rct_type == other.rct_type) &&
+      bool::from(self.outgoing_view_key.deref().ct_eq(other.outgoing_view_key.deref())) &&
+      (self.inputs == other.inputs) &&
+      (self.payments == other.payments) &&
+      (self.data == other.data) &&
+      (self.fee_rate == other.fee_rate)
+  }
+}
+impl Eq for SignableTransaction {}
 
 impl fmt::Debug for SignableTransaction {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

@@ -95,6 +95,15 @@ pub struct SubaddressIndex {
 }
 
 impl SubaddressIndex {
+  /// A constant-time `eq`, albeit one not exposed via `ConstantTimeEq`.
+  ///
+  /// This is not a public function as it is not part of our API commitment.
+  #[doc(hidden)]
+  pub fn ct_eq(&self, other: &Self) -> subtle::Choice {
+    use subtle::ConstantTimeEq;
+    self.account.ct_eq(&other.account) & self.address.ct_eq(&other.address)
+  }
+
   /// Create a new SubaddressIndex.
   pub const fn new(account: u32, address: u32) -> Option<SubaddressIndex> {
     if (account == 0) && (address == 0) {

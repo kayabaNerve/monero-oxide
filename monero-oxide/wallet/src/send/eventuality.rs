@@ -23,7 +23,7 @@ use crate::{
 /// transaction will not match for multiple `Eventuality`s unless the `SignableTransaction`s they
 /// were built from were in conflict (and their intended transactions cannot simultaneously exist
 /// on-chain).
-#[derive(Clone, Debug, Zeroize)]
+#[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct Eventuality(SignableTransaction);
 
 impl From<SignableTransaction> for Eventuality {

@@ -1,5 +1,6 @@
 use std_shims::{sync::LazyLock, io};
 
+use subtle::{Choice, ConstantTimeEq};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use monero_io::read_u64;
@@ -20,6 +21,12 @@ pub struct Commitment {
   pub mask: Scalar,
   /// The amount committed to by this commitment.
   pub amount: u64,
+}
+
+impl ConstantTimeEq for Commitment {
+  fn ct_eq(&self, other: &Self) -> Choice {
+    self.mask.ct_eq(&other.mask) & self.amount.ct_eq(&other.amount)
+  }
 }
 
 impl core::fmt::Debug for Commitment {

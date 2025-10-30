@@ -5,6 +5,7 @@ use std_shims::{
 };
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
+use subtle::{Choice, ConstantTimeEq};
 
 use crate::{
   io::*,
@@ -34,6 +35,12 @@ impl core::fmt::Debug for AbsoluteId {
 }
 
 impl AbsoluteId {
+  /// A constant-time `eq`, albeit one not exposed via `ConstantTimeEq`.
+  fn ct_eq(&self, other: &Self) -> Choice {
+    self.transaction.ct_eq(&other.transaction) &
+      self.index_in_transaction.ct_eq(&other.index_in_transaction)
+  }
+
   /// Write the AbsoluteId.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
@@ -67,6 +74,11 @@ impl core::fmt::Debug for RelativeId {
 }
 
 impl RelativeId {
+  /// A constant-time `eq`, albeit one not exposed via `ConstantTimeEq`.
+  fn ct_eq(&self, other: &Self) -> Choice {
+    self.index_on_blockchain.ct_eq(&other.index_on_blockchain)
+  }
+
   /// Write the RelativeId.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
@@ -103,6 +115,13 @@ impl core::fmt::Debug for OutputData {
 }
 
 impl OutputData {
+  /// A constant-time `eq`, albeit one not exposed via `ConstantTimeEq`.
+  pub(crate) fn ct_eq(&self, other: &Self) -> Choice {
+    self.key.ct_eq(&other.key) &
+      self.key_offset.ct_eq(&other.key_offset) &
+      self.commitment.ct_eq(&other.commitment)
+  }
+
   /// The key this output may be spent by.
   pub(crate) fn key(&self) -> Point {
     self.key
@@ -175,6 +194,13 @@ impl core::fmt::Debug for Metadata {
 }
 
 impl Metadata {
+  fn eq(&self, other: &Self) -> bool {
+    (self.additional_timelock == other.additional_timelock) &&
+      (self.subaddress == other.subaddress) &&
+      (self.payment_id == other.payment_id) &&
+      (self.arbitrary_data == other.arbitrary_data)
+  }
+
   /// Write the Metadata.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
@@ -277,6 +303,18 @@ pub struct WalletOutput {
   /// Associated metadata relevant for handling it as a payment.
   pub(crate) metadata: Metadata,
 }
+
+impl PartialEq for WalletOutput {
+  /// This equality evaluates the entire object, not just the ID.
+  fn eq(&self, other: &Self) -> bool {
+    bool::from(
+      self.absolute_id.ct_eq(&other.absolute_id) &
+        self.relative_id.ct_eq(&other.relative_id) &
+        self.data.ct_eq(&other.data),
+    ) & self.metadata.eq(&other.metadata)
+  }
+}
+impl Eq for WalletOutput {}
 
 impl WalletOutput {
   /// The hash of the transaction which created this output.

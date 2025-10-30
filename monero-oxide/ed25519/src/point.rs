@@ -14,6 +14,7 @@ impl ConstantTimeEq for Point {
     self.0.ct_eq(&other.0)
   }
 }
+
 impl PartialEq for Point {
   /// This defers to `ConstantTimeEq::ct_eq`.
   fn eq(&self, other: &Self) -> bool {

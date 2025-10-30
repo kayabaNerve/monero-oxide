@@ -259,6 +259,13 @@ pub struct OutputWithDecoys {
   decoys: Decoys,
 }
 
+impl PartialEq for OutputWithDecoys {
+  fn eq(&self, other: &Self) -> bool {
+    bool::from(self.output.ct_eq(&other.output) & self.decoys.ct_eq(&other.decoys))
+  }
+}
+impl Eq for OutputWithDecoys {}
+
 impl OutputWithDecoys {
   /// Select decoys for this output.
   ///
