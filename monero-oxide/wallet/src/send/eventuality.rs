@@ -2,8 +2,6 @@ use std_shims::{vec::Vec, io};
 
 use zeroize::Zeroize;
 
-use monero_oxide::io::CompressedPoint;
-
 use crate::{
   ringct::PrunedRctProofs,
   transaction::{Input, Timelock, Pruned, Transaction},
@@ -25,7 +23,7 @@ use crate::{
 /// transaction will not match for multiple `Eventuality`s unless the `SignableTransaction`s they
 /// were built from were in conflict (and their intended transactions cannot simultaneously exist
 /// on-chain).
-#[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
+#[derive(Clone, Debug, Zeroize)]
 pub struct Eventuality(SignableTransaction);
 
 impl From<SignableTransaction> for Eventuality {
@@ -106,7 +104,7 @@ impl Eventuality {
     if base.commitments !=
       commitments_and_encrypted_amounts
         .iter()
-        .map(|(commitment, _)| CompressedPoint::from(commitment.calculate().compress()))
+        .map(|(commitment, _)| commitment.commit().compress())
         .collect::<Vec<_>>()
     {
       return false;

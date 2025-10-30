@@ -31,7 +31,7 @@ use monero_io::*;
 use monero_ed25519::*;
 
 mod decoys;
-use decoys::Decoys;
+pub use decoys::Decoys;
 
 #[cfg(feature = "multisig")]
 mod multisig;
@@ -343,7 +343,7 @@ impl Clsag {
     mut inputs: Vec<(Zeroizing<Scalar>, ClsagContext)>,
     sum_outputs: Scalar,
     msg_hash: [u8; 32],
-  ) -> Result<Vec<(Clsag, EdwardsPoint)>, ClsagError> {
+  ) -> Result<Vec<(Clsag, Point)>, ClsagError> {
     // Create the key images
     let mut key_image_generators = vec![];
     let mut key_images = vec![];
@@ -407,7 +407,7 @@ impl Clsag {
         )
         .is_ok());
 
-      res.push((clsag, pseudo_out));
+      res.push((clsag, Point::from(pseudo_out)));
     }
 
     Ok(res)

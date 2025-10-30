@@ -6,11 +6,9 @@ use std_shims::{
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use curve25519_dalek::{Scalar, edwards::EdwardsPoint};
-
 use crate::{
   io::*,
-  primitives::Commitment,
+  ed25519::{Scalar, CompressedPoint, Point, Commitment},
   transaction::Timelock,
   address::SubaddressIndex,
   extra::{MAX_ARBITRARY_DATA_SIZE, MAX_EXTRA_SIZE_BY_RELAY_RULE, PaymentId},
@@ -19,7 +17,7 @@ use crate::{
 /// An absolute output ID, defined as its transaction hash and output index.
 ///
 /// This is not the output's key as multiple outputs may share an output key.
-#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub(crate) struct AbsoluteId {
   pub(crate) transaction: [u8; 32],
   pub(crate) index_in_transaction: u64,
@@ -57,7 +55,7 @@ impl AbsoluteId {
 /// An output's relative ID.
 ///
 /// This is defined as the output's index on the blockchain.
-#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub(crate) struct RelativeId {
   pub(crate) index_on_blockchain: u64,
 }
@@ -87,9 +85,9 @@ impl RelativeId {
 }
 
 /// The data within an output, as necessary to spend the output.
-#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub(crate) struct OutputData {
-  pub(crate) key: EdwardsPoint,
+  pub(crate) key: Point,
   pub(crate) key_offset: Scalar,
   pub(crate) commitment: Commitment,
 }
@@ -98,7 +96,7 @@ impl core::fmt::Debug for OutputData {
   fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> Result<(), core::fmt::Error> {
     fmt
       .debug_struct("OutputData")
-      .field("key", &hex::encode(self.key.compress().0))
+      .field("key", &hex::encode(self.key.compress().to_bytes()))
       .field("commitment", &self.commitment)
       .finish_non_exhaustive()
   }
@@ -106,7 +104,7 @@ impl core::fmt::Debug for OutputData {
 
 impl OutputData {
   /// The key this output may be spent by.
-  pub(crate) fn key(&self) -> EdwardsPoint {
+  pub(crate) fn key(&self) -> Point {
     self.key
   }
 
@@ -127,7 +125,7 @@ impl OutputData {
   /// defined serialization.
   pub(crate) fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
     w.write_all(&self.key.compress().to_bytes())?;
-    w.write_all(&self.key_offset.to_bytes())?;
+    self.key_offset.write(w)?;
     self.commitment.write(w)
   }
 
@@ -146,15 +144,17 @@ impl OutputData {
   /// defined serialization.
   pub(crate) fn read<R: Read>(r: &mut R) -> io::Result<OutputData> {
     Ok(OutputData {
-      key: read_point(r)?,
-      key_offset: read_scalar(r)?,
+      key: CompressedPoint::read(r)?
+        .decompress()
+        .ok_or_else(|| io::Error::other("output data included an invalid key"))?,
+      key_offset: Scalar::read(r)?,
       commitment: Commitment::read(r)?,
     })
   }
 }
 
 /// The metadata for an output.
-#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub(crate) struct Metadata {
   pub(crate) additional_timelock: Timelock,
   pub(crate) subaddress: Option<SubaddressIndex>,
@@ -266,7 +266,7 @@ impl Metadata {
 /// This struct is bound to a specific instance of the blockchain. If the blockchain reorganizes
 /// the block this struct is bound to, it MUST be discarded. If any outputs are mutual to both
 /// blockchains, scanning the new blockchain will yield those outputs again.
-#[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct WalletOutput {
   /// The absolute ID for this transaction.
   pub(crate) absolute_id: AbsoluteId,
@@ -295,7 +295,7 @@ impl WalletOutput {
   }
 
   /// The key this output may be spent by.
-  pub fn key(&self) -> EdwardsPoint {
+  pub fn key(&self) -> Point {
     self.data.key()
   }
 

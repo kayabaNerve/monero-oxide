@@ -38,7 +38,14 @@ impl PartialEq for CompressedPoint {
 impl PartialOrd for CompressedPoint {
   /// This executes in variable time.
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.0.cmp(&other.0))
+    Some(self.cmp(other))
+  }
+}
+
+impl Ord for CompressedPoint {
+  /// This executes in variable time.
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.0.cmp(&other.0)
   }
 }
 

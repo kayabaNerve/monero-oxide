@@ -9,7 +9,7 @@ use curve25519_dalek::Scalar;
 
 use crate::{
   io::CompressedPoint,
-  Commitment,
+  ed25519::Commitment,
   ringct::EncryptedAmount,
   transaction::{Timelock, Pruned, Transaction},
   block::Block,

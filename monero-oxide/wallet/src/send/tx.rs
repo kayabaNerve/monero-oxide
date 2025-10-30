@@ -5,11 +5,9 @@ use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
 #[cfg(not(feature = "compile-time-generators"))]
 use curve25519_dalek::constants::ED25519_BASEPOINT_POINT as ED25519_BASEPOINT_TABLE;
 
-use curve25519_dalek::Scalar;
-
 use crate::{
-  io::{VarInt, CompressedPoint},
-  ed25519::Commitment,
+  io::VarInt,
+  ed25519::*,
   ringct::{
     clsag::Clsag, bulletproofs::Bulletproof, EncryptedAmount, RctType, RctBase, RctPrunable,
     RctProofs,
@@ -42,10 +40,10 @@ impl SignableTransaction {
 
     let mut res = Vec::with_capacity(self.payments.len());
     for (payment, shared_key_derivations) in self.payments.iter().zip(&shared_key_derivations) {
-      let key =
-        (&shared_key_derivations.shared_key * ED25519_BASEPOINT_TABLE) + payment.address().spend();
+      let key = (&shared_key_derivations.shared_key.into() * ED25519_BASEPOINT_TABLE) +
+        payment.address().spend().into();
       res.push(Output {
-        key: CompressedPoint::from(key.compress()),
+        key: Point::from(key).compress(),
         amount: None,
         view_tag: (match self.rct_type {
           RctType::ClsagBulletproof => false,
@@ -66,7 +64,7 @@ impl SignableTransaction {
     debug_assert_eq!(self.payments.len(), payment_id_xors.len());
 
     let amount_of_keys = 1 + additional_keys.len();
-    let mut extra = Extra::new(tx_key, additional_keys);
+    let mut extra = Extra::new(tx_key.compress(), additional_keys);
 
     if let Some((id, id_xor)) =
       self.payments.iter().zip(&payment_id_xors).find_map(|(payment, payment_id_xor)| {
@@ -283,7 +281,7 @@ impl SignableTransactionWithKeyImages {
     let mut bp_commitments = Vec::with_capacity(self.intent.payments.len());
     let mut encrypted_amounts = Vec::with_capacity(self.intent.payments.len());
     for (commitment, encrypted_amount) in commitments_and_encrypted_amounts {
-      commitments.push(CompressedPoint::from(commitment.calculate().compress()));
+      commitments.push(commitment.commit().compress());
       bp_commitments.push(commitment);
       encrypted_amounts.push(encrypted_amount);
     }

@@ -975,7 +975,6 @@ dependencies = [
 name = "monero-rpc"
 version = "0.1.0"
 dependencies = [
- "curve25519-dalek",
  "hex",
  "monero-address",
  "monero-oxide",
