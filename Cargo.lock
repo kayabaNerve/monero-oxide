@@ -817,7 +817,6 @@ dependencies = [
  "rand_core",
  "serde",
  "serde_json",
- "subtle",
  "thiserror",
  "zeroize",
 ]
