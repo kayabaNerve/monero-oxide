@@ -47,7 +47,9 @@ impl UnreducedScalar {
   fn as_bits(&self) -> [u8; 256] {
     let mut bits = [0; 256];
     for (i, bit) in bits.iter_mut().enumerate() {
-      *bit = core::hint::black_box(1 & (self.0[i / 8] >> (i % 8)))
+      // Using `Choice` here takes advantage of `subtle`'s internal `black_box` function, necessary
+      // as our MSRV doesn't allow us to use `core::hint::black_box`
+      *bit = Choice::from(1 & (self.0[i / 8] >> (i % 8))).unwrap_u8();
     }
 
     bits
