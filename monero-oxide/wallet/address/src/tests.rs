@@ -66,7 +66,7 @@ fn subaddress() {
 
 #[test]
 fn featured() {
-  let g = CompressedPoint::G.decompress().unwrap();
+  let g = CompressedPoint::G.decompress().unwrap().into();
   for (network, first) in
     [(Network::Mainnet, 'C'), (Network::Testnet, 'K'), (Network::Stagenet, 'F')]
   {
