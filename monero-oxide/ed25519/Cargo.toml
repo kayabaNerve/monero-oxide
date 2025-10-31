@@ -21,6 +21,8 @@ std-shims = { version = "0.1.5", default-features = false }
 subtle = { version = "^2.4", default-features = false }
 zeroize = { version = "^1.5", default-features = false, features = ["zeroize_derive", "alloc"] }
 
+rand_core = { version = "0.6", default-features = false }
+
 sha3 = { version = "0.10", default-features = false }
 
 crypto-bigint = { version = "0.5", default-features = false }
@@ -29,5 +31,5 @@ curve25519-dalek = { version = "4", default-features = false, features = ["alloc
 monero-io = { path = "../io", version = "0.1", default-features = false }
 
 [features]
-std = ["std-shims/std", "monero-io/std"]
+std = ["std-shims/std", "monero-io/std", "rand_core/std"]
 default = ["std"]

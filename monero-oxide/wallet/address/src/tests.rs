@@ -2,9 +2,7 @@ use hex_literal::hex;
 
 use rand_core::{RngCore, OsRng};
 
-use curve25519_dalek::{constants::ED25519_BASEPOINT_TABLE, scalar::Scalar};
-
-use monero_ed25519::CompressedPoint;
+use monero_ed25519::{Scalar, CompressedPoint};
 
 use crate::{Network, AddressType, MoneroAddress};
 
@@ -68,12 +66,13 @@ fn subaddress() {
 
 #[test]
 fn featured() {
+  let g = CompressedPoint::G.decompress().unwrap();
   for (network, first) in
     [(Network::Mainnet, 'C'), (Network::Testnet, 'K'), (Network::Stagenet, 'F')]
   {
     for _ in 0 .. 100 {
-      let spend = &Scalar::random(&mut OsRng) * ED25519_BASEPOINT_TABLE;
-      let view = &Scalar::random(&mut OsRng) * ED25519_BASEPOINT_TABLE;
+      let spend = Scalar::random(&mut OsRng).into() * g;
+      let view = Scalar::random(&mut OsRng).into() * g;
 
       for features in 0 .. (1 << 3) {
         const SUBADDRESS_FEATURE_BIT: u8 = 1;

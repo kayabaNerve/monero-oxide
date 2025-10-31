@@ -1,9 +1,7 @@
 use hex_literal::hex;
 use rand_core::OsRng;
 
-use curve25519_dalek::Scalar;
-
-use monero_ed25519::CompressedPoint;
+use monero_ed25519::{Scalar, CompressedPoint};
 
 use crate::{
   original::{IpProof, AggregateRangeProof as OriginalProof},
@@ -14,7 +12,7 @@ mod inner_product;
 
 #[test]
 fn bulletproofs_vector() {
-  let scalar = |scalar| Scalar::from_canonical_bytes(scalar).unwrap();
+  let scalar = |scalar: [u8; 32]| Scalar::read(&mut scalar.as_slice()).unwrap().into();
 
   // Generated from Monero
   assert!(Bulletproof::Original(OriginalProof {

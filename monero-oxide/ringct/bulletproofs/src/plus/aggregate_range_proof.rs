@@ -40,7 +40,7 @@ impl AggregateRangeWitness {
   }
 }
 
-/// Internal structure representing a Bulletproof+, as defined by Monero..
+/// Internal structure representing a Bulletproof+, as defined by Monero.
 #[doc(hidden)]
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct AggregateRangeProof {
@@ -203,7 +203,7 @@ impl<'a> AggregateRangeStatement<'a> {
 
     let a_r = a_l.clone() - Scalar::ONE;
 
-    let alpha = Scalar::random(&mut *rng);
+    let alpha = monero_ed25519::Scalar::random(&mut *rng).into();
 
     let mut A_terms = Vec::with_capacity((generators.len() * 2) + 1);
     for (i, a_l) in a_l.0.iter().enumerate() {

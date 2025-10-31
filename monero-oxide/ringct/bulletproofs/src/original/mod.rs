@@ -145,7 +145,7 @@ impl<'a> AggregateRangeStatement<'a> {
     }
     let aR = aL.clone() - Scalar::ONE;
 
-    let alpha = Scalar::random(&mut *rng);
+    let alpha = monero_ed25519::Scalar::random(&mut *rng).into();
 
     let A = CompressedPoint::from(
       {
@@ -168,10 +168,10 @@ impl<'a> AggregateRangeStatement<'a> {
     let mut sL = ScalarVector::new(padded_pow_of_2 * COMMITMENT_BITS);
     let mut sR = ScalarVector::new(padded_pow_of_2 * COMMITMENT_BITS);
     for i in 0 .. (padded_pow_of_2 * COMMITMENT_BITS) {
-      sL[i] = Scalar::random(&mut *rng);
-      sR[i] = Scalar::random(&mut *rng);
+      sL[i] = monero_ed25519::Scalar::random(&mut *rng).into();
+      sR[i] = monero_ed25519::Scalar::random(&mut *rng).into();
     }
-    let rho = Scalar::random(&mut *rng);
+    let rho = monero_ed25519::Scalar::random(&mut *rng).into();
 
     let S = CompressedPoint::from(
       {
@@ -210,7 +210,7 @@ impl<'a> AggregateRangeStatement<'a> {
     let t1 = (l[0].clone().inner_product(&r[1])) + (r[0].clone().inner_product(&l[1]));
     let t2 = l[1].clone().inner_product(&r[1]);
 
-    let tau_1 = Scalar::random(&mut *rng);
+    let tau_1 = monero_ed25519::Scalar::random(&mut *rng).into();
     let T1 = CompressedPoint::from(
       {
         let mut T1_terms = [(t1, *MONERO_H), (tau_1, ED25519_BASEPOINT_POINT)];
@@ -224,7 +224,7 @@ impl<'a> AggregateRangeStatement<'a> {
       .compress()
       .to_bytes(),
     );
-    let tau_2 = Scalar::random(&mut *rng);
+    let tau_2 = monero_ed25519::Scalar::random(&mut *rng).into();
     let T2 = CompressedPoint::from(
       {
         let mut T2_terms = [(t2, *MONERO_H), (tau_2, ED25519_BASEPOINT_POINT)];
@@ -327,7 +327,7 @@ impl<'a> AggregateRangeStatement<'a> {
 
     // 65
     {
-      let weight = Scalar::random(&mut *rng);
+      let weight = monero_ed25519::Scalar::random(&mut *rng).into();
       verifier.0.h += weight * t_hat;
       verifier.0.g += weight * tau_x;
 
@@ -348,7 +348,7 @@ impl<'a> AggregateRangeStatement<'a> {
       verifier.0.other.push((weight * (x * x), T2));
     }
 
-    let ip_weight = Scalar::random(&mut *rng);
+    let ip_weight = monero_ed25519::Scalar::random(&mut *rng).into();
 
     // 66
     verifier.0.other.push((ip_weight, A));

@@ -1,9 +1,13 @@
+use core::ops::DerefMut;
+
 #[allow(unused_imports)]
 use std_shims::prelude::*;
 use std_shims::io::{self, *};
 
 use subtle::{Choice, ConstantTimeEq};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
+
+use rand_core::{RngCore, CryptoRng};
 
 use sha3::{Digest, Keccak256};
 
@@ -78,6 +82,16 @@ impl Scalar {
   pub fn into(self) -> curve25519_dalek::Scalar {
     curve25519_dalek::Scalar::from_canonical_bytes(self.0)
       .expect("`Scalar` instantiated with invalid contents")
+  }
+
+  /// Sample a uniform `Scalar` from an RNG.
+  ///
+  /// This is hidden as it is not part of our API commitment. No guarantees are made for it.
+  #[doc(hidden)]
+  pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
+    let mut raw = Zeroizing::new([0; 64]);
+    rng.fill_bytes(raw.deref_mut());
+    Self(Zeroizing::new(curve25519_dalek::Scalar::from_bytes_mod_order_wide(&raw)).to_bytes())
   }
 
   /// Sample a scalar via hash function.

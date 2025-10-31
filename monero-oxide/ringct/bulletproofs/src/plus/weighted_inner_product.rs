@@ -216,8 +216,8 @@ impl WipStatement {
       let y_n_hat = y[n_hat - 1];
       y.0.truncate(n_hat);
 
-      let d_l = Scalar::random(&mut *rng);
-      let d_r = Scalar::random(&mut *rng);
+      let d_l = monero_ed25519::Scalar::random(&mut *rng).into();
+      let d_r = monero_ed25519::Scalar::random(&mut *rng).into();
 
       let c_l = a1.clone().weighted_inner_product(&b2, &y);
       let c_r = (a2.clone() * y_n_hat).weighted_inner_product(&b1, &y);
@@ -270,10 +270,10 @@ impl WipStatement {
     debug_assert_eq!(a.len(), 1);
     debug_assert_eq!(b.len(), 1);
 
-    let r = Scalar::random(&mut *rng);
-    let s = Scalar::random(&mut *rng);
-    let delta = Scalar::random(&mut *rng);
-    let eta = Scalar::random(&mut *rng);
+    let r = monero_ed25519::Scalar::random(&mut *rng).into();
+    let s = monero_ed25519::Scalar::random(&mut *rng).into();
+    let delta = monero_ed25519::Scalar::random(&mut *rng).into();
+    let eta = monero_ed25519::Scalar::random(&mut *rng).into();
 
     let ry = r * y[0];
 
@@ -302,7 +302,7 @@ impl WipStatement {
     mut transcript: Scalar,
     WipProof { L, R, A, B, r_answer, s_answer, delta_answer }: WipProof,
   ) -> bool {
-    let verifier_weight = Scalar::random(rng);
+    let verifier_weight = monero_ed25519::Scalar::random(rng).into();
 
     let WipStatement { generators, P, y } = self;
 

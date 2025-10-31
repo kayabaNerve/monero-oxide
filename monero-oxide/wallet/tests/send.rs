@@ -111,12 +111,11 @@ test!(
     |rct_type, rpc: SimpleRequestRpc, _, _, outputs: Vec<WalletOutput>| async move {
       use monero_wallet::rpc::FeePriority;
 
-      let view_priv = Zeroizing::new(Scalar::from(curve25519_dalek::Scalar::random(&mut OsRng)));
       let mut outgoing_view = Zeroizing::new([0; 32]);
       OsRng.fill_bytes(outgoing_view.as_mut());
       let change_view = ViewPair::new(
-        Point::from(&curve25519_dalek::Scalar::random(&mut OsRng) * ED25519_BASEPOINT_TABLE),
-        view_priv,
+        Point::from(&Scalar::random(&mut OsRng).into() * ED25519_BASEPOINT_TABLE),
+        Zeroizing::new(Scalar::random(&mut OsRng)),
       )
       .unwrap();
 
@@ -130,8 +129,8 @@ test!(
 
       // Send to a subaddress
       let sub_view = ViewPair::new(
-        Point::from(&curve25519_dalek::Scalar::random(&mut OsRng) * ED25519_BASEPOINT_TABLE),
-        Zeroizing::new(Scalar::from(curve25519_dalek::Scalar::random(&mut OsRng))),
+        Point::from(&Scalar::random(&mut OsRng).into() * ED25519_BASEPOINT_TABLE),
+        Zeroizing::new(Scalar::random(&mut OsRng)),
       )
       .unwrap();
       builder
@@ -361,12 +360,11 @@ test!(
     |rct_type, rpc: SimpleRequestRpc, _, _, outputs: Vec<WalletOutput>| async move {
       use monero_wallet::rpc::FeePriority;
 
-      let view_priv = Zeroizing::new(Scalar::from(curve25519_dalek::Scalar::random(&mut OsRng)));
       let mut outgoing_view = Zeroizing::new([0; 32]);
       OsRng.fill_bytes(outgoing_view.as_mut());
       let change_view = ViewPair::new(
-        Point::from(&curve25519_dalek::Scalar::random(&mut OsRng) * ED25519_BASEPOINT_TABLE),
-        view_priv,
+        Point::from(&Scalar::random(&mut OsRng).into() * ED25519_BASEPOINT_TABLE),
+        Zeroizing::new(Scalar::random(&mut OsRng)),
       )
       .unwrap();
 
@@ -380,8 +378,8 @@ test!(
 
       // Send to a random address
       let view = ViewPair::new(
-        Point::from(&curve25519_dalek::Scalar::random(&mut OsRng) * ED25519_BASEPOINT_TABLE),
-        Zeroizing::new(Scalar::from(curve25519_dalek::Scalar::random(&mut OsRng))),
+        Point::from(&Scalar::random(&mut OsRng).into() * ED25519_BASEPOINT_TABLE),
+        Zeroizing::new(Scalar::random(&mut OsRng)),
       )
       .unwrap();
       builder.add_payment(view.legacy_address(Network::Mainnet), 1);

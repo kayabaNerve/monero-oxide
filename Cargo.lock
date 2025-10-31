@@ -808,7 +808,6 @@ dependencies = [
 name = "monero-address"
 version = "0.1.0"
 dependencies = [
- "curve25519-dalek",
  "hex",
  "hex-literal",
  "monero-base58",
@@ -897,6 +896,7 @@ dependencies = [
  "crypto-bigint",
  "curve25519-dalek",
  "monero-io",
+ "rand_core",
  "sha3",
  "std-shims",
  "subtle",

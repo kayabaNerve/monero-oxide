@@ -25,7 +25,7 @@ zeroize = { version = "^1.5", default-features = false, features = ["zeroize_der
 subtle = { version = "^2.4", default-features = false }
 
 # Cryptographic dependencies
-curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "zeroize", "rand_core"] }
+curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "zeroize"] }
 
 # Multisig dependencies
 rand_chacha = { version = "0.3", default-features = false, optional = true }

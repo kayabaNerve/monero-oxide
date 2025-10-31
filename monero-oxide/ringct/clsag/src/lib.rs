@@ -293,7 +293,7 @@ impl Clsag {
     let D = H * mask_delta;
     let mut s = Vec::with_capacity(input.decoys.ring().len());
     for _ in 0 .. input.decoys.ring().len() {
-      s.push(Scalar::from(DScalar::random(rng)));
+      s.push(Scalar::random(rng));
     }
     let ((D, c_p, c_c), c1) = core(
       input.decoys.ring(),
@@ -369,11 +369,11 @@ impl Clsag {
       if i == (inputs.len() - 1) {
         mask = sum_outputs.into() - sum_pseudo_outs;
       } else {
-        mask = DScalar::random(rng);
+        mask = Scalar::random(rng).into();
         sum_pseudo_outs += mask;
       }
 
-      let mut nonce = Zeroizing::new(DScalar::random(rng));
+      let mut nonce = Zeroizing::new(Scalar::random(rng).into());
       let ClsagSignCore { mut incomplete_clsag, pseudo_out, key_challenge, challenged_mask } =
         Clsag::sign_core(
           rng,

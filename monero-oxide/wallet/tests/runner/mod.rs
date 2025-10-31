@@ -33,9 +33,9 @@ pub fn ring_len(rct_type: RctType) -> u8 {
 }
 
 pub fn random_address() -> (Scalar, ViewPair, MoneroAddress) {
-  let spend = curve25519_dalek::Scalar::random(&mut OsRng);
+  let spend = Scalar::random(&mut OsRng).into();
   let spend_pub = Point::from(&spend * ED25519_BASEPOINT_TABLE);
-  let view = curve25519_dalek::Scalar::random(&mut OsRng);
+  let view = Scalar::random(&mut OsRng).into();
   (
     Scalar::from(spend),
     ViewPair::new(spend_pub, Zeroizing::new(Scalar::from(view))).unwrap(),
@@ -50,9 +50,9 @@ pub fn random_address() -> (Scalar, ViewPair, MoneroAddress) {
 
 #[allow(unused)]
 pub fn random_guaranteed_address() -> (Scalar, GuaranteedViewPair, MoneroAddress) {
-  let spend = curve25519_dalek::Scalar::random(&mut OsRng);
+  let spend = Scalar::random(&mut OsRng).into();
   let spend_pub = Point::from(&spend * ED25519_BASEPOINT_TABLE);
-  let view = curve25519_dalek::Scalar::random(&mut OsRng);
+  let view = Scalar::random(&mut OsRng).into();
   (
     Scalar::from(spend),
     GuaranteedViewPair::new(spend_pub, Zeroizing::new(Scalar::from(view))).unwrap(),
@@ -141,8 +141,8 @@ pub async fn rpc() -> SimpleRequestRpc {
   let addr = MoneroAddress::new(
     Network::Mainnet,
     AddressType::Legacy,
-    Point::from(&curve25519_dalek::Scalar::random(&mut OsRng) * ED25519_BASEPOINT_TABLE),
-    Point::from(&curve25519_dalek::Scalar::random(&mut OsRng) * ED25519_BASEPOINT_TABLE),
+    Point::from(&Scalar::random(&mut OsRng).into() * ED25519_BASEPOINT_TABLE),
+    Point::from(&Scalar::random(&mut OsRng).into() * ED25519_BASEPOINT_TABLE),
   );
 
   // Mine enough blocks to ensure decoy availability
@@ -231,7 +231,7 @@ macro_rules! test {
             continue;
           }
 
-          let spend = Zeroizing::new(Scalar::from(curve25519_dalek::Scalar::random(&mut OsRng)));
+          let spend = Zeroizing::new(Scalar::random(&mut OsRng));
           #[cfg(feature = "multisig")]
           let keys = key_gen::<_, Ed25519>(&mut OsRng);
 
@@ -246,7 +246,7 @@ macro_rules! test {
 
           let rpc = rpc().await;
 
-          let view = Zeroizing::new(Scalar::from(curve25519_dalek::Scalar::random(&mut OsRng)));
+          let view = Zeroizing::new(Scalar::random(&mut OsRng));
           let mut outgoing_view = Zeroizing::new([0; 32]);
           OsRng.fill_bytes(outgoing_view.as_mut());
           let view = ViewPair::new(spend_pub, view).unwrap();
@@ -266,9 +266,9 @@ macro_rules! test {
             Change::new(
               ViewPair::new(
                 Point::from(
-                  &curve25519_dalek::Scalar::random(&mut OsRng) * ED25519_BASEPOINT_TABLE
+                  &Scalar::random(&mut OsRng).into() * ED25519_BASEPOINT_TABLE
                 ),
-                Zeroizing::new(Scalar::from(curve25519_dalek::Scalar::random(&mut OsRng)))
+                Zeroizing::new(Scalar::random(&mut OsRng))
               ).unwrap(),
               None,
             ),

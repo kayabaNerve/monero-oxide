@@ -300,7 +300,7 @@ impl SignMachine<Transaction> for TransactionSignMachine {
     let mut sum_pseudo_outs = Scalar::ZERO;
     let mut to_sign = Vec::with_capacity(clsag_len);
     for (i, ((clsag_mask_send, clsag), commitments)) in clsags.into_iter().enumerate() {
-      let mut mask = Scalar::random(&mut rng);
+      let mut mask = monero_ed25519::Scalar::random(&mut rng).into();
       if i == (clsag_len - 1) {
         mask = output_masks.into() - sum_pseudo_outs;
       } else {

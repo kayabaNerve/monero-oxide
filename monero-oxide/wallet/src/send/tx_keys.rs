@@ -90,7 +90,7 @@ impl TransactionKeys {
 impl Iterator for TransactionKeys {
   type Item = Zeroizing<Scalar>;
   fn next(&mut self) -> Option<Self::Item> {
-    Some(Zeroizing::new(Scalar::from(curve25519_dalek::Scalar::random(&mut self.0))))
+    Some(Zeroizing::new(Scalar::random(&mut self.0)))
   }
 }
 
