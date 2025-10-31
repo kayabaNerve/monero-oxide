@@ -249,6 +249,8 @@ impl Bulletproof {
     }
   }
 
+  // This uses `write_all(scalar.to_bytes())` as these are `curve25519_dalek::Scalar`, not
+  // `monero_ed25519::Scalar`
   fn write_core<W: Write, F: Fn(&[CompressedPoint], &mut W) -> io::Result<()>>(
     &self,
     w: &mut W,
@@ -256,10 +258,10 @@ impl Bulletproof {
   ) -> io::Result<()> {
     match self {
       Bulletproof::Original(bp) => {
-        CompressedPoint::write(&bp.A, w)?;
-        CompressedPoint::write(&bp.S, w)?;
-        CompressedPoint::write(&bp.T1, w)?;
-        CompressedPoint::write(&bp.T2, w)?;
+        bp.A.write(w)?;
+        bp.S.write(w)?;
+        bp.T1.write(w)?;
+        bp.T2.write(w)?;
         w.write_all(&bp.tau_x.to_bytes())?;
         w.write_all(&bp.mu.to_bytes())?;
         specific_write_vec(&bp.ip.L, w)?;
@@ -270,9 +272,9 @@ impl Bulletproof {
       }
 
       Bulletproof::Plus(bp) => {
-        CompressedPoint::write(&bp.A, w)?;
-        CompressedPoint::write(&bp.wip.A, w)?;
-        CompressedPoint::write(&bp.wip.B, w)?;
+        bp.A.write(w)?;
+        bp.wip.A.write(w)?;
+        bp.wip.B.write(w)?;
         w.write_all(&bp.wip.r_answer.to_bytes())?;
         w.write_all(&bp.wip.s_answer.to_bytes())?;
         w.write_all(&bp.wip.delta_answer.to_bytes())?;
