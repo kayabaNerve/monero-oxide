@@ -623,6 +623,7 @@ where
     let io = ni;
     let is = ni + 1;
     let jlr = ni / 2;
+    let jo = 0;
 
     let l_r_poly_len = 1 + ni + 1;
     let t_poly_len = (2 * l_r_poly_len) - 1;
@@ -715,8 +716,7 @@ where
       for (i, wr) in (r_weights * x[jlr]).0.into_iter().enumerate() {
         verifier.g_bold[i] += wr;
       }
-      // `WO` is weighted by `x^jo` where `jo == 0`, hence why we can ignore the `x` term
-      h_bold_scalars = h_bold_scalars + &(o_weights * verifier_weight);
+      h_bold_scalars = h_bold_scalars + &(o_weights * x[jo]);
 
       for i in 0 .. self.C.len() {
         let mut cg = ScalarVector::new(n);

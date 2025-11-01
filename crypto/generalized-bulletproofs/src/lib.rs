@@ -137,9 +137,6 @@ impl<C: Ciphersuite> Generators<C> {
     if g_bold.len() != h_bold.len() {
       Err(GeneratorsError::DifferingGhBoldLengths)?;
     }
-    if g_bold.len() > ((usize::MAX >> 1) + 1) {
-      Err(GeneratorsError::NotPowerOfTwo)?;
-    }
     if !g_bold.len().is_power_of_two() {
       Err(GeneratorsError::NotPowerOfTwo)?;
     }
