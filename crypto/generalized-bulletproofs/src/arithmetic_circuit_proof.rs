@@ -718,7 +718,6 @@ where
       // `WO` is weighted by `x^jo` where `jo == 0`, hence why we can ignore the `x` term
       h_bold_scalars = h_bold_scalars + &(o_weights * verifier_weight);
 
-      let mut cg_weights = Vec::with_capacity(self.C.len());
       for i in 0 .. self.C.len() {
         let mut cg = ScalarVector::new(n);
         for (constraint, z) in self.constraints.iter().zip(&z.0) {
@@ -726,18 +725,21 @@ where
             accumulate_vector(&mut cg, WCG, *z);
           }
         }
-        cg_weights.push(cg);
-      }
 
-      // Push the terms for `C`, which increment from `0`, and the terms for `WC`, which decrement
-      // from `n'`
-      for (mut i, (C, WCG)) in self.C.0.into_iter().zip(cg_weights).enumerate() {
-        if i >= (ni / 2) {
-          i += 1;
+        // Push the terms for `C`, which increment from `0`, and the terms for `WC`, which
+        // decrement from `n'`
+        {
+          let mut i = i;
+          let C = self.C.0[i];
+          let WCG = cg;
+
+          if i >= (ni / 2) {
+            i += 1;
+          }
+          let j = ni - i;
+          verifier.additional.push((x[i], C));
+          h_bold_scalars = h_bold_scalars + &(WCG * x[j]);
         }
-        let j = ni - i;
-        verifier.additional.push((x[i], C));
-        h_bold_scalars = h_bold_scalars + &(WCG * x[j]);
       }
 
       // All terms for `h_bold` here have actually been for `h_bold'`, `h_bold * y^{-1}`
