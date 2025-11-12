@@ -1,4 +1,7 @@
-use core::ops::{Add, Sub, Mul};
+use core::{
+  borrow::Borrow,
+  ops::{Add, Sub, Mul},
+};
 use std_shims::{vec, vec::Vec};
 
 use zeroize::Zeroize;
@@ -45,9 +48,9 @@ pub struct LinComb<F: PrimeField> {
   pub(crate) WL: Vec<(usize, F)>,
   pub(crate) WR: Vec<(usize, F)>,
   pub(crate) WO: Vec<(usize, F)>,
-  /// A non-sparse representation of the vector commitments, with a sparse representation of the
-  /// weights for the variable within them.
-  pub(crate) WCG: Vec<Vec<(usize, F)>>,
+  /// A sparse representation of the vector commitments and the weights for the variable within
+  /// them.
+  WCG: Vec<(usize, usize, F)>,
   /// A sparse representation of the weights for the variables within Pedersen commitments.
   pub(crate) WV: Vec<(usize, F)>,
   pub(crate) c: F,
@@ -82,9 +85,6 @@ impl<F: PrimeField> LinComb<F> {
     self.highest_a_index = self.highest_a_index.max(other.highest_a_index);
     self.highest_c_index = self.highest_c_index.max(other.highest_c_index);
     self.highest_v_index = self.highest_v_index.max(other.highest_v_index);
-    while self.WCG.len() < other.WCG.len() {
-      self.WCG.push(vec![]);
-    }
   }
 }
 
@@ -97,9 +97,7 @@ impl<F: PrimeField> Add<&LinComb<F>> for LinComb<F> {
     self.WL.extend(&constraint.WL);
     self.WR.extend(&constraint.WR);
     self.WO.extend(&constraint.WO);
-    for (sWC, cWC) in self.WCG.iter_mut().zip(&constraint.WCG) {
-      sWC.extend(cWC);
-    }
+    self.WCG.extend(&constraint.WCG);
     self.WV.extend(&constraint.WV);
     self.c += constraint.c;
     self
@@ -115,9 +113,7 @@ impl<F: PrimeField> Sub<&LinComb<F>> for LinComb<F> {
     self.WL.extend(constraint.WL.iter().map(|(i, weight)| (*i, -*weight)));
     self.WR.extend(constraint.WR.iter().map(|(i, weight)| (*i, -*weight)));
     self.WO.extend(constraint.WO.iter().map(|(i, weight)| (*i, -*weight)));
-    for (sWC, cWC) in self.WCG.iter_mut().zip(&constraint.WCG) {
-      sWC.extend(cWC.iter().map(|(i, weight)| (*i, -*weight)));
-    }
+    self.WCG.extend(constraint.WCG.iter().map(|(i, j, weight)| (*i, *j, -*weight)));
     self.WV.extend(constraint.WV.iter().map(|(i, weight)| (*i, -*weight)));
     self.c -= constraint.c;
     self
@@ -137,10 +133,8 @@ impl<F: PrimeField> Mul<F> for LinComb<F> {
     for (_, weight) in &mut self.WO {
       *weight *= scalar;
     }
-    for WC in &mut self.WCG {
-      for (_, weight) in WC {
-        *weight *= scalar;
-      }
+    for (_, _, weight) in &mut self.WCG {
+      *weight *= scalar;
     }
     for (_, weight) in &mut self.WV {
       *weight *= scalar;
@@ -174,10 +168,7 @@ impl<F: PrimeField> LinComb<F> {
           dependent on the size of the IPA, hence why these _also_ update `highest_a_index`.
         */
         self.highest_a_index = self.highest_a_index.max(Some(j));
-        while self.WCG.len() <= i {
-          self.WCG.push(vec![]);
-        }
-        self.WCG[i].push((j, scalar))
+        self.WCG.push((i, j, scalar))
       }
       Variable::V(i) => {
         self.highest_v_index = self.highest_v_index.max(Some(i));
@@ -209,8 +200,10 @@ impl<F: PrimeField> LinComb<F> {
   }
 
   /// View the current weights for `CG`.
-  pub fn WCG(&self) -> &[Vec<(usize, F)>] {
-    &self.WCG
+  pub fn WCG(&self) -> impl Iterator<Item = impl use<'_, F> + Iterator<Item = (usize, F)>> {
+    self.highest_c_index.into_iter().flat_map(|highest_c_index| 0 ..= highest_c_index).map(|i| {
+      self.WCG.iter().filter_map(move |(i2, j, weight)| (i == *i2).then_some((*j, *weight)))
+    })
   }
 
   /// View the current weights for `V`.
@@ -231,11 +224,12 @@ impl<F: PrimeField> LinComb<F> {
 /// Returns the highest index written to during accumulation.
 pub(crate) fn accumulate_vector<F: PrimeField>(
   accumulator: &mut ScalarVector<F>,
-  values: &[(usize, F)],
+  values: impl IntoIterator<Item = impl Borrow<(usize, F)>>,
   weight: F,
 ) -> usize {
   let mut hi = 0;
-  for (i, coeff) in values {
+  for value in values {
+    let (i, coeff) = value.borrow();
     accumulator[*i] += *coeff * weight;
     hi = hi.max(*i);
   }

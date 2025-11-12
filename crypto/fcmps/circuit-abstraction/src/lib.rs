@@ -125,9 +125,9 @@ impl<C: Ciphersuite> Circuit<C> {
       for (index, weight) in lincomb.WO() {
         res += prover.aL[*index] * prover.aR[*index] * weight;
       }
-      for (WCG, C) in lincomb.WCG().iter().zip(&prover.C) {
+      for (WCG, C) in lincomb.WCG().zip(&prover.C) {
         for (j, weight) in WCG {
-          res += C.g_values[*j] * weight;
+          res += C.g_values[j] * weight;
         }
       }
       for (index, weight) in lincomb.WV() {

@@ -268,10 +268,10 @@ where
               C::F::ZERO
             }
           }))
-          .chain(constraint.WCG.iter().zip(&witness.c).flat_map(|(weights, c)| {
-            weights.iter().map(|(j, weight)| {
-              if let Some(value) = c.g_values.get(*j) {
-                *weight * value
+          .chain(constraint.WCG().zip(&witness.c).flat_map(|(weights, c)| {
+            weights.map(|(j, weight)| {
+              if let Some(value) = c.g_values.get(j) {
+                weight * value
               } else {
                 C::F::ZERO
               }
@@ -383,9 +383,9 @@ where
       let mut r_hi = 0;
       let mut o_hi = 0;
       for (constraint, z) in self.constraints.iter().zip(&z.0) {
-        l_hi = l_hi.max(accumulate_vector(&mut l_weights, &constraint.WL, *z));
-        r_hi = r_hi.max(accumulate_vector(&mut r_weights, &constraint.WR, *z));
-        o_hi = o_hi.max(accumulate_vector(&mut o_weights, &constraint.WO, *z));
+        l_hi = l_hi.max(accumulate_vector::<C::F>(&mut l_weights, &constraint.WL, *z));
+        r_hi = r_hi.max(accumulate_vector::<C::F>(&mut r_weights, &constraint.WR, *z));
+        o_hi = o_hi.max(accumulate_vector::<C::F>(&mut o_weights, &constraint.WO, *z));
       }
 
       // Perform the truncation, and as `*_hi` represents the index, add `1` to obtain the length
@@ -450,8 +450,8 @@ where
         let mut cg = ScalarVector::new(n);
         let mut cg_hi = 0;
         for (constraint, z) in self.constraints.iter().zip(&z.0) {
-          if let Some(WCG) = constraint.WCG.get(i) {
-            cg_hi = cg_hi.max(accumulate_vector(&mut cg, WCG, *z));
+          if let Some(WCG) = constraint.WCG().nth(i) {
+            cg_hi = cg_hi.max(accumulate_vector::<C::F>(&mut cg, WCG, *z));
           }
         }
         cg.0.truncate(cg_hi + 1);
@@ -519,7 +519,7 @@ where
     for (constraint, z) in self.constraints.iter().zip(&z.0) {
       // We use `-z`, not `z`, as we write our constraint as `... + WV V = 0` not `= WV V + ..`
       // This means we need to subtract `WV V` from both sides, which we accomplish here
-      accumulate_vector(&mut V_weights, &constraint.WV, -*z);
+      accumulate_vector::<C::F>(&mut V_weights, &constraint.WV, -*z);
     }
 
     let tau_x = {
@@ -638,9 +638,9 @@ where
     let mut r_weights = ScalarVector::new(n);
     let mut o_weights = ScalarVector::new(n);
     for (constraint, z) in self.constraints.iter().zip(&z.0) {
-      accumulate_vector(&mut l_weights, &constraint.WL, *z);
-      accumulate_vector(&mut r_weights, &constraint.WR, *z);
-      accumulate_vector(&mut o_weights, &constraint.WO, *z);
+      accumulate_vector::<C::F>(&mut l_weights, &constraint.WL, *z);
+      accumulate_vector::<C::F>(&mut r_weights, &constraint.WR, *z);
+      accumulate_vector::<C::F>(&mut o_weights, &constraint.WO, *z);
     }
     let r_weights = r_weights * &y_inv;
 
@@ -671,7 +671,7 @@ where
       for (constraint, z) in self.constraints.iter().zip(&z.0) {
         // We use `-z`, not `z`, as we write our constraint as `... + WV V = 0` not `= WV V + ..`
         // This means we need to subtract `WV V` from both sides, which we accomplish here
-        accumulate_vector(&mut V_weights, &constraint.WV, -*z);
+        accumulate_vector::<C::F>(&mut V_weights, &constraint.WV, -*z);
       }
       V_weights = V_weights * x[ni];
 
@@ -721,8 +721,8 @@ where
       for i in 0 .. self.C.len() {
         let mut cg = ScalarVector::new(n);
         for (constraint, z) in self.constraints.iter().zip(&z.0) {
-          if let Some(WCG) = constraint.WCG.get(i) {
-            accumulate_vector(&mut cg, WCG, *z);
+          if let Some(WCG) = constraint.WCG().nth(i) {
+            accumulate_vector::<C::F>(&mut cg, WCG, *z);
           }
         }
 
