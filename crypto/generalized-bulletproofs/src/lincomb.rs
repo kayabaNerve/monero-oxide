@@ -1,8 +1,5 @@
-use core::{
-  borrow::Borrow,
-  ops::{Add, Sub, Mul},
-};
-use std_shims::{vec, vec::Vec};
+use core::ops::{Add, Sub, Mul};
+use std_shims::{vec, vec::Vec, collections::BTreeMap};
 
 use zeroize::Zeroize;
 
@@ -34,7 +31,7 @@ pub enum Variable {
 /// A linear combination.
 ///
 /// Specifically, `WL aL + WR aR + WO aO + WCG C_G + WV V + c`.
-#[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 #[must_use]
 pub struct LinComb<F: PrimeField> {
   /// The highest index within `aL`, `aR`, or `aO` which is used.
@@ -48,12 +45,28 @@ pub struct LinComb<F: PrimeField> {
   pub(crate) WL: Vec<(usize, F)>,
   pub(crate) WR: Vec<(usize, F)>,
   pub(crate) WO: Vec<(usize, F)>,
-  /// A sparse representation of the vector commitments and the weights for the variable within
+  /// A sparse representation of the vector commitments and the weights for the variables within
   /// them.
-  WCG: Vec<(usize, usize, F)>,
+  WCG: BTreeMap<usize, Vec<(usize, F)>>,
   /// A sparse representation of the weights for the variables within Pedersen commitments.
   pub(crate) WV: Vec<(usize, F)>,
   pub(crate) c: F,
+}
+
+impl<F: Zeroize + PrimeField> Zeroize for LinComb<F> {
+  fn zeroize(&mut self) {
+    self.highest_a_index.zeroize();
+    self.highest_c_index.zeroize();
+    self.highest_v_index.zeroize();
+    self.WL.zeroize();
+    self.WR.zeroize();
+    self.WO.zeroize();
+    for WCG in self.WCG.values_mut() {
+      WCG.zeroize();
+    }
+    self.WV.zeroize();
+    self.c.zeroize();
+  }
 }
 
 impl<F: PrimeField> LinComb<F> {
@@ -66,7 +79,7 @@ impl<F: PrimeField> LinComb<F> {
       WL: vec![],
       WR: vec![],
       WO: vec![],
-      WCG: vec![],
+      WCG: BTreeMap::new(),
       WV: vec![],
       c: F::ZERO,
     }
@@ -97,7 +110,13 @@ impl<F: PrimeField> Add<&LinComb<F>> for LinComb<F> {
     self.WL.extend(&constraint.WL);
     self.WR.extend(&constraint.WR);
     self.WO.extend(&constraint.WO);
-    self.WCG.extend(&constraint.WCG);
+    for (i, sparse_vec) in &constraint.WCG {
+      if let Some(existing) = self.WCG.get_mut(i) {
+        existing.extend(sparse_vec);
+      } else {
+        self.WCG.insert(*i, sparse_vec.clone());
+      }
+    }
     self.WV.extend(&constraint.WV);
     self.c += constraint.c;
     self
@@ -113,7 +132,14 @@ impl<F: PrimeField> Sub<&LinComb<F>> for LinComb<F> {
     self.WL.extend(constraint.WL.iter().map(|(i, weight)| (*i, -*weight)));
     self.WR.extend(constraint.WR.iter().map(|(i, weight)| (*i, -*weight)));
     self.WO.extend(constraint.WO.iter().map(|(i, weight)| (*i, -*weight)));
-    self.WCG.extend(constraint.WCG.iter().map(|(i, j, weight)| (*i, *j, -*weight)));
+    for (i, sparse_vec) in &constraint.WCG {
+      let sparse_vec = sparse_vec.iter().copied().map(|(j, value)| (j, -value));
+      if let Some(existing) = self.WCG.get_mut(i) {
+        existing.extend(sparse_vec);
+      } else {
+        self.WCG.insert(*i, sparse_vec.collect());
+      }
+    }
     self.WV.extend(constraint.WV.iter().map(|(i, weight)| (*i, -*weight)));
     self.c -= constraint.c;
     self
@@ -133,8 +159,10 @@ impl<F: PrimeField> Mul<F> for LinComb<F> {
     for (_, weight) in &mut self.WO {
       *weight *= scalar;
     }
-    for (_, _, weight) in &mut self.WCG {
-      *weight *= scalar;
+    for WC in self.WCG.values_mut() {
+      for (_, weight) in WC {
+        *weight *= scalar;
+      }
     }
     for (_, weight) in &mut self.WV {
       *weight *= scalar;
@@ -168,7 +196,11 @@ impl<F: PrimeField> LinComb<F> {
           dependent on the size of the IPA, hence why these _also_ update `highest_a_index`.
         */
         self.highest_a_index = self.highest_a_index.max(Some(j));
-        self.WCG.push((i, j, scalar))
+        if let Some(values) = self.WCG.get_mut(&i) {
+          values.push((j, scalar));
+        } else {
+          self.WCG.insert(i, vec![(j, scalar)]);
+        }
       }
       Variable::V(i) => {
         self.highest_v_index = self.highest_v_index.max(Some(i));
@@ -200,10 +232,8 @@ impl<F: PrimeField> LinComb<F> {
   }
 
   /// View the current weights for `CG`.
-  pub fn WCG(&self) -> impl Iterator<Item = impl use<'_, F> + Iterator<Item = (usize, F)>> {
-    self.highest_c_index.into_iter().flat_map(|highest_c_index| 0 ..= highest_c_index).map(|i| {
-      self.WCG.iter().filter_map(move |(i2, j, weight)| (i == *i2).then_some((*j, *weight)))
-    })
+  pub fn WCG(&self) -> &BTreeMap<usize, Vec<(usize, F)>> {
+    &self.WCG
   }
 
   /// View the current weights for `V`.
@@ -224,12 +254,11 @@ impl<F: PrimeField> LinComb<F> {
 /// Returns the highest index written to during accumulation.
 pub(crate) fn accumulate_vector<F: PrimeField>(
   accumulator: &mut ScalarVector<F>,
-  values: impl IntoIterator<Item = impl Borrow<(usize, F)>>,
+  values: &[(usize, F)],
   weight: F,
 ) -> usize {
   let mut hi = 0;
-  for value in values {
-    let (i, coeff) = value.borrow();
+  for (i, coeff) in values {
     accumulator[*i] += *coeff * weight;
     hi = hi.max(*i);
   }
