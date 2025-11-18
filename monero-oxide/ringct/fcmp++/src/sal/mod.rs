@@ -322,17 +322,17 @@ impl SpendAuthAndLinkability {
     let R_P = decompress_point(self.R_P)?;
     let R_L = decompress_point(self.R_L)?;
 
-    let decompress_scalar = |x: [u8; 32]| -> Result<Scalar, SalError> {
+    let read_scalar = |x: [u8; 32]| -> Result<Scalar, SalError> {
       let scalar =
         <Ed25519 as Ciphersuite>::read_F(&mut &x[..]).map_err(|_| SalError::InvalidScalar)?;
       Ok(scalar)
     };
-    let s_alpha = decompress_scalar(self.s_alpha)?;
-    let s_beta = decompress_scalar(self.s_beta)?;
-    let s_delta = decompress_scalar(self.s_delta)?;
-    let s_y = decompress_scalar(self.s_y)?;
-    let s_z = decompress_scalar(self.s_z)?;
-    let s_r_p = decompress_scalar(self.s_r_p)?;
+    let s_alpha = read_scalar(self.s_alpha)?;
+    let s_beta = read_scalar(self.s_beta)?;
+    let s_delta = read_scalar(self.s_delta)?;
+    let s_y = read_scalar(self.s_y)?;
+    let s_z = read_scalar(self.s_z)?;
+    let s_r_p = read_scalar(self.s_r_p)?;
 
     // BP+ Verification Statement
     verifier.queue(
