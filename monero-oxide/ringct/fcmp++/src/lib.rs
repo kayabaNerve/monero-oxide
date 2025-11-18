@@ -25,6 +25,7 @@ pub use fcmps;
 use fcmps::*;
 
 use monero_generators::{T, FCMP_PLUS_PLUS_U, FCMP_PLUS_PLUS_V, HELIOS_HASH_INIT, SELENE_HASH_INIT};
+use monero_io::CompressedPoint;
 
 /// The Spend-Authorization and Linkability proof.
 pub mod sal;
@@ -159,6 +160,36 @@ impl Input {
   }
 }
 
+/// A compressed input tuple.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Zeroize)]
+pub struct CompressedInput {
+  O_tilde: CompressedPoint,
+  I_tilde: CompressedPoint,
+  R: CompressedPoint,
+  C_tilde: CompressedPoint,
+}
+
+impl CompressedInput {
+  // Write an Input without the pseudo-out.
+  fn write_partial(&self, writer: &mut impl io::Write) -> io::Result<()> {
+    writer.write_all(&self.O_tilde.to_bytes())?;
+    writer.write_all(&self.I_tilde.to_bytes())?;
+    writer.write_all(&self.R.to_bytes())
+  }
+
+  fn read_partial(
+    C_tilde: CompressedPoint,
+    reader: &mut impl io::Read,
+  ) -> io::Result<CompressedInput> {
+    Ok(Self {
+      O_tilde: CompressedPoint::read(reader)?,
+      I_tilde: CompressedPoint::read(reader)?,
+      R: CompressedPoint::read(reader)?,
+      C_tilde,
+    })
+  }
+}
+
 /// A FCMP++ output tuple.
 pub type Output = fcmps::Output<<Ed25519 as Ciphersuite>::G>;
 
@@ -169,23 +200,33 @@ pub enum FcmpPlusPlusError {
   InvalidKeyImageQuantity,
   /// A propagated FCMP error.
   FcmpError(FcmpError),
+  /// A propagated SAL error.
+  SalError(SalError),
 }
 impl From<FcmpError> for FcmpPlusPlusError {
   fn from(err: FcmpError) -> FcmpPlusPlusError {
     FcmpPlusPlusError::FcmpError(err)
   }
 }
+impl From<SalError> for FcmpPlusPlusError {
+  fn from(err: SalError) -> FcmpPlusPlusError {
+    FcmpPlusPlusError::SalError(err)
+  }
+}
 
 /// A FCMP++ proof for a set of inputs.
 #[derive(Clone, Debug, Zeroize)]
 pub struct FcmpPlusPlus {
-  inputs: Vec<(Input, SpendAuthAndLinkability)>,
+  inputs: Vec<(CompressedInput, SpendAuthAndLinkability)>,
   fcmp: Fcmp<Curves>,
 }
 
 impl FcmpPlusPlus {
   /// Create a new FCMP++ proof from its components.
-  pub fn new(inputs: Vec<(Input, SpendAuthAndLinkability)>, fcmp: Fcmp<Curves>) -> FcmpPlusPlus {
+  pub fn new(
+    inputs: Vec<(CompressedInput, SpendAuthAndLinkability)>,
+    fcmp: Fcmp<Curves>,
+  ) -> FcmpPlusPlus {
     FcmpPlusPlus { inputs, fcmp }
   }
 
@@ -213,14 +254,16 @@ impl FcmpPlusPlus {
   /// The amount of layers for the FCMP are also passed in here as the FCMP's length is variable to
   /// that.
   pub fn read(
-    pseudo_outs: &[[u8; 32]],
+    pseudo_outs: &Vec<CompressedPoint>,
     layers: usize,
     reader: &mut impl io::Read,
   ) -> io::Result<Self> {
     let mut inputs = vec![];
     for pseudo_out in pseudo_outs {
-      let C_tilde = Ed25519::read_G(&mut pseudo_out.as_slice())?;
-      inputs.push((Input::read_partial(C_tilde, reader)?, SpendAuthAndLinkability::read(reader)?));
+      inputs.push((
+        CompressedInput::read_partial(*pseudo_out, reader)?,
+        SpendAuthAndLinkability::read(reader)?,
+      ));
     }
     let fcmp = Fcmp::read(reader, pseudo_outs.len(), layers)?;
     Ok(Self { inputs, fcmp })
@@ -247,7 +290,7 @@ impl FcmpPlusPlus {
     tree: TreeRoot<<Curves as FcmpCurves>::C1, <Curves as FcmpCurves>::C2>,
     layers: usize,
     signable_tx_hash: [u8; 32],
-    key_images: Vec<<Ed25519 as Ciphersuite>::G>,
+    key_images: Vec<CompressedPoint>,
   ) -> Result<(), FcmpPlusPlusError> {
     if self.inputs.len() != key_images.len() {
       Err(FcmpPlusPlusError::InvalidKeyImageQuantity)?;
@@ -255,9 +298,26 @@ impl FcmpPlusPlus {
 
     let mut fcmp_inputs = Vec::with_capacity(self.inputs.len());
     for ((input, spend_auth_and_linkability), key_image) in self.inputs.iter().zip(key_images) {
-      spend_auth_and_linkability.verify(rng, verifier_ed, signable_tx_hash, input, key_image);
+      let decompress = |x: CompressedPoint| -> Result<EdwardsPoint, FcmpPlusPlusError> {
+        let point = <Ed25519 as Ciphersuite>::read_G(&mut x.as_bytes().as_slice())
+          .map_err(|_| SalError::InvalidPoint)?;
+        Ok(point)
+      };
 
-      fcmp_inputs.push(fcmps::Input::new(input.O_tilde, input.I_tilde, input.R, input.C_tilde)?);
+      let O_tilde = decompress(input.O_tilde)?;
+      let I_tilde = decompress(input.I_tilde)?;
+      let R = decompress(input.R)?;
+      let C_tilde = decompress(input.C_tilde)?;
+      let input = Input { O_tilde, I_tilde, R, C_tilde };
+
+      let L = decompress(key_image)?;
+
+      spend_auth_and_linkability.verify(rng, verifier_ed, signable_tx_hash, &input, L)?;
+
+      let input =
+        fcmps::Input::new(O_tilde, I_tilde, R, C_tilde).map_err(|_| SalError::InvalidPoint)?;
+
+      fcmp_inputs.push(input);
     }
 
     Ok(self.fcmp.verify(rng, verifier_1, verifier_2, &*FCMP_PARAMS, tree, layers, &fcmp_inputs)?)

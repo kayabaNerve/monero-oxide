@@ -19,6 +19,8 @@ use monero_generators::{T, FCMP_PLUS_PLUS_U, FCMP_PLUS_PLUS_V};
 
 use crate::{Input, Output};
 
+use monero_io::{CompressedPoint, read_bytes};
+
 /// A multisignature algorithm for a secret-shared `x`, not supporting outgoing view keys and as
 /// historically generated.
 #[cfg(all(feature = "std", feature = "multisig"))]
@@ -152,22 +154,31 @@ impl OpenedInputTuple {
   }
 }
 
+/// An error encountered while working with SAL proofs.
+#[derive(Debug)]
+pub enum SalError {
+  /// Invalid point
+  InvalidPoint,
+  /// Invalid scalar
+  InvalidScalar,
+}
+
 /// The Spend-Authorization and Linkability proof for an input under FCMP++.
 // BP+ and GSP Conjuction from Cypher Stack's Review of the FCMP++ Composition
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct SpendAuthAndLinkability {
-  P: <Ed25519 as Ciphersuite>::G,
-  A: <Ed25519 as Ciphersuite>::G,
-  B: <Ed25519 as Ciphersuite>::G,
-  R_O: <Ed25519 as Ciphersuite>::G,
-  R_P: <Ed25519 as Ciphersuite>::G,
-  R_L: <Ed25519 as Ciphersuite>::G,
-  s_alpha: <Ed25519 as Ciphersuite>::F,
-  s_beta: <Ed25519 as Ciphersuite>::F,
-  s_delta: <Ed25519 as Ciphersuite>::F,
-  s_y: <Ed25519 as Ciphersuite>::F,
-  s_z: <Ed25519 as Ciphersuite>::F,
-  s_r_p: <Ed25519 as Ciphersuite>::F,
+  P: CompressedPoint,
+  A: CompressedPoint,
+  B: CompressedPoint,
+  R_O: CompressedPoint,
+  R_P: CompressedPoint,
+  R_L: CompressedPoint,
+  s_alpha: [u8; 32],
+  s_beta: [u8; 32],
+  s_delta: [u8; 32],
+  s_y: [u8; 32],
+  s_z: [u8; 32],
+  s_r_p: [u8; 32],
 }
 
 impl SpendAuthAndLinkability {
@@ -176,12 +187,12 @@ impl SpendAuthAndLinkability {
     signable_tx_hash: [u8; 32],
     input: &Input,
     L: EdwardsPoint,
-    P: EdwardsPoint,
-    A: EdwardsPoint,
-    B: EdwardsPoint,
-    R_O: EdwardsPoint,
-    R_P: EdwardsPoint,
-    R_L: EdwardsPoint,
+    P: CompressedPoint,
+    A: CompressedPoint,
+    B: CompressedPoint,
+    R_O: CompressedPoint,
+    R_P: CompressedPoint,
+    R_L: CompressedPoint,
   ) -> Scalar {
     let mut transcript = Blake2b512::new();
 
@@ -234,6 +245,13 @@ impl SpendAuthAndLinkability {
     let R_P = (U * *r_z) + (T_ * *r_r_p);
     let R_L = (opening.input.I_tilde * *alpha) - (U * *r_z);
 
+    let P = CompressedPoint::from(P.to_bytes());
+    let A = CompressedPoint::from(A.to_bytes());
+    let B = CompressedPoint::from(B.to_bytes());
+    let R_O = CompressedPoint::from(R_O.to_bytes());
+    let R_P = CompressedPoint::from(R_P.to_bytes());
+    let R_L = CompressedPoint::from(R_L.to_bytes());
+
     let e = Self::challenge(signable_tx_hash, &opening.input, L, P, A, B, R_O, R_P, R_L);
 
     let s_alpha = *alpha + (e * opening.x);
@@ -245,6 +263,13 @@ impl SpendAuthAndLinkability {
     // r_p is overloaded into r_p' and r_p'' by the paper, hence this distinguishing
     let r_p_double_quote = Zeroizing::new(*r_p - opening.y - opening.r_r_i);
     let s_r_p = *r_r_p + (e * *r_p_double_quote);
+
+    let s_alpha = s_alpha.to_repr();
+    let s_beta = s_beta.to_repr();
+    let s_delta = s_delta.to_repr();
+    let s_y = s_y.to_repr();
+    let s_z = s_z.to_repr();
+    let s_r_p = s_r_p.to_repr();
 
     (
       L,
@@ -266,7 +291,7 @@ impl SpendAuthAndLinkability {
     signable_tx_hash: [u8; 32],
     input: &Input,
     L: <Ed25519 as Ciphersuite>::G,
-  ) {
+  ) -> Result<(), SalError> {
     let G = <Ed25519 as Ciphersuite>::G::generator();
     let T_ = EdwardsPoint(*T);
     let U = EdwardsPoint(*FCMP_PLUS_PLUS_U);
@@ -284,19 +309,44 @@ impl SpendAuthAndLinkability {
       self.R_L,
     );
 
+    // Decompress
+    let decompress_point = |x: CompressedPoint| -> Result<EdwardsPoint, SalError> {
+      let point = <Ed25519 as Ciphersuite>::read_G(&mut x.as_bytes().as_slice())
+        .map_err(|_| SalError::InvalidPoint)?;
+      Ok(point)
+    };
+    let P = decompress_point(self.P)?;
+    let A = decompress_point(self.A)?;
+    let B = decompress_point(self.B)?;
+    let R_O = decompress_point(self.R_O)?;
+    let R_P = decompress_point(self.R_P)?;
+    let R_L = decompress_point(self.R_L)?;
+
+    let decompress_scalar = |x: [u8; 32]| -> Result<Scalar, SalError> {
+      let scalar =
+        <Ed25519 as Ciphersuite>::read_F(&mut &x[..]).map_err(|_| SalError::InvalidScalar)?;
+      Ok(scalar)
+    };
+    let s_alpha = decompress_scalar(self.s_alpha)?;
+    let s_beta = decompress_scalar(self.s_beta)?;
+    let s_delta = decompress_scalar(self.s_delta)?;
+    let s_y = decompress_scalar(self.s_y)?;
+    let s_z = decompress_scalar(self.s_z)?;
+    let s_r_p = decompress_scalar(self.s_r_p)?;
+
     // BP+ Verification Statement
     verifier.queue(
       rng,
       (),
       [
-        (e * e, self.P),
-        (e, self.A),
-        (Scalar::ONE, self.B),
+        (e * e, P),
+        (e, A),
+        (Scalar::ONE, B),
         // RHS
-        (-(self.s_alpha * e), G),
-        (-(self.s_beta * e), V),
-        (-(self.s_alpha * self.s_beta), U),
-        (-self.s_delta, T_),
+        (-(s_alpha * e), G),
+        (-(s_beta * e), V),
+        (-(s_alpha * s_beta), U),
+        (-s_delta, T_),
       ],
     );
 
@@ -305,11 +355,11 @@ impl SpendAuthAndLinkability {
       rng,
       (),
       [
-        (Scalar::ONE, self.R_O),
+        (Scalar::ONE, R_O),
         (e, input.O_tilde),
         // RHS
-        (-self.s_alpha, G),
-        (-self.s_y, T_),
+        (-s_alpha, G),
+        (-s_y, T_),
       ],
     );
 
@@ -318,11 +368,11 @@ impl SpendAuthAndLinkability {
       rng,
       (),
       [
-        (Scalar::ONE, self.R_P),
-        (e, (self.P - input.O_tilde - input.R)),
+        (Scalar::ONE, R_P),
+        (e, (P - input.O_tilde - input.R)),
         // RHS
-        (-self.s_z, U),
-        (-self.s_r_p, T_),
+        (-s_z, U),
+        (-s_r_p, T_),
       ],
     );
 
@@ -331,14 +381,16 @@ impl SpendAuthAndLinkability {
       rng,
       (),
       [
-        (Scalar::ONE, self.R_L),
+        (Scalar::ONE, R_L),
         (e, L),
         // RHS
-        (-self.s_alpha, input.I_tilde),
+        (-s_alpha, input.I_tilde),
         // This term was supposed to be subtracted, so our negation cancels out
-        (self.s_z, U),
+        (s_z, U),
       ],
     );
+
+    Ok(())
   }
 
   /// Write a Spend-Authorization and Linkability proof.
@@ -349,29 +401,28 @@ impl SpendAuthAndLinkability {
     writer.write_all(&self.R_O.to_bytes())?;
     writer.write_all(&self.R_P.to_bytes())?;
     writer.write_all(&self.R_L.to_bytes())?;
-    writer.write_all(&self.s_alpha.to_repr())?;
-    writer.write_all(&self.s_beta.to_repr())?;
-    writer.write_all(&self.s_delta.to_repr())?;
-    writer.write_all(&self.s_y.to_repr())?;
-    writer.write_all(&self.s_z.to_repr())?;
-    writer.write_all(&self.s_r_p.to_repr())
+    writer.write_all(&self.s_alpha)?;
+    writer.write_all(&self.s_beta)?;
+    writer.write_all(&self.s_delta)?;
+    writer.write_all(&self.s_y)?;
+    writer.write_all(&self.s_z)?;
+    writer.write_all(&self.s_r_p)
   }
 
   /// Read a Spend-Authorization and Linkability proof.
   pub fn read(reader: &mut impl io::Read) -> io::Result<Self> {
-    Ok(Self {
-      P: Ed25519::read_G(reader)?,
-      A: Ed25519::read_G(reader)?,
-      B: Ed25519::read_G(reader)?,
-      R_O: Ed25519::read_G(reader)?,
-      R_P: Ed25519::read_G(reader)?,
-      R_L: Ed25519::read_G(reader)?,
-      s_alpha: Ed25519::read_F(reader)?,
-      s_beta: Ed25519::read_F(reader)?,
-      s_delta: Ed25519::read_F(reader)?,
-      s_y: Ed25519::read_F(reader)?,
-      s_z: Ed25519::read_F(reader)?,
-      s_r_p: Ed25519::read_F(reader)?,
-    })
+    let P = CompressedPoint::read(reader)?;
+    let A = CompressedPoint::read(reader)?;
+    let B = CompressedPoint::read(reader)?;
+    let R_O = CompressedPoint::read(reader)?;
+    let R_P = CompressedPoint::read(reader)?;
+    let R_L = CompressedPoint::read(reader)?;
+    let s_alpha = read_bytes(reader)?;
+    let s_beta = read_bytes(reader)?;
+    let s_delta = read_bytes(reader)?;
+    let s_y = read_bytes(reader)?;
+    let s_z = read_bytes(reader)?;
+    let s_r_p = read_bytes(reader)?;
+    Ok(Self { P, A, B, R_O, R_P, R_L, s_alpha, s_beta, s_delta, s_y, s_z, s_r_p })
   }
 }

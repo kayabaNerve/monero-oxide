@@ -978,6 +978,7 @@ dependencies = [
  "helioselene",
  "modular-frost",
  "monero-generators",
+ "monero-io",
  "multiexp",
  "rand_chacha",
  "rand_core",

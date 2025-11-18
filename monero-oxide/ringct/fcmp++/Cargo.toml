@@ -38,6 +38,7 @@ generalized-bulletproofs-ec-gadgets = { path = "../../../crypto/fcmps/ec-gadgets
 fcmps = { package = "full-chain-membership-proofs", path = "../../../crypto/fcmps", default-features = false }
 
 monero-generators = { path = "../../generators", default-features = false }
+monero-io = { path = "../../io", default-features = false }
 
 rand_chacha = { version = "0.3", default-features = false, optional = true }
 transcript = { package = "flexible-transcript", version = "0.3", default-features = false, features = ["recommended"], optional = true }
