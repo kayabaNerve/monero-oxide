@@ -5,7 +5,7 @@
 
 use std_shims::prelude::*;
 
-use curve25519_dalek::{EdwardsPoint, edwards::CompressedEdwardsY};
+use curve25519_dalek::EdwardsPoint;
 
 use monero_io::VarInt;
 use monero_ed25519::Point;
@@ -49,19 +49,11 @@ pub fn bulletproofs_generators(dst: &'static [u8]) -> Generators {
 
     let mut even = preimage.clone();
     VarInt::write(&i, &mut even).expect("write failed but <Vec as io::Write> doesn't fail");
-    res.H.push(
-      CompressedEdwardsY(Point::biased_hash(keccak256(&even)).compress().to_bytes())
-        .decompress()
-        .expect("couldn't decompress point we just compressed"),
-    );
+    res.H.push(Point::biased_hash(keccak256(&even)).into());
 
     let mut odd = preimage.clone();
     VarInt::write(&(i + 1), &mut odd).expect("write failed but <Vec as io::Write> doesn't fail");
-    res.G.push(
-      CompressedEdwardsY(Point::biased_hash(keccak256(&odd)).compress().to_bytes())
-        .decompress()
-        .expect("couldn't decompress point we just compressed"),
-    );
+    res.G.push(Point::biased_hash(keccak256(&odd)).into());
   }
   res
 }

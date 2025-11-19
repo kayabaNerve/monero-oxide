@@ -146,7 +146,7 @@ impl Point {
 
   /// Create a `Point` from a `curve25519_dalek::EdwardsPoint`.
   ///
-  /// This is not a public function as it is not part of our API commitment.
+  /// This is hidden as it is not part of our API commitment. No guarantees are made for it.
   #[doc(hidden)]
   pub fn from(point: curve25519_dalek::EdwardsPoint) -> Self {
     Self(point)

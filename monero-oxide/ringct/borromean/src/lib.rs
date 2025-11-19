@@ -31,7 +31,7 @@ static H_POW_2_CELL: LazyLock<[EdwardsPoint; 64]> = LazyLock::new(|| {
 ///
 /// This table is useful when working with amounts, which are u64s.
 #[allow(non_snake_case)]
-pub fn H_pow_2() -> &'static [EdwardsPoint; 64] {
+fn H_pow_2() -> &'static [EdwardsPoint; 64] {
   &H_POW_2_CELL
 }
 

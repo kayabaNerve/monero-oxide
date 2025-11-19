@@ -33,6 +33,8 @@ pub(crate) struct AggregateRangeWitness {
   commitments: Vec<Commitment>,
 }
 
+/// Internal structure representing a Bulletproof, as defined by Monero.
+#[doc(hidden)]
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct AggregateRangeProof {
   pub(crate) A: CompressedPoint,
