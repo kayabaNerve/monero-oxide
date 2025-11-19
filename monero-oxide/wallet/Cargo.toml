@@ -33,7 +33,7 @@ rand_chacha = { version = "0.3", default-features = false }
 # Used to select decoys
 rand_distr = { version = "0.4", default-features = false }
 
-curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "zeroize", "group"] }
+curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "zeroize"] }
 
 # Multisig dependencies
 transcript = { package = "flexible-transcript", version = "0.3", default-features = false, features = ["recommended"], optional = true }
