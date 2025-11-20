@@ -2,7 +2,8 @@
 use std_shims::prelude::*;
 
 use monero_oxide::{
-  io::{CompressedPoint, read_u64},
+  io::read_u64,
+  ed25519::CompressedPoint,
   transaction::{Pruned, Transaction},
   block::Block,
 };
@@ -171,8 +172,8 @@ pub(super) fn accumulate_outs(
       let (item_key, value) = out.map_err(EpeeError)?;
       match item_key.consume() {
         b"height" => block_number = Some(value.to_u64().map_err(EpeeError)?),
-        b"key" => key = Some(CompressedPoint(epee_32(value)?)),
-        b"mask" => commitment = Some(CompressedPoint(epee_32(value)?)),
+        b"key" => key = Some(CompressedPoint::from(epee_32(value)?)),
+        b"mask" => commitment = Some(CompressedPoint::from(epee_32(value)?)),
         b"txid" => transaction = Some(epee_32(value)?),
         b"unlocked" => unlocked = Some(value.to_bool().map_err(EpeeError)?),
         _ => continue,

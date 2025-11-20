@@ -1,8 +1,7 @@
 use core::future::Future;
 use alloc::{format, vec::Vec};
 
-use curve25519_dalek::EdwardsPoint;
-use monero_oxide::io::CompressedPoint;
+use monero_oxide::ed25519::{Point, CompressedPoint};
 
 use crate::InterfaceError;
 
@@ -15,11 +14,11 @@ pub struct RingCtOutputInformation {
   pub unlocked: bool,
   /// The output's key.
   ///
-  /// This is a `CompressedPoint`, not an `EdwardsPoint`, as it may be invalid. `CompressedPoint`
+  /// This is a `CompressedPoint`, not an `Point`, as it may be invalid. `CompressedPoint`
   /// only asserts validity on decompression and allows representing invalid points.
   pub key: CompressedPoint,
   /// The output's commitment.
-  pub commitment: EdwardsPoint,
+  pub commitment: Point,
   /// The transaction which created this output.
   pub transaction: [u8; 32],
 }

@@ -7,11 +7,10 @@ use rand_distr::{Distribution, Gamma};
 #[cfg(not(feature = "std"))]
 use rand_distr::num_traits::Float;
 
-use curve25519_dalek::{Scalar, EdwardsPoint};
-
 use crate::{
   DEFAULT_LOCK_WINDOW, COINBASE_LOCK_WINDOW, BLOCK_TIME,
-  primitives::{Commitment, Decoys},
+  ed25519::{Scalar, Point, Commitment},
+  ringct::clsag::Decoys,
   interface::{InterfaceError, TransactionsError, EvaluateUnlocked, ProvidesDecoys},
   output::OutputData,
   WalletOutput,
@@ -29,7 +28,7 @@ async fn select_n(
   output_being_spent: &WalletOutput,
   ring_len: u8,
   fingerprintable_deterministic: bool,
-) -> Result<Vec<(u64, [EdwardsPoint; 2])>, TransactionsError> {
+) -> Result<Vec<(u64, [Point; 2])>, TransactionsError> {
   if block_number <= DEFAULT_LOCK_WINDOW {
     Err(InterfaceError::InternalError("not enough blocks to select decoys".to_string()))?;
   }
@@ -87,7 +86,7 @@ async fn select_n(
       // When testing on fresh chains, increased iterations can be useful and we don't necessitate
       // reasonable performance
       #[cfg(test)]
-      const MAX_ITERS: usize = 100;
+      const MAX_ITERS: usize = 1000;
       // Ensure this isn't infinitely looping
       // We check both that we aren't at the maximum amount of iterations and that the not-yet
       // selected candidates exceed the amount of candidates necessary to trigger the next iteration
@@ -177,7 +176,7 @@ async fn select_n(
       // https://github.com/monero-oxide/monero-oxide/issues/56
       if real_index == Some(i) {
         if (Some(output_being_spent.key()) != output.map(|[key, _commitment]| key)) ||
-          (Some(output_being_spent.commitment().calculate()) !=
+          (Some(output_being_spent.commitment().commit()) !=
             output.map(|[_key, commitment]| commitment))
         {
           Err(InterfaceError::InvalidInterface(
@@ -195,7 +194,7 @@ async fn select_n(
         //   /src/wallet/wallet2.cpp#L9050-L9060
         {
           let [key, commitment] = output;
-          if !(key.is_torsion_free() && commitment.is_torsion_free()) {
+          if !(key.into().is_torsion_free() && commitment.into().is_torsion_free()) {
             continue;
           }
         }
@@ -227,7 +226,7 @@ async fn select_decoys<R: RngCore + CryptoRng>(
 
   // Form the complete ring
   let mut ring = decoys;
-  ring.push((input.relative_id.index_on_blockchain, [input.key(), input.commitment().calculate()]));
+  ring.push((input.relative_id.index_on_blockchain, [input.key(), input.commitment().commit()]));
   ring.sort_by(|a, b| a.0.cmp(&b.0));
 
   /*
@@ -262,11 +261,18 @@ async fn select_decoys<R: RngCore + CryptoRng>(
 }
 
 /// An output with decoys selected.
-#[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct OutputWithDecoys {
   output: OutputData,
   decoys: Decoys,
 }
+
+impl PartialEq for OutputWithDecoys {
+  fn eq(&self, other: &Self) -> bool {
+    bool::from(self.output.ct_eq(&other.output) & self.decoys.ct_eq(&other.decoys))
+  }
+}
+impl Eq for OutputWithDecoys {}
 
 impl OutputWithDecoys {
   /// Select decoys for this output.
@@ -313,7 +319,7 @@ impl OutputWithDecoys {
   }
 
   /// The key this output may be spent by.
-  pub fn key(&self) -> EdwardsPoint {
+  pub fn key(&self) -> Point {
     self.output.key()
   }
 

@@ -1,7 +1,7 @@
 use core::{ops::RangeBounds, future::Future};
 use alloc::{format, vec::Vec, string::ToString};
 
-use curve25519_dalek::EdwardsPoint;
+use monero_oxide::ed25519::Point;
 
 use crate::{InterfaceError, TransactionsError, ProvidesBlockchainMeta};
 
@@ -41,7 +41,7 @@ pub trait ProvidesUnvalidatedDecoys: ProvidesBlockchainMeta {
     &self,
     indexes: &[u64],
     evaluate_unlocked: EvaluateUnlocked,
-  ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, TransactionsError>>;
+  ) -> impl Send + Future<Output = Result<Vec<Option<[Point; 2]>>, TransactionsError>>;
 }
 
 /// Provides the necessary data to select decoys.
@@ -64,7 +64,7 @@ pub trait ProvidesDecoys: ProvidesBlockchainMeta {
     &self,
     indexes: &[u64],
     evaluate_unlocked: EvaluateUnlocked,
-  ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, TransactionsError>>;
+  ) -> impl Send + Future<Output = Result<Vec<Option<[Point; 2]>>, TransactionsError>>;
 }
 
 impl<P: ProvidesUnvalidatedDecoys> ProvidesDecoys for P {
@@ -94,7 +94,7 @@ impl<P: ProvidesUnvalidatedDecoys> ProvidesDecoys for P {
     &self,
     indexes: &[u64],
     evaluate_unlocked: EvaluateUnlocked,
-  ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, TransactionsError>> {
+  ) -> impl Send + Future<Output = Result<Vec<Option<[Point; 2]>>, TransactionsError>> {
     async move {
       let outputs =
         <P as ProvidesUnvalidatedDecoys>::unlocked_ringct_outputs(self, indexes, evaluate_unlocked)

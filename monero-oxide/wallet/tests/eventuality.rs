@@ -1,6 +1,6 @@
 use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 
-use monero_oxide::{transaction::Transaction, io::CompressedPoint};
+use monero_oxide::transaction::Transaction;
 use monero_wallet::address::{AddressType, MoneroAddress};
 
 mod runner;
@@ -15,8 +15,8 @@ test!(
         MoneroAddress::new(
           Network::Mainnet,
           AddressType::Legacy,
-          ED25519_BASEPOINT_POINT,
-          ED25519_BASEPOINT_POINT,
+          CompressedPoint::G.decompress().unwrap(),
+          CompressedPoint::G.decompress().unwrap(),
         ),
         1,
       );
@@ -24,8 +24,8 @@ test!(
         MoneroAddress::new(
           Network::Mainnet,
           AddressType::LegacyIntegrated([0xaa; 8]),
-          ED25519_BASEPOINT_POINT,
-          ED25519_BASEPOINT_POINT,
+          CompressedPoint::G.decompress().unwrap(),
+          CompressedPoint::G.decompress().unwrap(),
         ),
         2,
       );
@@ -33,8 +33,8 @@ test!(
         MoneroAddress::new(
           Network::Mainnet,
           AddressType::Subaddress,
-          ED25519_BASEPOINT_POINT,
-          ED25519_BASEPOINT_POINT,
+          CompressedPoint::G.decompress().unwrap(),
+          CompressedPoint::G.decompress().unwrap(),
         ),
         3,
       );
@@ -42,8 +42,8 @@ test!(
         MoneroAddress::new(
           Network::Mainnet,
           AddressType::Featured { subaddress: false, payment_id: None, guaranteed: true },
-          ED25519_BASEPOINT_POINT,
-          ED25519_BASEPOINT_POINT,
+          CompressedPoint::G.decompress().unwrap(),
+          CompressedPoint::G.decompress().unwrap(),
         ),
         4,
       );
@@ -66,9 +66,10 @@ test!(
       let Transaction::V2 { proofs: Some(ref mut proofs), .. } = tx else {
         panic!("TX wasn't RingCT")
       };
-      proofs.base.commitments[0] = CompressedPoint::from(
-        (proofs.base.commitments[0].decompress().unwrap() + ED25519_BASEPOINT_POINT).compress(),
-      );
+      proofs.base.commitments[0] = Point::from(
+        proofs.base.commitments[0].decompress().unwrap().into() + ED25519_BASEPOINT_POINT,
+      )
+      .compress();
       // Verify it no longer matches
       assert!(!eventuality.matches(&tx.clone().into()));
     },

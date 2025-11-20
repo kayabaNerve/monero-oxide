@@ -22,13 +22,11 @@ hex = { version = "0.4", default-features = false, features = ["alloc"] }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
 
-curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "zeroize"] }
-
 monero-oxide = { path = "../..", default-features = false }
 monero-address = { path = "../../wallet/address", default-features = false }
 monero-interface = { path = "..", default-features = false }
 
-monero-epee = { git = "https://github.com/kayabaNerve/monero-oxide", rev = "0f7e63a37f396381f08f5af7f99bec0e6b1d2c5c"}
+monero-epee = { path = "../../epee", default-features = false }
 
 [features]
 std = [

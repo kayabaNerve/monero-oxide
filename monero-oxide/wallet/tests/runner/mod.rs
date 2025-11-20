@@ -1,15 +1,18 @@
-use core::ops::Deref;
 use std_shims::sync::LazyLock;
 
 use zeroize::Zeroizing;
 use rand_core::OsRng;
 
-use curve25519_dalek::{constants::ED25519_BASEPOINT_TABLE, scalar::Scalar};
+#[cfg(feature = "compile-time-generators")]
+use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+#[cfg(not(feature = "compile-time-generators"))]
+use curve25519_dalek::constants::ED25519_BASEPOINT_POINT as ED25519_BASEPOINT_TABLE;
 
 use tokio::sync::Mutex;
 
 use monero_simple_request_rpc::{prelude::MoneroDaemon, SimpleRequestTransport};
 use monero_wallet::{
+  ed25519::{Scalar, Point},
   ringct::RctType,
   transaction::Transaction,
   block::Block,
@@ -30,34 +33,34 @@ pub fn ring_len(rct_type: RctType) -> u8 {
 }
 
 pub fn random_address() -> (Scalar, ViewPair, MoneroAddress) {
-  let spend = Scalar::random(&mut OsRng);
-  let spend_pub = &spend * ED25519_BASEPOINT_TABLE;
-  let view = Zeroizing::new(Scalar::random(&mut OsRng));
+  let spend = Scalar::random(&mut OsRng).into();
+  let spend_pub = Point::from(&spend * ED25519_BASEPOINT_TABLE);
+  let view = Scalar::random(&mut OsRng).into();
   (
-    spend,
-    ViewPair::new(spend_pub, view.clone()).unwrap(),
+    Scalar::from(spend),
+    ViewPair::new(spend_pub, Zeroizing::new(Scalar::from(view))).unwrap(),
     MoneroAddress::new(
       Network::Mainnet,
       AddressType::Legacy,
       spend_pub,
-      view.deref() * ED25519_BASEPOINT_TABLE,
+      Point::from(&view * ED25519_BASEPOINT_TABLE),
     ),
   )
 }
 
 #[allow(unused)]
 pub fn random_guaranteed_address() -> (Scalar, GuaranteedViewPair, MoneroAddress) {
-  let spend = Scalar::random(&mut OsRng);
-  let spend_pub = &spend * ED25519_BASEPOINT_TABLE;
-  let view = Zeroizing::new(Scalar::random(&mut OsRng));
+  let spend = Scalar::random(&mut OsRng).into();
+  let spend_pub = Point::from(&spend * ED25519_BASEPOINT_TABLE);
+  let view = Scalar::random(&mut OsRng).into();
   (
-    spend,
-    GuaranteedViewPair::new(spend_pub, view.clone()).unwrap(),
+    Scalar::from(spend),
+    GuaranteedViewPair::new(spend_pub, Zeroizing::new(Scalar::from(view))).unwrap(),
     MoneroAddress::new(
       Network::Mainnet,
       AddressType::Legacy,
       spend_pub,
-      view.deref() * ED25519_BASEPOINT_TABLE,
+      Point::from(&view * ED25519_BASEPOINT_TABLE),
     ),
   )
 }
@@ -142,8 +145,8 @@ pub async fn rpc() -> MoneroDaemon<SimpleRequestTransport> {
   let addr = MoneroAddress::new(
     Network::Mainnet,
     AddressType::Legacy,
-    &Scalar::random(&mut OsRng) * ED25519_BASEPOINT_TABLE,
-    &Scalar::random(&mut OsRng) * ED25519_BASEPOINT_TABLE,
+    Point::from(&Scalar::random(&mut OsRng).into() * ED25519_BASEPOINT_TABLE),
+    Point::from(&Scalar::random(&mut OsRng).into() * ED25519_BASEPOINT_TABLE),
   );
 
   // Mine enough blocks to ensure decoy availability
@@ -188,14 +191,17 @@ macro_rules! test {
   ) => {
     async_sequential! {
       async fn $name() {
-        use core::{ops::Deref, any::Any};
+        use core::any::Any;
         #[cfg(feature = "multisig")]
         use std::collections::HashMap;
 
         use zeroize::Zeroizing;
         use rand_core::{RngCore, OsRng};
 
-        use curve25519_dalek::{constants::ED25519_BASEPOINT_TABLE, scalar::Scalar};
+        #[cfg(feature = "compile-time-generators")]
+        use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+        #[cfg(not(feature = "compile-time-generators"))]
+        use curve25519_dalek::constants::ED25519_BASEPOINT_POINT as ED25519_BASEPOINT_TABLE;
 
         #[cfg(feature = "multisig")]
         use frost::{
@@ -205,6 +211,7 @@ macro_rules! test {
         };
 
         use monero_wallet::{
+          ed25519::*,
           ringct::RctType,
           transaction::Pruned,
           interface::prelude::*,
@@ -233,21 +240,21 @@ macro_rules! test {
           #[cfg(feature = "multisig")]
           let keys = key_gen::<_, Ed25519>(&mut OsRng);
 
-          let spend_pub = if !multisig {
-            spend.deref() * ED25519_BASEPOINT_TABLE
+          let spend_pub = Point::from(if !multisig {
+            &(*spend).into() * ED25519_BASEPOINT_TABLE
           } else {
             #[cfg(not(feature = "multisig"))]
             panic!("Multisig branch called without the multisig feature");
             #[cfg(feature = "multisig")]
             keys[&Participant::new(1).unwrap()].group_key().0
-          };
+          });
 
           let rpc = rpc().await;
 
-          let view_priv = Zeroizing::new(Scalar::random(&mut OsRng));
+          let view = Zeroizing::new(Scalar::random(&mut OsRng));
           let mut outgoing_view = Zeroizing::new([0; 32]);
           OsRng.fill_bytes(outgoing_view.as_mut());
-          let view = ViewPair::new(spend_pub, view_priv.clone()).unwrap();
+          let view = ViewPair::new(spend_pub, view).unwrap();
           let addr = view.legacy_address(Network::Mainnet);
 
           let miner_tx = get_miner_tx_output(&rpc, &view).await;
@@ -265,7 +272,9 @@ macro_rules! test {
             outgoing_view,
             Change::new(
               ViewPair::new(
-                &Scalar::random(&mut OsRng) * ED25519_BASEPOINT_TABLE,
+                Point::from(
+                  &Scalar::random(&mut OsRng).into() * ED25519_BASEPOINT_TABLE
+                ),
                 Zeroizing::new(Scalar::random(&mut OsRng))
               ).unwrap(),
               None,

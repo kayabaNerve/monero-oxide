@@ -1,18 +1,15 @@
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
-
-use curve25519_dalek::scalar::Scalar;
 
 use serde::Deserialize;
 use serde_json::json;
 
 use monero_oxide::{
-  primitives::Commitment,
+  ed25519::{Scalar, CompressedPoint, Commitment},
   ringct::{RctPrunable, bulletproofs::BatchVerifier},
   transaction::{Input, Transaction},
   block::Block,
-  io::CompressedPoint,
 };
 
 use monero_simple_request_rpc::{prelude::*, SimpleRequestTransport};
@@ -179,11 +176,11 @@ async fn check_block<T: HttpTransport>(rpc: MoneroDaemon<T>, block_i: usize) {
                   };
 
                   let rpc_point = |point: &str| {
-                    CompressedPoint(
-                      hex::decode(point)
-                        .expect("invalid hex for ring member")
-                        .try_into()
-                        .expect("invalid point len for ring member"),
+                    CompressedPoint::from(
+                      <[u8; 32]>::try_from(
+                        hex::decode(point).expect("invalid hex for ring member"),
+                      )
+                      .expect("invalid point len for ring member"),
                     )
                   };
 
@@ -193,12 +190,7 @@ async fn check_block<T: HttpTransport>(rpc: MoneroDaemon<T>, block_i: usize) {
                     .map(|out| {
                       let mask = rpc_point(&out.mask);
                       if amount != 0 {
-                        assert_eq!(
-                          mask,
-                          CompressedPoint::from(
-                            Commitment::new(Scalar::from(1u8), amount).calculate().compress()
-                          )
-                        );
+                        assert_eq!(mask, Commitment::new(Scalar::ONE, amount).commit().compress());
                       }
                       [rpc_point(&out.key), mask]
                     })

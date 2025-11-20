@@ -5,9 +5,8 @@ use core::{
 
 use alloc::{format, vec, vec::Vec, string::ToString};
 
-use curve25519_dalek::EdwardsPoint;
-
 use monero_oxide::{
+  ed25519::Point,
   transaction::{Output, Timelock},
   DEFAULT_LOCK_WINDOW,
 };
@@ -296,7 +295,7 @@ impl<T: HttpTransport> ProvidesUnvalidatedDecoys for MoneroDaemon<T> {
     &self,
     indexes: &[u64],
     evaluate_unlocked: EvaluateUnlocked,
-  ) -> impl Send + Future<Output = Result<Vec<Option<[EdwardsPoint; 2]>>, TransactionsError>> {
+  ) -> impl Send + Future<Output = Result<Vec<Option<[Point; 2]>>, TransactionsError>> {
     async move {
       let outs = <Self as ProvidesOutputs>::ringct_outputs(self, indexes).await?;
 
