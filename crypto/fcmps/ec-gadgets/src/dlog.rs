@@ -313,7 +313,7 @@ fn divisor_challenge_eval<C: Ciphersuite, Parameters: DiscreteLogParameters>(
   let witness =
     circuit.eval(&p_d).map(|p_d| (p_d, circuit.eval(&p_n).unwrap() * p_d.invert().unwrap()));
   let (_l, o, n_claim) = circuit.mul(Some(p_d), None, witness);
-  circuit.equality(p_n, &n_claim.into());
+  circuit.equality(p_n, n_claim.into());
   o
 }
 
@@ -557,7 +557,7 @@ where
       self.inverse(Some(output_interpolation), output_interpolation_eval);
     rhs_eval = rhs_eval.term(C::F::ONE, inverse);
 
-    self.equality(lhs_eval, &rhs_eval);
+    self.equality(lhs_eval, rhs_eval);
 
     point
   }

@@ -1,4 +1,7 @@
-use core::ops::{Add, Sub, Mul};
+use core::{
+  borrow::Borrow,
+  ops::{Add, Neg, Sub, Mul},
+};
 use std_shims::{vec, vec::Vec, collections::BTreeMap};
 
 use zeroize::Zeroize;
@@ -6,6 +9,78 @@ use zeroize::Zeroize;
 use ciphersuite::group::ff::PrimeField;
 
 use crate::ScalarVector;
+
+#[derive(Clone, Eq, Debug, Zeroize)]
+enum SmallVec<T: Copy + PartialEq + Zeroize, const N: usize> {
+  Small { allocation: [T; N], len: usize },
+  Large(Vec<T>),
+}
+
+impl<T: Copy + PartialEq + Zeroize, const N: usize> SmallVec<T, N> {
+  fn as_slice(&self) -> &[T] {
+    match self {
+      Self::Small { allocation, len } => &allocation[.. *len],
+      Self::Large(allocation) => allocation.as_slice(),
+    }
+  }
+  fn iter(&self) -> impl Iterator<Item = &T> {
+    self.as_slice().iter()
+  }
+  fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
+    (match self {
+      Self::Small { allocation, len } => &mut allocation[.. *len],
+      Self::Large(allocation) => allocation.as_mut_slice(),
+    })
+    .iter_mut()
+  }
+  fn push(&mut self, value: T) {
+    match self {
+      Self::Small { allocation, len } => {
+        if *len == N {
+          let mut allocation = allocation.to_vec();
+          allocation.push(value);
+          *self = Self::Large(allocation);
+          return;
+        }
+        allocation[*len] = value;
+        *len += 1;
+      }
+      Self::Large(allocation) => allocation.push(value),
+    }
+  }
+  fn extend_from_slice(&mut self, values: &[T]) {
+    match self {
+      Self::Small { allocation, len } => {
+        if (*len + values.len()) > N {
+          let mut allocation = allocation[.. *len].to_vec();
+          allocation.extend_from_slice(values);
+          *self = Self::Large(allocation);
+          return;
+        }
+        for i in 0 .. values.len() {
+          allocation[*len + i] = *values[i].borrow();
+        }
+        *len += values.len();
+      }
+      Self::Large(allocation) => allocation.extend_from_slice(values),
+    }
+  }
+}
+
+impl<T: Copy + PartialEq + Zeroize, const N: usize> PartialEq for SmallVec<T, N> {
+  fn eq(&self, other: &Self) -> bool {
+    let mut other = other.iter();
+    for next in self.iter() {
+      if other.next() != Some(next) {
+        return false;
+      }
+    }
+    if other.next().is_some() {
+      return false;
+    }
+    true
+  }
+}
 
 /// A reference to a variable usable within linear combinations.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -41,7 +116,7 @@ enum Tag {
 /// Specifically, `WL aL + WR aR + WO aO + WCG C_G + WV V + c`.
 #[derive(Clone, PartialEq, Eq, Debug)]
 #[must_use]
-pub struct LinComb<F: PrimeField> {
+pub struct LinComb<F: Zeroize + PrimeField> {
   /// The highest index within `aL`, `aR`, or `aO` which is used.
   highest_a_index: Option<usize>,
   /// The highest index for a Pedersen vector commitment.
@@ -50,7 +125,7 @@ pub struct LinComb<F: PrimeField> {
   highest_v_index: Option<usize>,
 
   // Sparse representation of WL/WR/WO/WV
-  WLROV: Vec<(Tag, (usize, F))>,
+  WLROV: SmallVec<(Tag, (usize, F)), 4>,
   /// A sparse representation of the vector commitments and the weights for the variables within
   /// them.
   WCG: BTreeMap<usize, Vec<(usize, F)>>,
@@ -70,27 +145,27 @@ impl<F: Zeroize + PrimeField> Zeroize for LinComb<F> {
   }
 }
 
-impl<F: PrimeField> LinComb<F> {
+impl<F: Zeroize + PrimeField> LinComb<F> {
   /// Create an empty linear combination.
   pub fn empty() -> Self {
     Self {
       highest_a_index: None,
       highest_c_index: None,
       highest_v_index: None,
-      WLROV: vec![],
+      WLROV: SmallVec::Small { allocation: [(Tag::WL, (0, F::ZERO)); 4], len: 0 },
       WCG: BTreeMap::new(),
       c: F::ZERO,
     }
   }
 }
 
-impl<F: PrimeField> From<Variable> for LinComb<F> {
+impl<F: Zeroize + PrimeField> From<Variable> for LinComb<F> {
   fn from(constrainable: Variable) -> LinComb<F> {
     LinComb::empty().term(F::ONE, constrainable)
   }
 }
 
-impl<F: PrimeField> LinComb<F> {
+impl<F: Zeroize + PrimeField> LinComb<F> {
   /// Reconcile two linear combinations, making them interoperable and able to be merged.
   fn reconcile_for_merging(&mut self, other: &Self) {
     self.highest_a_index = self.highest_a_index.max(other.highest_a_index);
@@ -99,13 +174,13 @@ impl<F: PrimeField> LinComb<F> {
   }
 }
 
-impl<F: PrimeField> Add<&LinComb<F>> for LinComb<F> {
+impl<F: Zeroize + PrimeField> Add<&LinComb<F>> for LinComb<F> {
   type Output = Self;
 
   fn add(mut self, constraint: &Self) -> Self {
     self.reconcile_for_merging(constraint);
 
-    self.WLROV.extend(constraint.WLROV.iter());
+    self.WLROV.extend_from_slice(constraint.WLROV.as_slice());
     for (i, sparse_vec) in &constraint.WCG {
       if let Some(existing) = self.WCG.get_mut(i) {
         existing.extend(sparse_vec);
@@ -118,13 +193,35 @@ impl<F: PrimeField> Add<&LinComb<F>> for LinComb<F> {
   }
 }
 
-impl<F: PrimeField> Sub<&LinComb<F>> for LinComb<F> {
+impl<F: Zeroize + PrimeField> Neg for LinComb<F> {
   type Output = Self;
 
-  fn sub(mut self, constraint: &Self) -> Self {
-    self.reconcile_for_merging(constraint);
+  fn neg(mut self) -> Self {
+    for (_, (_, weight)) in self.WLROV.iter_mut() {
+      *weight = -*weight;
+    }
+    for sparse_vec in self.WCG.values_mut() {
+      for (_, weight) in sparse_vec {
+        *weight = -*weight;
+      }
+    }
+    self.c = -self.c;
+    self
+  }
+}
 
-    self.WLROV.extend(constraint.WLROV.iter().map(|(tag, (i, weight))| (*tag, (*i, -*weight))));
+impl<F: Zeroize + PrimeField> Sub<LinComb<F>> for LinComb<F> {
+  type Output = Self;
+
+  fn sub(mut self, mut constraint: Self) -> Self {
+    self.reconcile_for_merging(&constraint);
+
+    {
+      for (_, (_, weight)) in constraint.WLROV.iter_mut() {
+        *weight = -*weight;
+      }
+      self.WLROV.extend_from_slice(constraint.WLROV.as_slice());
+    }
     for (i, sparse_vec) in &constraint.WCG {
       let sparse_vec = sparse_vec.iter().copied().map(|(j, value)| (j, -value));
       if let Some(existing) = self.WCG.get_mut(i) {
@@ -138,11 +235,11 @@ impl<F: PrimeField> Sub<&LinComb<F>> for LinComb<F> {
   }
 }
 
-impl<F: PrimeField> Mul<F> for LinComb<F> {
+impl<F: Zeroize + PrimeField> Mul<F> for LinComb<F> {
   type Output = Self;
 
   fn mul(mut self, scalar: F) -> Self {
-    for (_, (_, weight)) in &mut self.WLROV {
+    for (_, (_, weight)) in self.WLROV.iter_mut() {
       *weight *= scalar;
     }
     for WC in self.WCG.values_mut() {
@@ -155,7 +252,7 @@ impl<F: PrimeField> Mul<F> for LinComb<F> {
   }
 }
 
-impl<F: PrimeField> LinComb<F> {
+impl<F: Zeroize + PrimeField> LinComb<F> {
   /// Add a new instance of a term to this linear combination.
   pub fn term(mut self, scalar: F, constrainable: Variable) -> Self {
     match constrainable {
@@ -247,7 +344,7 @@ impl<F: PrimeField> LinComb<F> {
 /// This is equivalent to `accumulator += values * weight`, if `values` was a normal vector.
 ///
 /// Returns the highest index written to during accumulation.
-pub(crate) fn accumulate_vector<'value, F: PrimeField>(
+pub(crate) fn accumulate_vector<'value, F: Zeroize + PrimeField>(
   accumulator: &mut ScalarVector<F>,
   values: impl Iterator<Item = &'value (usize, F)>,
   weight: F,

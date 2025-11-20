@@ -4,7 +4,7 @@ use crate::*;
 
 impl<C: Ciphersuite> Circuit<C> {
   /// Constrain two linear combinations to be equal.
-  pub fn equality(&mut self, a: LinComb<C::F>, b: &LinComb<C::F>) {
+  pub fn equality(&mut self, a: LinComb<C::F>, b: LinComb<C::F>) {
     self.constrain_equal_to_zero(a - b);
   }
 
@@ -31,7 +31,7 @@ impl<C: Ciphersuite> Circuit<C> {
   /// Constrain two linear combinations as inequal.
   ///
   /// May panic if any linear combinations reference non-existent terms.
-  pub fn inequality(&mut self, a: LinComb<C::F>, b: &LinComb<C::F>, witness: Option<(C::F, C::F)>) {
+  pub fn inequality(&mut self, a: LinComb<C::F>, b: LinComb<C::F>, witness: Option<(C::F, C::F)>) {
     let l_constraint = a - b;
     // The existence of a multiplicative inverse means a-b != 0, which means a != b
     self.inverse(Some(l_constraint), witness.map(|(a, b)| a - b));

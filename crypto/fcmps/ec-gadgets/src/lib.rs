@@ -81,7 +81,7 @@ impl<C: Ciphersuite> EcGadgets<C> for Circuit<C> {
     let (_y, _y_2, y2) =
       self.mul(Some(LinComb::from(y)), Some(LinComb::from(y)), y_eval.map(|y| (y, y)));
 
-    self.equality(y2.into(), &expected_y2);
+    self.equality(y2.into(), expected_y2);
 
     OnCurve { x, y }
   }
@@ -91,7 +91,7 @@ impl<C: Ciphersuite> EcGadgets<C> for Circuit<C> {
     {
       let bx_lincomb = LinComb::from(b.x);
       let bx_eval = self.eval(&bx_lincomb);
-      self.inequality(bx_lincomb, &LinComb::empty().constant(a.0), bx_eval.map(|bx| (bx, a.0)));
+      self.inequality(bx_lincomb, LinComb::empty().constant(a.0), bx_eval.map(|bx| (bx, a.0)));
     }
 
     let (x0, y0) = (a.0, a.1);
@@ -109,7 +109,7 @@ impl<C: Ciphersuite> EcGadgets<C> for Circuit<C> {
     let x1_minus_x0_eval = self.eval(&x1_minus_x0);
     let (slope, _r, o) =
       self.mul(None, Some(x1_minus_x0), slope_eval.map(|slope| (slope, x1_minus_x0_eval.unwrap())));
-    self.equality(LinComb::from(o), &LinComb::from(y1).constant(-y0));
+    self.equality(LinComb::from(o), LinComb::from(y1).constant(-y0));
 
     // slope * (x2 - x0) = -y2 - y0
     let x2_minus_x0 = LinComb::from(x2).constant(-x0);
@@ -119,12 +119,12 @@ impl<C: Ciphersuite> EcGadgets<C> for Circuit<C> {
       Some(x2_minus_x0),
       slope_eval.map(|slope| (slope, x2_minus_x0_eval.unwrap())),
     );
-    self.equality(o.into(), &LinComb::empty().term(-C::F::ONE, y2).constant(-y0));
+    self.equality(o.into(), LinComb::empty().term(-C::F::ONE, y2).constant(-y0));
 
     // slope * slope = x0 + x1 + x2
     let (_slope, _slope_2, o) =
       self.mul(Some(slope.into()), Some(slope.into()), slope_eval.map(|slope| (slope, slope)));
-    self.equality(o.into(), &LinComb::from(x1).term(C::F::ONE, x2).constant(x0));
+    self.equality(o.into(), LinComb::from(x1).term(C::F::ONE, x2).constant(x0));
 
     OnCurve { x: x2, y: y2 }
   }

@@ -180,7 +180,7 @@ where
     let hash = self.on_curve(curve, hash);
     self.incomplete_add_pub(blinded_hash, blind, hash);
     self.member_of_list(
-      &LinComb::from(hash.x()),
+      LinComb::from(hash.x()),
       branch.into_iter().map(Into::into).collect::<Vec<_>>(),
     );
   }

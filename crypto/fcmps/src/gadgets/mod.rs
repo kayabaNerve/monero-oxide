@@ -11,15 +11,17 @@ impl<C: Ciphersuite> Circuit<C> {
   /// Constrain an item as being a member of a list.
   ///
   /// Panics if the list is empty.
-  pub(crate) fn member_of_list(&mut self, member: &LinComb<C::F>, list: Vec<LinComb<C::F>>) {
+  pub(crate) fn member_of_list(&mut self, member: LinComb<C::F>, list: Vec<LinComb<C::F>>) {
     let mut list = list.into_iter();
 
+    let negative_member = -member;
+
     // Initialize the carry to the first list member minus the claimed member
-    let mut carry = list.next().unwrap() - member;
+    let mut carry = list.next().unwrap() + &negative_member;
 
     for list_member in list {
       // Multiply the carry by the next evaluation
-      let next = list_member - member;
+      let next = list_member + &negative_member;
 
       let carry_eval = self.eval(&carry);
       let next_eval = self.eval(&next);
