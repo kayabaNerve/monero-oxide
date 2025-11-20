@@ -37,7 +37,7 @@ pub(crate) struct BpPlusGenerators {
 static BULLETPROOF_PLUS_GENERATORS: (
   [monero_ed25519::CompressedPoint; crate::MAX_MN],
   [monero_ed25519::CompressedPoint; crate::MAX_MN],
-) = crate::generators::generate(b"bulletproof");
+) = crate::generators::generate(b"bulletproof_plus");
 #[cfg(feature = "compile-time-generators")]
 pub(crate) static GENERATORS: LazyLock<crate::generators::Generators> =
   LazyLock::new(|| crate::generators::decompress(BULLETPROOF_PLUS_GENERATORS));
