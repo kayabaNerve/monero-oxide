@@ -136,7 +136,7 @@ impl Change {
   ///
   /// If the change address is Some, this will be unable to optimize the transaction as the
   /// Monero wallet protocol expects it can (due to presumably having the view key for the change
-  /// output). If a transaction should be optimized, and isn'tm it will be fingerprintable.
+  /// output). If a transaction should be optimized, and isn't, it will be fingerprintable.
   ///
   /// If the change address is None, there are two fingerprints:
   ///
@@ -147,12 +147,9 @@ impl Change {
   ///    differentiating if transactions send to addresses with payment IDs or not. monero-wallet
   ///    includes a dummy payment ID which at least one recipient will identify as not the expected
   ///    dummy payment ID, revealing to the recipient(s) the sender is using non-wallet2 software.
+  ///
   pub fn fingerprintable(address: Option<MoneroAddress>) -> Change {
-    if let Some(address) = address {
-      Change(Some(ChangeEnum::AddressOnly(address)))
-    } else {
-      Change(None)
-    }
+    Change(address.map(ChangeEnum::AddressOnly))
   }
 }
 
@@ -269,6 +266,8 @@ impl PartialEq for SignableTransaction {
 impl Eq for SignableTransaction {}
 
 impl fmt::Debug for SignableTransaction {
+  /// This `Debug` implementation may run in variable time and reveal everything except the
+  /// `outgoing_view_key`.
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     f.debug_struct("SignableTransaction")
       .field("rct_type", &self.rct_type)
@@ -413,6 +412,8 @@ impl SignableTransaction {
   ///
   /// `data` represents arbitrary data which will be embedded into the transaction's `extra` field.
   /// Please see `Extra::arbitrary_data` for the full impacts of this.
+  ///
+  /// This function runs in time variable to the validity of the arguments and the public data.
   pub fn new(
     rct_type: RctType,
     outgoing_view_key: Zeroizing<[u8; 32]>,
@@ -461,7 +462,7 @@ impl SignableTransaction {
   /// Write a SignableTransaction.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
-  /// defined serialization.
+  /// defined serialization. This may run in time variable to its value.
   pub fn write<W: io::Write>(&self, w: &mut W) -> io::Result<()> {
     fn write_payment<W: io::Write>(payment: &InternalPayment, w: &mut W) -> io::Result<()> {
       match payment {
@@ -514,7 +515,7 @@ impl SignableTransaction {
   /// Serialize the SignableTransaction to a `Vec<u8>`.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
-  /// defined serialization.
+  /// defined serialization. This may run in time variable to its value.
   pub fn serialize(&self) -> Vec<u8> {
     let mut buf = Vec::with_capacity(256);
     self.write(&mut buf).expect("write failed but <Vec as io::Write> doesn't fail");
@@ -524,7 +525,7 @@ impl SignableTransaction {
   /// Read a `SignableTransaction`.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
-  /// defined serialization.
+  /// defined serialization. This may run in time variable to its value.
   pub fn read<R: io::Read>(r: &mut R) -> io::Result<SignableTransaction> {
     fn read_address<R: io::Read>(r: &mut R) -> io::Result<MoneroAddress> {
       String::from_utf8(read_vec(read_byte, Some(MoneroAddress::SIZE_UPPER_BOUND.0), r)?)
@@ -605,6 +606,8 @@ impl SignableTransaction {
   }
 
   /// Sign this transaction.
+  ///
+  /// This function runs in time variable to the validity of the arguments and the public data.
   pub fn sign(
     self,
     rng: &mut (impl RngCore + CryptoRng),
@@ -616,7 +619,7 @@ impl SignableTransaction {
     let mut key_images = vec![];
     for input in &self.inputs {
       let input_key = Zeroizing::new(sender_spend_key.deref() + input.key_offset().into());
-      if (input_key.deref() * ED25519_BASEPOINT_TABLE) != input.key().into() {
+      if bool::from(!(input_key.deref() * ED25519_BASEPOINT_TABLE).ct_eq(&input.key().into())) {
         Err(SendError::WrongPrivateKey)?;
       }
       let key_image = Point::from(

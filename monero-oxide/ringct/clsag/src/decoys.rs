@@ -8,7 +8,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use monero_io::*;
 use monero_ed25519::*;
 
-/// Decoy data, as used for producing Monero's ring signatures.
+/// Decoy data, as used for producing a CLSAG.
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct Decoys {
   offsets: Vec<u64>,
@@ -17,6 +17,7 @@ pub struct Decoys {
 }
 
 impl core::fmt::Debug for Decoys {
+  /// This implementation of `fmt` reveals the ring but not the index of the signer.
   fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> Result<(), core::fmt::Error> {
     fmt
       .debug_struct("Decoys")
@@ -130,7 +131,7 @@ impl Decoys {
   /// Write the Decoys.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
-  /// defined serialization.
+  /// defined serialization. This may run in time variable to its value.
   pub fn write(&self, w: &mut impl io::Write) -> io::Result<()> {
     write_vec(VarInt::write, &self.offsets, w)?;
     w.write_all(&[self.signer_index])?;
@@ -147,7 +148,7 @@ impl Decoys {
   /// Serialize the Decoys to a `Vec<u8>`.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
-  /// defined serialization.
+  /// defined serialization. This may run in time variable to its value.
   pub fn serialize(&self) -> Vec<u8> {
     let mut res =
       Vec::with_capacity((1 + (2 * self.offsets.len())) + 1 + 1 + (self.ring.len() * 64));
@@ -158,7 +159,7 @@ impl Decoys {
   /// Read a set of Decoys.
   ///
   /// This is not a Monero protocol defined struct, and this is accordingly not a Monero protocol
-  /// defined serialization.
+  /// defined serialization. This may run in time variable to its value.
   pub fn read(r: &mut impl io::Read) -> io::Result<Decoys> {
     let offsets = read_vec(VarInt::read, Some(usize::from(MAX_RING_SIZE)), r)?;
     let len = offsets.len();

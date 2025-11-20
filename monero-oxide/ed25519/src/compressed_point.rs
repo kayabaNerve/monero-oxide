@@ -73,11 +73,15 @@ impl CompressedPoint {
   ]);
 
   /// Read a [`CompressedPoint`] without checking if this point can be decompressed.
+  ///
+  /// This may run in variable time.
   pub fn read<R: Read>(r: &mut R) -> io::Result<CompressedPoint> {
     Ok(CompressedPoint(read_bytes(r)?))
   }
 
   /// Write a compressed point.
+  ///
+  /// This may run in variable time.
   pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
     w.write_all(&self.0)
   }

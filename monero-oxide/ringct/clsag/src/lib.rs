@@ -94,13 +94,12 @@ pub struct ClsagContext {
 
 impl ClsagContext {
   /// Create a new context, as necessary for signing.
+  ///
+  /// This function runs in time variable to the length of the ring and the validity of the
+  /// arguments.
   pub fn new(decoys: Decoys, commitment: Commitment) -> Result<ClsagContext, ClsagError> {
-    if decoys.len() > u8::MAX.into() {
-      Err(ClsagError::InvalidRing)?;
-    }
-
     // Validate the commitment matches
-    if decoys.signer_ring_members()[1] != commitment.commit() {
+    if bool::from(!decoys.signer_ring_members()[1].ct_eq(&commitment.commit())) {
       Err(ClsagError::InvalidCommitment)?;
     }
 
@@ -335,6 +334,8 @@ impl Clsag {
   ///
   /// `sum_outputs` is for the sum of the output commitments' masks.
   ///
+  /// This function runs in time variable to the validity of the arguments and the public data.
+  ///
   /// WARNING: This follows the Fiat-Shamir transcript format used by the Monero protocol, which
   /// makes assumptions on what has already been transcripted and bound to within `msg_hash`. Do
   /// not use this if you don't know what you're doing.
@@ -352,7 +353,7 @@ impl Clsag {
       let public_key = input.1.decoys.signer_ring_members()[0].into();
 
       // Check the key is consistent
-      if (ED25519_BASEPOINT_TABLE * key.deref()) != public_key {
+      if bool::from(!(ED25519_BASEPOINT_TABLE * key.deref()).ct_eq(&public_key)) {
         Err(ClsagError::InvalidKey)?;
       }
 
