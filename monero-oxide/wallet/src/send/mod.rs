@@ -3,6 +3,7 @@ use std_shims::{
   io, vec,
   vec::Vec,
   string::{String, ToString},
+  collections::HashSet,
 };
 
 use subtle::ConstantTimeEq;
@@ -177,6 +178,9 @@ pub enum SendError {
   /// The transaction had no inputs specified.
   #[error("no inputs")]
   NoInputs,
+  /// The provided inputs were invalid.
+  #[error("invalid inputs")]
+  InvalidInputs,
   /// The decoy quantity was invalid for the specified RingCT type.
   #[error("invalid number of decoys")]
   InvalidDecoyQuantity,
@@ -295,6 +299,11 @@ impl SignableTransaction {
     if self.inputs.is_empty() {
       Err(SendError::NoInputs)?;
     }
+    if self.inputs.iter().map(|input| input.key().compress()).collect::<HashSet<_>>().len() !=
+      self.inputs.len()
+    {
+      Err(SendError::InvalidInputs)?;
+    }
     for input in &self.inputs {
       if input.decoys().len() !=
         match self.rct_type {
@@ -412,6 +421,10 @@ impl SignableTransaction {
   ///
   /// `data` represents arbitrary data which will be embedded into the transaction's `extra` field.
   /// Please see `Extra::arbitrary_data` for the full impacts of this.
+  ///
+  /// This will attempt to sign a transaction as constructed, even if the arguments are
+  /// inconsistent or invalid for some view of the Monero network. It is the caller's
+  /// responsibility to ensure their sanity.
   ///
   /// This function runs in time variable to the validity of the arguments and the public data.
   pub fn new(
