@@ -35,22 +35,22 @@ pub enum Variable {
 #[must_use]
 pub struct LinComb<F: PrimeField> {
   /// The highest index within `aL`, `aR`, or `aO` which is used.
-  pub(crate) highest_a_index: Option<usize>,
+  highest_a_index: Option<usize>,
   /// The highest index for a Pedersen vector commitment.
-  pub(crate) highest_c_index: Option<usize>,
+  highest_c_index: Option<usize>,
   /// The highest index for a Pedersen commitment.
-  pub(crate) highest_v_index: Option<usize>,
+  highest_v_index: Option<usize>,
 
   // Sparse representation of WL/WR/WO
-  pub(crate) WL: Vec<(usize, F)>,
-  pub(crate) WR: Vec<(usize, F)>,
-  pub(crate) WO: Vec<(usize, F)>,
+  WL: Vec<(usize, F)>,
+  WR: Vec<(usize, F)>,
+  WO: Vec<(usize, F)>,
   /// A sparse representation of the vector commitments and the weights for the variables within
   /// them.
   WCG: BTreeMap<usize, Vec<(usize, F)>>,
   /// A sparse representation of the weights for the variables within Pedersen commitments.
-  pub(crate) WV: Vec<(usize, F)>,
-  pub(crate) c: F,
+  WV: Vec<(usize, F)>,
+  c: F,
 }
 
 impl<F: Zeroize + PrimeField> Zeroize for LinComb<F> {
@@ -216,6 +216,18 @@ impl<F: PrimeField> LinComb<F> {
     self
   }
 
+  pub(crate) fn highest_a_index(&self) -> Option<usize> {
+    self.highest_a_index
+  }
+
+  pub(crate) fn highest_c_index(&self) -> Option<usize> {
+    self.highest_c_index
+  }
+
+  pub(crate) fn highest_v_index(&self) -> Option<usize> {
+    self.highest_v_index
+  }
+
   /// View the current weights for `aL`.
   pub fn WL(&self) -> &[(usize, F)] {
     &self.WL
@@ -242,8 +254,8 @@ impl<F: PrimeField> LinComb<F> {
   }
 
   /// View the current constant `c`.
-  pub fn c(&self) -> F {
-    self.c
+  pub fn c(&self) -> &F {
+    &self.c
   }
 }
 

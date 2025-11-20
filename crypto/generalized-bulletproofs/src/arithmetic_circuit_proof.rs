@@ -119,13 +119,13 @@ where
     let Commitments { C, V } = commitments;
 
     for constraint in &constraints {
-      if Some(generators.len()) <= constraint.highest_a_index {
+      if Some(generators.len()) <= constraint.highest_a_index() {
         Err(AcStatementError::ConstrainedNonExistentTerm)?;
       }
-      if Some(C.len()) <= constraint.highest_c_index {
+      if Some(C.len()) <= constraint.highest_c_index() {
         Err(AcStatementError::ConstrainedNonExistentVectorCommitment)?;
       }
-      if Some(V.len()) <= constraint.highest_v_index {
+      if Some(V.len()) <= constraint.highest_v_index() {
         Err(AcStatementError::ConstrainedNonExistentCommitment)?;
       }
     }
@@ -243,7 +243,7 @@ where
       }
       for constraint in &self.constraints {
         let eval = constraint
-          .WL
+          .WL()
           .iter()
           .map(
             |(i, weight)| {
@@ -254,14 +254,14 @@ where
               }
             },
           )
-          .chain(constraint.WR.iter().map(|(i, weight)| {
+          .chain(constraint.WR().iter().map(|(i, weight)| {
             if let Some(value) = witness.aR.0.get(*i) {
               *weight * *value
             } else {
               C::F::ZERO
             }
           }))
-          .chain(constraint.WO.iter().map(|(i, weight)| {
+          .chain(constraint.WO().iter().map(|(i, weight)| {
             if let Some(value) = witness.aO.0.get(*i) {
               *weight * *value
             } else {
@@ -286,8 +286,8 @@ where
                 })
               }),
           )
-          .chain(constraint.WV.iter().map(|(i, weight)| *weight * witness.v[*i].value))
-          .chain(core::iter::once(constraint.c))
+          .chain(constraint.WV().iter().map(|(i, weight)| *weight * witness.v[*i].value))
+          .chain(core::iter::once(*constraint.c()))
           .sum::<C::F>();
 
         if eval != C::F::ZERO {
@@ -392,9 +392,9 @@ where
       let mut r_hi = 0;
       let mut o_hi = 0;
       for (constraint, z) in self.constraints.iter().zip(&z.0) {
-        l_hi = l_hi.max(accumulate_vector(&mut l_weights, &constraint.WL, *z));
-        r_hi = r_hi.max(accumulate_vector(&mut r_weights, &constraint.WR, *z));
-        o_hi = o_hi.max(accumulate_vector(&mut o_weights, &constraint.WO, *z));
+        l_hi = l_hi.max(accumulate_vector(&mut l_weights, constraint.WL(), *z));
+        r_hi = r_hi.max(accumulate_vector(&mut r_weights, constraint.WR(), *z));
+        o_hi = o_hi.max(accumulate_vector(&mut o_weights, constraint.WO(), *z));
       }
 
       // Perform the truncation, and as `*_hi` represents the index, add `1` to obtain the length
@@ -528,7 +528,7 @@ where
     for (constraint, z) in self.constraints.iter().zip(&z.0) {
       // We use `-z`, not `z`, as we write our constraint as `... + WV V = 0` not `= WV V + ..`
       // This means we need to subtract `WV V` from both sides, which we accomplish here
-      accumulate_vector(&mut V_weights, &constraint.WV, -*z);
+      accumulate_vector(&mut V_weights, constraint.WV(), -*z);
     }
 
     let tau_x = {
@@ -647,9 +647,9 @@ where
     let mut r_weights = ScalarVector::new(n);
     let mut o_weights = ScalarVector::new(n);
     for (constraint, z) in self.constraints.iter().zip(&z.0) {
-      accumulate_vector(&mut l_weights, &constraint.WL, *z);
-      accumulate_vector(&mut r_weights, &constraint.WR, *z);
-      accumulate_vector(&mut o_weights, &constraint.WO, *z);
+      accumulate_vector(&mut l_weights, constraint.WL(), *z);
+      accumulate_vector(&mut r_weights, constraint.WR(), *z);
+      accumulate_vector(&mut o_weights, constraint.WO(), *z);
     }
     let r_weights = r_weights * &y_inv;
 
@@ -680,7 +680,7 @@ where
       for (constraint, z) in self.constraints.iter().zip(&z.0) {
         // We use `-z`, not `z`, as we write our constraint as `... + WV V = 0` not `= WV V + ..`
         // This means we need to subtract `WV V` from both sides, which we accomplish here
-        accumulate_vector(&mut V_weights, &constraint.WV, -*z);
+        accumulate_vector(&mut V_weights, constraint.WV(), -*z);
       }
       V_weights = V_weights * x[ni];
 
@@ -689,7 +689,7 @@ where
       // matrix transform
       verifier.g -= verifier_weight *
         x[ni] *
-        (delta - z.inner_product(self.constraints.iter().map(|constraint| &constraint.c)));
+        (delta - z.inner_product(self.constraints.iter().map(LinComb::c)));
       for pair in V_weights.0.into_iter().zip(self.V.0) {
         verifier.additional.push((-verifier_weight * pair.0, pair.1));
       }

@@ -115,7 +115,7 @@ impl<C: Ciphersuite> Circuit<C> {
   /// Returns None if not a prover.
   pub fn eval(&self, lincomb: &LinComb<C::F>) -> Option<C::F> {
     self.prover.as_ref().map(|prover| {
-      let mut res = lincomb.c();
+      let mut res = *lincomb.c();
       for (index, weight) in lincomb.WL() {
         res += prover.aL[*index] * weight;
       }
