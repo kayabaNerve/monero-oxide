@@ -244,7 +244,6 @@ where
       for constraint in &self.constraints {
         let eval = constraint
           .WL()
-          .iter()
           .map(
             |(i, weight)| {
               if let Some(value) = witness.aL.0.get(*i) {
@@ -254,14 +253,14 @@ where
               }
             },
           )
-          .chain(constraint.WR().iter().map(|(i, weight)| {
+          .chain(constraint.WR().map(|(i, weight)| {
             if let Some(value) = witness.aR.0.get(*i) {
               *weight * *value
             } else {
               C::F::ZERO
             }
           }))
-          .chain(constraint.WO().iter().map(|(i, weight)| {
+          .chain(constraint.WO().map(|(i, weight)| {
             if let Some(value) = witness.aO.0.get(*i) {
               *weight * *value
             } else {
@@ -286,7 +285,7 @@ where
                 })
               }),
           )
-          .chain(constraint.WV().iter().map(|(i, weight)| *weight * witness.v[*i].value))
+          .chain(constraint.WV().map(|(i, weight)| *weight * witness.v[*i].value))
           .chain(core::iter::once(*constraint.c()))
           .sum::<C::F>();
 
@@ -460,7 +459,7 @@ where
         let mut cg_hi = 0;
         for (constraint, z) in self.constraints.iter().zip(&z.0) {
           if let Some(WCG) = constraint.WCG().get(&i) {
-            cg_hi = cg_hi.max(accumulate_vector(&mut cg, WCG, *z));
+            cg_hi = cg_hi.max(accumulate_vector(&mut cg, WCG.iter(), *z));
           }
         }
         cg.0.truncate(cg_hi + 1);
@@ -731,7 +730,7 @@ where
         let mut cg = ScalarVector::new(n);
         for (constraint, z) in self.constraints.iter().zip(&z.0) {
           if let Some(WCG) = constraint.WCG().get(&i) {
-            accumulate_vector(&mut cg, WCG, *z);
+            accumulate_vector(&mut cg, WCG.iter(), *z);
           }
         }
 

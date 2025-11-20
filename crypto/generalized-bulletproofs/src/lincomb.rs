@@ -28,6 +28,14 @@ pub enum Variable {
   V(usize),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Zeroize)]
+enum Tag {
+  WL,
+  WR,
+  WO,
+  WV,
+}
+
 /// A linear combination.
 ///
 /// Specifically, `WL aL + WR aR + WO aO + WCG C_G + WV V + c`.
@@ -41,15 +49,11 @@ pub struct LinComb<F: PrimeField> {
   /// The highest index for a Pedersen commitment.
   highest_v_index: Option<usize>,
 
-  // Sparse representation of WL/WR/WO
-  WL: Vec<(usize, F)>,
-  WR: Vec<(usize, F)>,
-  WO: Vec<(usize, F)>,
+  // Sparse representation of WL/WR/WO/WV
+  WLROV: Vec<(Tag, (usize, F))>,
   /// A sparse representation of the vector commitments and the weights for the variables within
   /// them.
   WCG: BTreeMap<usize, Vec<(usize, F)>>,
-  /// A sparse representation of the weights for the variables within Pedersen commitments.
-  WV: Vec<(usize, F)>,
   c: F,
 }
 
@@ -58,13 +62,10 @@ impl<F: Zeroize + PrimeField> Zeroize for LinComb<F> {
     self.highest_a_index.zeroize();
     self.highest_c_index.zeroize();
     self.highest_v_index.zeroize();
-    self.WL.zeroize();
-    self.WR.zeroize();
-    self.WO.zeroize();
+    self.WLROV.zeroize();
     for WCG in self.WCG.values_mut() {
       WCG.zeroize();
     }
-    self.WV.zeroize();
     self.c.zeroize();
   }
 }
@@ -76,11 +77,8 @@ impl<F: PrimeField> LinComb<F> {
       highest_a_index: None,
       highest_c_index: None,
       highest_v_index: None,
-      WL: vec![],
-      WR: vec![],
-      WO: vec![],
+      WLROV: vec![],
       WCG: BTreeMap::new(),
-      WV: vec![],
       c: F::ZERO,
     }
   }
@@ -107,9 +105,7 @@ impl<F: PrimeField> Add<&LinComb<F>> for LinComb<F> {
   fn add(mut self, constraint: &Self) -> Self {
     self.reconcile_for_merging(constraint);
 
-    self.WL.extend(&constraint.WL);
-    self.WR.extend(&constraint.WR);
-    self.WO.extend(&constraint.WO);
+    self.WLROV.extend(constraint.WLROV.iter());
     for (i, sparse_vec) in &constraint.WCG {
       if let Some(existing) = self.WCG.get_mut(i) {
         existing.extend(sparse_vec);
@@ -117,7 +113,6 @@ impl<F: PrimeField> Add<&LinComb<F>> for LinComb<F> {
         self.WCG.insert(*i, sparse_vec.clone());
       }
     }
-    self.WV.extend(&constraint.WV);
     self.c += constraint.c;
     self
   }
@@ -129,9 +124,7 @@ impl<F: PrimeField> Sub<&LinComb<F>> for LinComb<F> {
   fn sub(mut self, constraint: &Self) -> Self {
     self.reconcile_for_merging(constraint);
 
-    self.WL.extend(constraint.WL.iter().map(|(i, weight)| (*i, -*weight)));
-    self.WR.extend(constraint.WR.iter().map(|(i, weight)| (*i, -*weight)));
-    self.WO.extend(constraint.WO.iter().map(|(i, weight)| (*i, -*weight)));
+    self.WLROV.extend(constraint.WLROV.iter().map(|(tag, (i, weight))| (*tag, (*i, -*weight))));
     for (i, sparse_vec) in &constraint.WCG {
       let sparse_vec = sparse_vec.iter().copied().map(|(j, value)| (j, -value));
       if let Some(existing) = self.WCG.get_mut(i) {
@@ -140,7 +133,6 @@ impl<F: PrimeField> Sub<&LinComb<F>> for LinComb<F> {
         self.WCG.insert(*i, sparse_vec.collect());
       }
     }
-    self.WV.extend(constraint.WV.iter().map(|(i, weight)| (*i, -*weight)));
     self.c -= constraint.c;
     self
   }
@@ -150,22 +142,13 @@ impl<F: PrimeField> Mul<F> for LinComb<F> {
   type Output = Self;
 
   fn mul(mut self, scalar: F) -> Self {
-    for (_, weight) in &mut self.WL {
-      *weight *= scalar;
-    }
-    for (_, weight) in &mut self.WR {
-      *weight *= scalar;
-    }
-    for (_, weight) in &mut self.WO {
+    for (_, (_, weight)) in &mut self.WLROV {
       *weight *= scalar;
     }
     for WC in self.WCG.values_mut() {
       for (_, weight) in WC {
         *weight *= scalar;
       }
-    }
-    for (_, weight) in &mut self.WV {
-      *weight *= scalar;
     }
     self.c *= scalar;
     self
@@ -178,15 +161,15 @@ impl<F: PrimeField> LinComb<F> {
     match constrainable {
       Variable::aL(i) => {
         self.highest_a_index = self.highest_a_index.max(Some(i));
-        self.WL.push((i, scalar))
+        self.WLROV.push((Tag::WL, (i, scalar)))
       }
       Variable::aR(i) => {
         self.highest_a_index = self.highest_a_index.max(Some(i));
-        self.WR.push((i, scalar))
+        self.WLROV.push((Tag::WR, (i, scalar)))
       }
       Variable::aO(i) => {
         self.highest_a_index = self.highest_a_index.max(Some(i));
-        self.WO.push((i, scalar))
+        self.WLROV.push((Tag::WO, (i, scalar)))
       }
       Variable::CG { commitment: i, index: j } => {
         self.highest_c_index = self.highest_c_index.max(Some(i));
@@ -204,7 +187,7 @@ impl<F: PrimeField> LinComb<F> {
       }
       Variable::V(i) => {
         self.highest_v_index = self.highest_v_index.max(Some(i));
-        self.WV.push((i, scalar));
+        self.WLROV.push((Tag::WV, (i, scalar)));
       }
     };
     self
@@ -229,18 +212,18 @@ impl<F: PrimeField> LinComb<F> {
   }
 
   /// View the current weights for `aL`.
-  pub fn WL(&self) -> &[(usize, F)] {
-    &self.WL
+  pub fn WL(&self) -> impl Iterator<Item = &(usize, F)> {
+    self.WLROV.iter().filter_map(|(tag, value)| matches!(tag, Tag::WL).then_some(value))
   }
 
   /// View the current weights for `aR`.
-  pub fn WR(&self) -> &[(usize, F)] {
-    &self.WR
+  pub fn WR(&self) -> impl Iterator<Item = &(usize, F)> {
+    self.WLROV.iter().filter_map(|(tag, value)| matches!(tag, Tag::WR).then_some(value))
   }
 
   /// View the current weights for `aO`.
-  pub fn WO(&self) -> &[(usize, F)] {
-    &self.WO
+  pub fn WO(&self) -> impl Iterator<Item = &(usize, F)> {
+    self.WLROV.iter().filter_map(|(tag, value)| matches!(tag, Tag::WO).then_some(value))
   }
 
   /// View the current weights for `CG`.
@@ -249,8 +232,8 @@ impl<F: PrimeField> LinComb<F> {
   }
 
   /// View the current weights for `V`.
-  pub fn WV(&self) -> &[(usize, F)] {
-    &self.WV
+  pub fn WV(&self) -> impl Iterator<Item = &(usize, F)> {
+    self.WLROV.iter().filter_map(|(tag, value)| matches!(tag, Tag::WV).then_some(value))
   }
 
   /// View the current constant `c`.
@@ -264,9 +247,9 @@ impl<F: PrimeField> LinComb<F> {
 /// This is equivalent to `accumulator += values * weight`, if `values` was a normal vector.
 ///
 /// Returns the highest index written to during accumulation.
-pub(crate) fn accumulate_vector<F: PrimeField>(
+pub(crate) fn accumulate_vector<'value, F: PrimeField>(
   accumulator: &mut ScalarVector<F>,
-  values: &[(usize, F)],
+  values: impl Iterator<Item = &'value (usize, F)>,
   weight: F,
 ) -> usize {
   let mut hi = 0;
