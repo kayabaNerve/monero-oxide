@@ -141,6 +141,12 @@ impl InternalScanner {
 
     let mut res = vec![];
     for (o, output) in tx.prefix().outputs.iter().enumerate() {
+      // Explicitly skip keys which are the identity as they're theoretically able to be scanned
+      // but are unspendable due to restrictions the key image isn't the identity point
+      if output.key == CompressedPoint::IDENTITY {
+        continue;
+      }
+
       let Some(output_key) = output.key.decompress() else { continue };
 
       // Monero checks with each TX key and with the additional key for this output

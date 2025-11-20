@@ -17,6 +17,8 @@ use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
 #[cfg(not(feature = "compile-time-generators"))]
 use curve25519_dalek::constants::ED25519_BASEPOINT_POINT as ED25519_BASEPOINT_TABLE;
 
+use curve25519_dalek::traits::IsIdentity;
+
 #[cfg(feature = "multisig")]
 use frost::FrostError;
 
@@ -305,6 +307,19 @@ impl SignableTransaction {
       Err(SendError::InvalidInputs)?;
     }
     for input in &self.inputs {
+      {
+        let key = input.key().into();
+        // Reject keys with torsion, which would need a bespoke signing algorithm for completeness
+        // We will never scan such an output, making this fine
+        if !key.is_torsion_free() {
+          Err(SendError::InvalidInputs)?;
+        }
+        // Reject keys which are the identity and accordingly lack a usable key image
+        if key.is_identity() {
+          Err(SendError::InvalidInputs)?;
+        }
+      }
+
       if input.decoys().len() !=
         match self.rct_type {
           RctType::ClsagBulletproof => 11,

@@ -230,6 +230,11 @@ impl Algorithm<Ed25519> for ClsagMultisig {
     l: Participant,
     addendum: ClsagAddendum,
   ) -> Result<(), FrostError> {
+    if bool::from(view.group_key().is_identity()) {
+      Err(FrostError::InternalError(
+        "CLSAG is being signed by a key whose key image is the identity",
+      ))?;
+    }
     if bool::from(!view.group_key().0.ct_eq(&self.context.decoys.signer_ring_members()[0].into())) {
       Err(FrostError::InternalError("CLSAG is being signed with a distinct key than intended"))?;
     }
@@ -244,6 +249,11 @@ impl Algorithm<Ed25519> for ClsagMultisig {
       let mask = mask_recv
         .recv()
         .ok_or(FrostError::InternalError("CLSAG mask was not provided before process_addendum"))?;
+      if bool::from(mask.ct_eq(&self.context.commitment.mask.into())) {
+        Err(FrostError::InternalError(
+          "CLSAG pseudo-out's mask is equal to spent output's commitment's",
+        ))?;
+      }
       self.mask = Some(mask);
       // Transcript the mask
       self.transcript.append_message(b"mask", mask.to_bytes());

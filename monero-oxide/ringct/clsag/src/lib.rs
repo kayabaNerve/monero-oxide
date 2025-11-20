@@ -13,8 +13,8 @@ use std_shims::{
 
 use rand_core::{RngCore, CryptoRng};
 
+use subtle::{Choice, ConstantTimeEq, ConditionallySelectable};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
-use subtle::{ConstantTimeEq, ConditionallySelectable};
 
 use curve25519_dalek::{
   constants::ED25519_BASEPOINT_POINT,
@@ -316,6 +316,54 @@ impl Clsag {
     }
   }
 
+  /// A helper to sample the masks used for signing CLSAGs.
+  ///
+  /// This is hidden as it is not part of our API commitment. No guarantees are made for it.
+  #[doc(hidden)]
+  pub fn sample_masks<R: RngCore + CryptoRng, T>(
+    rng: &mut R,
+    contexts: &[(T, ClsagContext)],
+    sum_outputs: Scalar,
+  ) -> Option<Zeroizing<Vec<DScalar>>> {
+    if contexts.is_empty() {
+      return Some(Zeroizing::new(vec![]));
+    }
+
+    /*
+      It is impossible to sign for this configuration, though this should be intentionally
+      triggered with how edge-case it is. It's also unreachable when signing a Monero transaction
+      as those must have a minimum of two inputs.
+    */
+    if (contexts.len() == 1) && bool::from(contexts[0].1.commitment.mask.ct_eq(&sum_outputs)) {
+      None?;
+    }
+
+    // Loop until we select masks, which only doesn't happen with negligible probability
+    loop {
+      let mut masks = Zeroizing::new(vec![DScalar::ZERO; contexts.len()]);
+      let mut sum_pseudo_outs = Zeroizing::new(DScalar::ZERO);
+
+      // Randomly sample all but the final mask
+      for i in 0 .. (contexts.len() - 1) {
+        masks[i] = Scalar::random(rng).into();
+        *sum_pseudo_outs += masks[i];
+      }
+      // Choose the final mask deterministically, as necessary for the transaction to balance
+      masks[contexts.len() - 1] = sum_outputs.into() - *sum_pseudo_outs;
+
+      // Check if any masks are equal, which would effect a `D` which is the
+      // identity point and invalid accordingly
+      let mut any_masks_are_equal = Choice::from(0u8);
+      for i in 0 .. contexts.len() {
+        any_masks_are_equal |= masks[i].ct_eq(&contexts[i].1.commitment.mask.into());
+      }
+      // If no masks are equivalent, these are valid and should be yielded
+      if !bool::from(any_masks_are_equal) {
+        return Some(masks);
+      }
+    }
+  }
+
   /// Sign CLSAG signatures for the provided inputs.
   ///
   /// Monero ensures the rerandomized input commitments have the same value as the outputs by
@@ -352,6 +400,11 @@ impl Clsag {
       let key = Zeroizing::new((*input.0.deref()).into());
       let public_key = input.1.decoys.signer_ring_members()[0].into();
 
+      // The identity key has an identity key image, which is invalid
+      if public_key.is_identity() {
+        Err(ClsagError::InvalidKey)?;
+      }
+
       // Check the key is consistent
       if bool::from(!(ED25519_BASEPOINT_TABLE * key.deref()).ct_eq(&public_key)) {
         Err(ClsagError::InvalidKey)?;
@@ -362,25 +415,18 @@ impl Clsag {
       key_images.push(key_image_generator * key.deref());
     }
 
-    let mut res = Vec::with_capacity(inputs.len());
-    let mut sum_pseudo_outs = DScalar::ZERO;
-    for i in 0 .. inputs.len() {
-      let mask;
-      // If this is the last input, set the mask as described above
-      if i == (inputs.len() - 1) {
-        mask = sum_outputs.into() - sum_pseudo_outs;
-      } else {
-        mask = Scalar::random(rng).into();
-        sum_pseudo_outs += mask;
-      }
+    // Sample the masks for these CLSAGs
+    let masks = Self::sample_masks(rng, &inputs, sum_outputs).ok_or(ClsagError::InvalidD)?;
 
+    let mut res = Vec::with_capacity(inputs.len());
+    for i in 0 .. inputs.len() {
       let mut nonce = Zeroizing::new(Scalar::random(rng).into());
       let ClsagSignCore { mut incomplete_clsag, pseudo_out, key_challenge, challenged_mask } =
         Clsag::sign_core(
           rng,
           &key_images[i],
           &inputs[i].1,
-          mask,
+          masks[i],
           &msg_hash,
           nonce.deref() * ED25519_BASEPOINT_TABLE,
           nonce.deref() * key_image_generators[i],

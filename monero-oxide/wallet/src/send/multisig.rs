@@ -21,7 +21,7 @@ use frost::{
 use monero_oxide::{
   ed25519::CompressedPoint,
   ringct::{
-    clsag::{ClsagContext, ClsagMultisigMaskSender, ClsagAddendum, ClsagMultisig},
+    clsag::{ClsagContext, Clsag, ClsagMultisigMaskSender, ClsagAddendum, ClsagMultisig},
     RctPrunable, RctProofs,
   },
   transaction::Transaction,
@@ -36,6 +36,7 @@ pub struct TransactionMachine {
 
   // The key image generator, and the (scalar, offset) linear combination from the spend key
   key_image_generators_and_lincombs: Vec<(EdwardsPoint, (Scalar, Scalar))>,
+  contexts: Vec<((), ClsagContext)>,
   clsags: Vec<(ClsagMultisigMaskSender, AlgorithmMachine<Ed25519, ClsagMultisig>)>,
 }
 
@@ -52,6 +53,7 @@ pub struct TransactionSignMachine {
   keys: ThresholdKeys<Ed25519>,
 
   key_image_generators_and_lincombs: Vec<(EdwardsPoint, (Scalar, Scalar))>,
+  contexts: Vec<((), ClsagContext)>,
   clsags: Vec<(ClsagMultisigMaskSender, AlgorithmSignMachine<Ed25519, ClsagMultisig>)>,
 
   our_preprocess: Vec<Preprocess<Ed25519, ClsagAddendum>>,
@@ -77,6 +79,7 @@ impl SignableTransaction {
   /// This function runs in time variable to the validity of the arguments and the public data.
   pub fn multisig(self, keys: ThresholdKeys<Ed25519>) -> Result<TransactionMachine, SendError> {
     let mut clsags = vec![];
+    let mut contexts = vec![];
 
     let mut key_image_generators_and_lincombs = vec![];
     for input in &self.inputs {
@@ -97,14 +100,21 @@ impl SignableTransaction {
         .map_err(SendError::ClsagError)?;
       let (clsag, clsag_mask_send) = ClsagMultisig::new(
         RecommendedTranscript::new(b"Monero Multisignature Transaction"),
-        context,
+        context.clone(),
       );
+      contexts.push(((), context));
       key_image_generators_and_lincombs
         .push((clsag.key_image_generator(), (offset.current_scalar(), offset.current_offset())));
       clsags.push((clsag_mask_send, AlgorithmMachine::new(clsag, offset)));
     }
 
-    Ok(TransactionMachine { signable: self, keys, key_image_generators_and_lincombs, clsags })
+    Ok(TransactionMachine {
+      signable: self,
+      keys,
+      key_image_generators_and_lincombs,
+      contexts,
+      clsags,
+    })
   }
 }
 
@@ -151,6 +161,7 @@ impl PreprocessMachine for TransactionMachine {
         keys: self.keys,
 
         key_image_generators_and_lincombs: self.key_image_generators_and_lincombs,
+        contexts: self.contexts,
         clsags,
 
         our_preprocess,
@@ -299,16 +310,11 @@ impl SignMachine<Transaction> for TransactionSignMachine {
     let clsag_len = clsags.len();
     let output_masks = tx.intent.sum_output_masks(&tx.key_images);
     let mut rng = tx.intent.seeded_rng(b"multisig_pseudo_out_masks");
-    let mut sum_pseudo_outs = Scalar::ZERO;
+    let masks = Clsag::sample_masks(&mut rng, &self.contexts, output_masks)
+      .expect("`Clsag::sample_masks` yielded `None` despite having multiple inputs");
     let mut to_sign = Vec::with_capacity(clsag_len);
-    for (i, ((clsag_mask_send, clsag), commitments)) in clsags.into_iter().enumerate() {
-      let mut mask = monero_oxide::ed25519::Scalar::random(&mut rng).into();
-      if i == (clsag_len - 1) {
-        mask = output_masks.into() - sum_pseudo_outs;
-      } else {
-        sum_pseudo_outs += mask;
-      }
-      clsag_mask_send.send(mask);
+    for (((clsag_mask_send, clsag), commitments), mask) in clsags.into_iter().zip(masks.iter()) {
+      clsag_mask_send.send(*mask);
       to_sign.push((clsag, commitments));
     }
 
