@@ -8,6 +8,7 @@ use std_shims::{
 use rand_core::{RngCore, CryptoRng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
+use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use curve25519_dalek::{scalar::Scalar, edwards::EdwardsPoint};
@@ -229,6 +230,10 @@ impl Algorithm<Ed25519> for ClsagMultisig {
     l: Participant,
     addendum: ClsagAddendum,
   ) -> Result<(), FrostError> {
+    if bool::from(!view.group_key().0.ct_eq(&self.context.decoys.signer_ring_members()[0].into())) {
+      Err(FrostError::InternalError("CLSAG is being signed with a distinct key than intended"))?;
+    }
+
     if let Some(mask_recv) = self.mask_recv.take() {
       self.transcript.domain_separate(b"CLSAG");
       // Transcript the ring
