@@ -2,7 +2,8 @@
 use std_shims::prelude::*;
 use std_shims::io;
 
-use subtle::{Choice, ConstantTimeEq, ConstantTimeLess, ConstantTimeGreater};
+#[rustfmt::skip]
+use subtle::{Choice, ConstantTimeEq, ConstantTimeLess, ConstantTimeGreater, ConditionallySelectable};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use monero_io::*;
@@ -104,6 +105,8 @@ impl Decoys {
   }
 
   /// The positions of the ring members within the Monero blockchain.
+  ///
+  /// This function is runs in time variable to the length of the ring.
   pub fn positions(&self) -> Vec<u64> {
     let mut res = Vec::with_capacity(self.len());
     res.push(self.offsets[0]);
@@ -124,8 +127,16 @@ impl Decoys {
   }
 
   /// The [key, commitment] pair of the signer.
+  ///
+  /// This function is runs in time variable to the length of the ring.
   pub fn signer_ring_members(&self) -> [Point; 2] {
-    self.ring[usize::from(self.signer_index)]
+    let mut result = self.ring[0];
+    for (i, member) in self.ring.iter().enumerate().skip(1) {
+      let select = i.ct_eq(&usize::from(self.signer_index));
+      result[0] = <_>::conditional_select(&result[0], &member[0], select);
+      result[1] = <_>::conditional_select(&result[1], &member[1], select);
+    }
+    result
   }
 
   /// Write the Decoys.

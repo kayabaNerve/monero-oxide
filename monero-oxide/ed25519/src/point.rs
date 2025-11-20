@@ -15,6 +15,12 @@ impl ConstantTimeEq for Point {
   }
 }
 
+impl ConditionallySelectable for Point {
+  fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
+    Self(<_>::conditional_select(&a.0, &b.0, choice))
+  }
+}
+
 impl PartialEq for Point {
   /// This defers to `ConstantTimeEq::ct_eq`.
   fn eq(&self, other: &Self) -> bool {
