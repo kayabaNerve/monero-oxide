@@ -80,10 +80,10 @@ impl<T: HttpTransport> MoneroDaemon<T> {
       request.extend(start.to_le_bytes());
 
       /*
-        This field is for a not-yet-released version of Monero, with the relevant pull request
-        being https://github.com/monero-project/monero/pull/9901. Older version of Monero will
-        ignore this field and return as many blocks as it wants in response to our request. Newer
-        versions of Monero won't waste our mutual bandwidth however.
+        This field was introduced in Monero 0.18.4.3, with the relevant pull request being
+        https://github.com/monero-project/monero/pull/9901. Older version of Monero will ignore
+        this field and return as many blocks as it wants in response to our request. Newer versions
+        of Monero won't waste our mutual bandwidth however.
       */
       request.push(epee_key_len!("max_block_count"));
       request.extend("max_block_count".as_bytes());

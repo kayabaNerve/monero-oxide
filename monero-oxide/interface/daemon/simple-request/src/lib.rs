@@ -69,8 +69,9 @@ impl SimpleRequestTransport {
   /// external dependencies). If your usage exhibits unexpected behavior, please open an issue to
   /// to let us know.
   ///
-  /// A daemon requiring authentication can be used via including the username and password in the
-  /// URL (`scheme://username:password@domain.tld`).
+  /// A daemon requiring authentication may be used via including the username and password in the
+  /// URL (`scheme://username:password@domain.tld`). Authentication is NOT guaranteed to be handled
+  /// in constant time.
   pub async fn new(url: String) -> Result<MoneroDaemon<SimpleRequestTransport>, InterfaceError> {
     Self::with_custom_timeout(url, DEFAULT_TIMEOUT).await
   }

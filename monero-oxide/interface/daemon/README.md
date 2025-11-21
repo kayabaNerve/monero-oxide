@@ -26,14 +26,11 @@ Accordingly, this library tells the transport a bound on the response size.
 These bounds attempt to limit the amount of client bandwidth, and memory, a
 malicious Monero daemon may waste. Unfortunately, due to Monero's lack of
 bounds on block sizes and miner transactions (due to its adaptive scaling),
-these bounds may cause this library to be unable to make certain calls if:
-
-- A transaction exceeding 1 MB exists
-- A block exceeding 5 MB exists
-
-Where both bounds are presumed ludicrous and therefore unlikely to happen. If
-you'd like to ensure correctness in every case, even the ludicrous, you may
-disable size limits on responses with `daemon.response_size_limits(false)`.
+these bounds may cause this library to be unable to make certain calls if
+some presumably ludicrous bounds are exceeded. While this is unlikely to
+happen, if you'd like to ensure correctness in every case, even the ludicrous,
+you may disable size limits on responses with
+`daemon.response_size_limits(false)`.
 
 ### Cargo Features
 
