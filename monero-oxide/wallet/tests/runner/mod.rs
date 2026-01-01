@@ -1,3 +1,4 @@
+use core::time::Duration;
 use std_shims::sync::LazyLock;
 
 use zeroize::Zeroizing;
@@ -129,7 +130,12 @@ pub fn check_weight_and_fee(tx: &Transaction, fee_rate: FeeRate) {
 }
 
 pub async fn rpc() -> SimpleRequestRpc {
-  let rpc = SimpleRequestRpc::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
+  let rpc = SimpleRequestRpc::with_custom_timeout(
+    "http://monero:oxide@127.0.0.1:18081".to_string(),
+    Duration::from_mins(5),
+  )
+  .await
+  .unwrap();
 
   const BLOCKS_TO_MINE: usize = 110;
 
