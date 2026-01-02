@@ -30,6 +30,7 @@ use monero_io::*;
 use monero_ed25519::*;
 
 mod decoys;
+pub(crate) use decoys::MAX_RING_SIZE;
 pub use decoys::Decoys;
 
 #[cfg(feature = "multisig")]
@@ -389,14 +390,23 @@ impl Clsag {
           nonce.deref() * ED25519_BASEPOINT_TABLE,
           nonce.deref() * key_image_generators[i],
         );
-      // Effectively r - c x, except c x is (c_p x) + (c_c z), where z is the delta between the
-      // ring member's commitment and our pseudo-out commitment (which will only have a known
-      // discrete log over G if the amounts cancel out)
-      incomplete_clsag.s[usize::from(inputs[i].1.decoys.signer_index())] = Scalar::from(
-        nonce.deref() -
-          ((key_challenge * Zeroizing::new((*inputs[i].0.deref()).into()).deref()) +
-            challenged_mask),
-      );
+      {
+        // Effectively r - c x, except c x is (c_p x) + (c_c z), where z is the delta between the
+        // ring member's commitment and our pseudo-out commitment (which will only have a known
+        // discrete log over G if the amounts cancel out)
+        let signer_s = Scalar::from(
+          nonce.deref() -
+            ((key_challenge * Zeroizing::new((*inputs[i].0.deref()).into()).deref()) +
+              challenged_mask),
+        );
+        for s_index in 0 ..= MAX_RING_SIZE {
+          if usize::from(s_index) == incomplete_clsag.s.len() {
+            break;
+          }
+          let signer_index = s_index.ct_eq(&inputs[i].1.decoys.signer_index());
+          incomplete_clsag.s[usize::from(s_index)].conditional_assign(&signer_s, signer_index);
+        }
+      }
       let clsag = incomplete_clsag;
 
       // Zeroize private keys and nonces.
