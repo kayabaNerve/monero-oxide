@@ -1,9 +1,10 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
-#![deny(missing_docs)]
 
-use core::future::Future;
-use std::{sync::Arc, io::Read, time::Duration};
+use core::{future::Future, time::Duration};
+extern crate alloc;
+use alloc::sync::Arc;
+use std::io::Read as _;
 
 use tokio::sync::Mutex;
 
@@ -50,9 +51,9 @@ impl SimpleRequestRpc {
     Ok(if let Some(header) = response.headers().get("www-authenticate") {
       Some((
         digest_auth::parse(header.to_str().map_err(|_| {
-          RpcError::InvalidNode("www-authenticate header wasn't a string".to_string())
+          RpcError::InvalidNode("www-authenticate header wasn't a string".to_owned())
         })?)
-        .map_err(|_| RpcError::InvalidNode("invalid digest-auth response".to_string()))?,
+        .map_err(|_| RpcError::InvalidNode("invalid digest-auth response".to_owned()))?,
         0,
       ))
     } else {
@@ -81,28 +82,28 @@ impl SimpleRequestRpc {
       let url_clone = Zeroizing::new(url);
       let split_url = url_clone.split('@').collect::<Vec<_>>();
       if split_url.len() != 2 {
-        Err(RpcError::ConnectionError("invalid amount of login specifications".to_string()))?;
+        Err(RpcError::ConnectionError("invalid amount of login specifications".to_owned()))?;
       }
       let mut userpass = split_url[0];
-      url = split_url[1].to_string();
+      url = split_url[1].to_owned();
 
       // If there was additionally a protocol string, restore that to the daemon URL
       if userpass.contains("://") {
         let split_userpass = userpass.split("://").collect::<Vec<_>>();
         if split_userpass.len() != 2 {
-          Err(RpcError::ConnectionError("invalid amount of protocol specifications".to_string()))?;
+          Err(RpcError::ConnectionError("invalid amount of protocol specifications".to_owned()))?;
         }
-        url = split_userpass[0].to_string() + "://" + &url;
+        url = split_userpass[0].to_owned() + "://" + &url;
         userpass = split_userpass[1];
       }
 
       let split_userpass = userpass.split(':').collect::<Vec<_>>();
       if split_userpass.len() > 2 {
-        Err(RpcError::ConnectionError("invalid amount of passwords".to_string()))?;
+        Err(RpcError::ConnectionError("invalid amount of passwords".to_owned()))?;
       }
 
       let client = Client::without_connection_pool(&url)
-        .map_err(|_| RpcError::ConnectionError("invalid URL".to_string()))?;
+        .map_err(|_| RpcError::ConnectionError("invalid URL".to_owned()))?;
       // Obtain the initial challenge, which also somewhat validates this connection
       let challenge = Self::digest_auth_challenge(
         &client
@@ -115,8 +116,8 @@ impl SimpleRequestRpc {
           .map_err(|e| RpcError::ConnectionError(format!("{e:?}")))?,
       )?;
       Authentication::Authenticated {
-        username: Zeroizing::new(split_userpass[0].to_string()),
-        password: Zeroizing::new((*split_userpass.get(1).unwrap_or(&"")).to_string()),
+        username: Zeroizing::new(split_userpass[0].to_owned()),
+        password: Zeroizing::new((*split_userpass.get(1).unwrap_or(&"")).to_owned()),
         connection: Arc::new(Mutex::new((challenge, client))),
       }
     } else {
@@ -162,7 +163,7 @@ impl SimpleRequestRpc {
         Authentication::Authenticated { username, password, connection } => {
           let mut connection_lock = connection.lock().await;
 
-          let mut request = request_fn("/".to_string() + route)?;
+          let mut request = request_fn("/".to_owned() + route)?;
 
           // If we don't have an auth challenge, obtain one
           if connection_lock.0.is_none() {
@@ -173,7 +174,7 @@ impl SimpleRequestRpc {
                 .await
                 .map_err(|e| RpcError::ConnectionError(format!("{e:?}")))?,
             )?;
-            request = request_fn("/".to_string() + route)?;
+            request = request_fn("/".to_owned() + route)?;
           }
 
           // Insert the challenge response, if we have a challenge
@@ -185,7 +186,7 @@ impl SimpleRequestRpc {
             let mut context = AuthContext::new_post::<_, _, _, &[u8]>(
               <_ as AsRef<str>>::as_ref(username),
               <_ as AsRef<str>>::as_ref(password),
-              "/".to_string() + route,
+              "/".to_owned() + route,
               None,
             );
             context.set_custom_cnonce(hex::encode(cnonce.to_le_bytes()));
@@ -196,14 +197,14 @@ impl SimpleRequestRpc {
                 &challenge
                   .respond(&context)
                   .map_err(|_| {
-                    RpcError::InvalidNode("couldn't respond to digest-auth challenge".to_string())
+                    RpcError::InvalidNode("couldn't respond to digest-auth challenge".to_owned())
                   })?
                   .to_header_string(),
               )
               .map_err(|_| {
                 RpcError::InternalError(
                   "digest-auth challenge response wasn't a valid string for an HTTP header"
-                    .to_string(),
+                    .to_owned(),
                 )
               })?,
             );
@@ -224,7 +225,7 @@ impl SimpleRequestRpc {
                   header
                     .to_str()
                     .map_err(|_| {
-                      RpcError::InvalidNode("www-authenticate header wasn't a string".to_string())
+                      RpcError::InvalidNode("www-authenticate header wasn't a string".to_owned())
                     })?
                     .contains("stale")
                 } else {
@@ -251,7 +252,7 @@ impl SimpleRequestRpc {
             } else {
               debug_assert!(is_stale);
               Err(RpcError::InvalidNode(
-                "node claimed fresh connection had stale authentication".to_string(),
+                "node claimed fresh connection had stale authentication".to_owned(),
               ))?
             }
           } else {

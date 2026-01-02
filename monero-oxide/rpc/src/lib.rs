@@ -1,6 +1,5 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
-#![deny(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use core::{
@@ -13,7 +12,7 @@ use std_shims::{
   vec,
   vec::Vec,
   io,
-  string::{String, ToString},
+  string::{String, ToString as _},
 };
 
 use zeroize::Zeroize;
@@ -180,13 +179,13 @@ pub enum FeePriority {
 /// https://github.com/monero-project/monero/blob/ac02af92867590ca80b2779a7bbeafa99ff94dcb/
 ///   src/simplewallet/simplewallet.cpp#L161
 impl FeePriority {
-  pub(crate) fn fee_priority(&self) -> u32 {
+  pub(crate) fn fee_priority(self) -> u32 {
     match self {
       FeePriority::Unimportant => 1,
       FeePriority::Normal => 2,
       FeePriority::Elevated => 3,
       FeePriority::Priority => 4,
-      FeePriority::Custom { priority, .. } => *priority,
+      FeePriority::Custom { priority, .. } => priority,
     }
   }
 }
@@ -230,11 +229,11 @@ pub struct OutputInformation {
 }
 
 fn rpc_hex(value: &str) -> Result<Vec<u8>, RpcError> {
-  hex::decode(value).map_err(|_| RpcError::InvalidNode("expected hex wasn't hex".to_string()))
+  hex::decode(value).map_err(|_| RpcError::InvalidNode("expected hex wasn't hex".to_owned()))
 }
 
 fn hash_hex(hash: &str) -> Result<[u8; 32], RpcError> {
-  rpc_hex(hash)?.try_into().map_err(|_| RpcError::InvalidNode("hash wasn't 32-bytes".to_string()))
+  rpc_hex(hash)?.try_into().map_err(|_| RpcError::InvalidNode("hash wasn't 32-bytes".to_owned()))
 }
 
 fn rpc_point(point: &str) -> Result<Point, RpcError> {
@@ -291,7 +290,7 @@ pub trait Rpc: Sync + Clone {
         )
         .await?;
       let res_str = std_shims::str::from_utf8(&res)
-        .map_err(|_| RpcError::InvalidNode("response wasn't utf-8".to_string()))?;
+        .map_err(|_| RpcError::InvalidNode("response wasn't utf-8".to_owned()))?;
       serde_json::from_str(res_str)
         .map_err(|_| RpcError::InvalidNode(format!("response wasn't the expected json: {res_str}")))
     }
@@ -361,7 +360,7 @@ pub trait Rpc: Sync + Clone {
       }
       let res = self.rpc_call::<Option<()>, HeightResponse>("get_height", None).await?.height;
       if res == 0 {
-        Err(RpcError::InvalidNode("node responded with 0 for the height".to_string()))?;
+        Err(RpcError::InvalidNode("node responded with 0 for the height".to_owned()))?;
       }
       Ok(res)
     }
@@ -401,7 +400,7 @@ pub trait Rpc: Sync + Clone {
         }
         if txs.txs.len() != this_count {
           Err(RpcError::InvalidNode(
-            "not missing any transactions yet didn't return all transactions".to_string(),
+            "not missing any transactions yet didn't return all transactions".to_owned(),
           ))?;
         }
 
@@ -420,7 +419,7 @@ pub trait Rpc: Sync + Clone {
             Err(err) => err,
           })?;
           if !buf.is_empty() {
-            Err(RpcError::InvalidNode("transaction had extra bytes after it".to_string()))?;
+            Err(RpcError::InvalidNode("transaction had extra bytes after it".to_owned()))?;
           }
 
           // We check this to ensure we didn't read a pruned transaction when we meant to read an
@@ -438,7 +437,7 @@ pub trait Rpc: Sync + Clone {
           // In exchange, this provides resilience against invalid/malicious nodes
           if tx.hash() != hashes[i] {
             Err(RpcError::InvalidNode(
-              "replied with transaction wasn't the requested transaction".to_string(),
+              "replied with transaction wasn't the requested transaction".to_owned(),
             ))?;
           }
 
@@ -493,7 +492,7 @@ pub trait Rpc: Sync + Clone {
               Err(err) => err,
             })?;
           if !buf.is_empty() {
-            Err(RpcError::InvalidNode("pruned transaction had extra bytes after it".to_string()))?;
+            Err(RpcError::InvalidNode("pruned transaction had extra bytes after it".to_owned()))?;
           }
           Ok(tx)
         })
@@ -558,9 +557,9 @@ pub trait Rpc: Sync + Clone {
         self.json_rpc_call("get_block", Some(json!({ "hash": hex::encode(hash) }))).await?;
 
       let block = Block::read(&mut rpc_hex(&res.blob)?.as_slice())
-        .map_err(|_| RpcError::InvalidNode("invalid block".to_string()))?;
+        .map_err(|_| RpcError::InvalidNode("invalid block".to_owned()))?;
       if block.hash() != hash {
-        Err(RpcError::InvalidNode("different block than requested (hash)".to_string()))?;
+        Err(RpcError::InvalidNode("different block than requested (hash)".to_owned()))?;
       }
       Ok(block)
     }
@@ -584,7 +583,7 @@ pub trait Rpc: Sync + Clone {
         self.json_rpc_call("get_block", Some(json!({ "height": number }))).await?;
 
       let block = Block::read(&mut rpc_hex(&res.blob)?.as_slice())
-        .map_err(|_| RpcError::InvalidNode("invalid block".to_string()))?;
+        .map_err(|_| RpcError::InvalidNode("invalid block".to_owned()))?;
 
       // Make sure this is actually the block for this number
       match block.miner_transaction().prefix().inputs.first() {
@@ -592,11 +591,11 @@ pub trait Rpc: Sync + Clone {
           if *actual == number {
             Ok(block)
           } else {
-            Err(RpcError::InvalidNode("different block than requested (number)".to_string()))
+            Err(RpcError::InvalidNode("different block than requested (number)".to_owned()))
           }
         }
         _ => Err(RpcError::InvalidNode(
-          "block's miner_transaction didn't have an input of kind Input::Gen".to_string(),
+          "block's miner_transaction didn't have an input of kind Input::Gen".to_owned(),
         )),
       }
     }
@@ -662,7 +661,7 @@ pub trait Rpc: Sync + Clone {
 
         let index = *self.get_o_indexes(*hash).await?.first().ok_or_else(|| {
           RpcError::InvalidNode(
-            "requested output indexes for a TX with outputs and got none".to_string(),
+            "requested output indexes for a TX with outputs and got none".to_owned(),
           )
         })?;
         output_index_for_first_ringct_output = Some(index);
@@ -764,7 +763,7 @@ pub trait Rpc: Sync + Clone {
     tx: &Transaction,
   ) -> impl Send + Future<Output = Result<(), RpcError>> {
     async move {
-      #[allow(dead_code)]
+      #[allow(dead_code, clippy::struct_excessive_bools)]
       #[derive(Debug, Deserialize)]
       struct SendRawResponse {
         status: String,
@@ -1092,16 +1091,16 @@ impl<R: Rpc> DecoyRpc for R {
 
       let from = match range.start_bound() {
         Bound::Included(from) => *from,
-        Bound::Excluded(from) => from.checked_add(1).ok_or_else(|| {
-          RpcError::InternalError("range's from wasn't representable".to_string())
-        })?,
+        Bound::Excluded(from) => from
+          .checked_add(1)
+          .ok_or_else(|| RpcError::InternalError("range's from wasn't representable".to_owned()))?,
         Bound::Unbounded => 0,
       };
       let to = match range.end_bound() {
         Bound::Included(to) => *to,
         Bound::Excluded(to) => to
           .checked_sub(1)
-          .ok_or_else(|| RpcError::InternalError("range's to wasn't representable".to_string()))?,
+          .ok_or_else(|| RpcError::InternalError("range's to wasn't representable".to_owned()))?,
         Bound::Unbounded => self.get_height().await? - 1,
       };
       if from > to {
@@ -1127,7 +1126,7 @@ impl<R: Rpc> DecoyRpc for R {
 
       if distributions.status != "OK" {
         Err(RpcError::ConnectionError(
-          "node couldn't service this request for the output distribution".to_string(),
+          "node couldn't service this request for the output distribution".to_owned(),
         ))?;
       }
 
@@ -1153,7 +1152,7 @@ impl<R: Rpc> DecoyRpc for R {
         2
       } else {
         (to - start_height).checked_add(1).ok_or_else(|| {
-          RpcError::InternalError("expected length of distribution exceeded usize".to_string())
+          RpcError::InternalError("expected length of distribution exceeded usize".to_owned())
         })?
       };
       // Yet this is actually a height
@@ -1177,7 +1176,7 @@ impl<R: Rpc> DecoyRpc for R {
         for d in &distribution {
           if *d < monotonic {
             Err(RpcError::InvalidNode(
-              "received output distribution didn't increase monotonically".to_string(),
+              "received output distribution didn't increase monotonically".to_owned(),
             ))?;
           }
           monotonic = *d;
@@ -1228,11 +1227,11 @@ impl<R: Rpc> DecoyRpc for R {
           .await?;
 
         if rpc_res.status != "OK" {
-          Err(RpcError::InvalidNode("bad response to get_outs".to_string()))?;
+          Err(RpcError::InvalidNode("bad response to get_outs".to_owned()))?;
         }
 
         if rpc_res.outs.len() != indexes.len() {
-          Err(RpcError::InvalidNode("get_outs response omitted requested outputs".to_string()))?;
+          Err(RpcError::InvalidNode("get_outs response omitted requested outputs".to_owned()))?;
         }
 
         res.extend(
@@ -1245,7 +1244,7 @@ impl<R: Rpc> DecoyRpc for R {
                 unlocked: output.unlocked,
                 key: CompressedPoint::from(
                   <[u8; 32]>::try_from(rpc_hex(&output.key)?)
-                    .map_err(|_| RpcError::InvalidNode("output key wasn't 32 bytes".to_string()))?,
+                    .map_err(|_| RpcError::InvalidNode("output key wasn't 32 bytes".to_owned()))?,
                 ),
                 commitment: rpc_point(&output.mask)?,
                 transaction: hash_hex(&output.txid)?,

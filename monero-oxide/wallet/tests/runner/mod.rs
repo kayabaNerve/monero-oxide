@@ -16,7 +16,7 @@ use monero_wallet::{
   ringct::RctType,
   transaction::Transaction,
   block::Block,
-  rpc::{Rpc, FeeRate},
+  rpc::{Rpc as _, FeeRate},
   address::{Network, AddressType, MoneroAddress},
   DEFAULT_LOCK_WINDOW, ViewPair, GuaranteedViewPair, WalletOutput, Scanner,
 };
@@ -25,6 +25,7 @@ mod builder;
 pub use builder::SignableTransactionBuilder;
 
 pub fn ring_len(rct_type: RctType) -> u8 {
+  #![allow(clippy::wildcard_enum_match_arm)]
   match rct_type {
     RctType::ClsagBulletproof => 11,
     RctType::ClsagBulletproofPlus => 16,
@@ -129,7 +130,7 @@ pub fn check_weight_and_fee(tx: &Transaction, fee_rate: FeeRate) {
 }
 
 pub async fn rpc() -> SimpleRequestRpc {
-  let rpc = SimpleRequestRpc::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
+  let rpc = SimpleRequestRpc::new("http://monero:oxide@127.0.0.1:18081".to_owned()).await.unwrap();
 
   const BLOCKS_TO_MINE: usize = 110;
 

@@ -175,12 +175,12 @@ impl ExtraField {
           let mut n_consume = 0;
           for v in buf {
             if *v != 0u8 {
-              Err(io::Error::other("non-zero value after padding"))?
+              Err(io::Error::other("non-zero value after padding"))?;
             }
             n_consume += 1;
             size += 1;
             if size > MAX_TX_EXTRA_PADDING_COUNT {
-              Err(io::Error::other("padding exceeded max count"))?
+              Err(io::Error::other("padding exceeded max count"))?;
             }
           }
           if n_consume == 0 {
@@ -219,7 +219,7 @@ impl Extra {
   //   /src/wallet/wallet2.cpp#L2383-L2387 (additional key was improperly encoded)
   pub fn keys(&self) -> Option<(Vec<Point>, Option<Vec<Point>>)> {
     let identity = {
-      use curve25519_dalek::{traits::Identity, EdwardsPoint};
+      use curve25519_dalek::{traits::Identity as _, EdwardsPoint};
       Point::from(EdwardsPoint::identity())
     };
 
@@ -232,7 +232,10 @@ impl Extra {
           additional = additional
             .or(Some(keys.into_iter().map(|key| key.decompress().unwrap_or(identity)).collect()));
         }
-        _ => (),
+        ExtraField::Padding(_) |
+        ExtraField::Nonce(_) |
+        ExtraField::MergeMining(_, _) |
+        ExtraField::MysteriousMinergate(_) => (),
       }
     }
     // Don't return any keys if this was non-standard and didn't include the primary key

@@ -1,6 +1,8 @@
+#![allow(missing_docs)]
+
 use monero_oxide::transaction::Transaction;
 use monero_simple_request_rpc::SimpleRequestRpc;
-use monero_wallet::{rpc::Rpc, extra::MAX_ARBITRARY_DATA_SIZE, send::SendError};
+use monero_wallet::{rpc::Rpc as _, extra::MAX_ARBITRARY_DATA_SIZE, send::SendError};
 
 mod runner;
 
@@ -10,7 +12,7 @@ type SRR = SimpleRequestRpc;
 test!(
   add_single_data_less_than_max,
   (
-    |_, mut builder: Builder, addr| async move {
+    async |_, mut builder: Builder, addr| {
       let arbitrary_data = vec![b'\0'; MAX_ARBITRARY_DATA_SIZE - 1];
 
       // make sure we can add to tx
@@ -19,7 +21,7 @@ test!(
       builder.add_payment(addr, 5);
       (builder.build().unwrap(), (arbitrary_data,))
     },
-    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, data: (Vec<u8>,)| async move {
+    async |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, data: (Vec<u8>,)| {
       let output = scanner.scan(block).unwrap().not_additionally_locked().swap_remove(0);
       assert_eq!(output.transaction(), tx.hash());
       assert_eq!(output.commitment().amount, 5);
@@ -31,7 +33,7 @@ test!(
 test!(
   add_multiple_data_less_than_max,
   (
-    |_, mut builder: Builder, addr| async move {
+    async |_, mut builder: Builder, addr| {
       let mut data = vec![];
       for b in 1 ..= 3 {
         data.push(vec![b; MAX_ARBITRARY_DATA_SIZE - 1]);
@@ -45,7 +47,7 @@ test!(
       builder.add_payment(addr, 5);
       (builder.build().unwrap(), data)
     },
-    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, data: Vec<Vec<u8>>| async move {
+    async |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, data: Vec<Vec<u8>>| {
       let output = scanner.scan(block).unwrap().not_additionally_locked().swap_remove(0);
       assert_eq!(output.transaction(), tx.hash());
       assert_eq!(output.commitment().amount, 5);
@@ -57,7 +59,7 @@ test!(
 test!(
   add_single_data_more_than_max,
   (
-    |_, mut builder: Builder, addr| async move {
+    async |_, mut builder: Builder, addr| {
       // Make a data that is bigger than the maximum
       let mut data = vec![b'a'; MAX_ARBITRARY_DATA_SIZE + 1];
 
@@ -72,7 +74,7 @@ test!(
       builder.add_payment(addr, 5);
       (builder.build().unwrap(), data)
     },
-    |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, data: Vec<u8>| async move {
+    async |_rpc: SRR, block, tx: Transaction, mut scanner: Scanner, data: Vec<u8>| {
       let output = scanner.scan(block).unwrap().not_additionally_locked().swap_remove(0);
       assert_eq!(output.transaction(), tx.hash());
       assert_eq!(output.commitment().amount, 5);
