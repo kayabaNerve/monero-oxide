@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+#![expect(missing_docs)]
 
 use std::collections::HashSet;
 
@@ -17,7 +17,7 @@ use monero_wallet::{
 mod runner;
 use runner::{SignableTransactionBuilder, ring_len};
 
-#[allow(clippy::upper_case_acronyms)]
+#[expect(clippy::upper_case_acronyms)]
 type SRR = SimpleRequestRpc;
 type SB = ScannableBlock;
 
@@ -92,7 +92,7 @@ test!(
 );
 
 test!(
-  // Ideally, this would be single_R, yet it isn't feasible to apply allow(non_snake_case) here
+  // Ideally, this would be single_R, yet it isn't feasible to apply expect(non_snake_case) here
   single_r_subaddress_send,
   (
     // Consume this builder for an output we can use in the future
