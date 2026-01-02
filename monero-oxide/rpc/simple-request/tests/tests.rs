@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+#![expect(missing_docs)]
 
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
@@ -109,7 +109,7 @@ async fn test_decoy_rpc() {
     assert_eq!(rpc.get_output_distribution(1 ..= 1).await.unwrap().len(), 1);
 
     rpc.get_output_distribution(0 .. 0).await.unwrap_err();
-    #[allow(clippy::reversed_empty_ranges)]
+    #[expect(clippy::reversed_empty_ranges)]
     rpc.get_output_distribution(1 .. 0).await.unwrap_err();
   }
 

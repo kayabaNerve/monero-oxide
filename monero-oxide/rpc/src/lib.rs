@@ -159,7 +159,6 @@ impl FeeRate {
 ///
 /// Higher-priority transactions will be included in blocks earlier.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[allow(non_camel_case_types)]
 pub enum FeePriority {
   /// The `Unimportant` priority, as defined by Monero.
   Unimportant,
@@ -763,7 +762,7 @@ pub trait Rpc: Sync + Clone {
     tx: &Transaction,
   ) -> impl Send + Future<Output = Result<(), RpcError>> {
     async move {
-      #[allow(dead_code, clippy::struct_excessive_bools)]
+      #[expect(dead_code, clippy::struct_excessive_bools)]
       #[derive(Debug, Deserialize)]
       struct SendRawResponse {
         status: String,
@@ -901,7 +900,7 @@ pub trait Rpc: Sync + Clone {
 
             // Check the field type
             {
-              #[allow(clippy::match_same_arms)]
+              #[expect(clippy::match_same_arms)]
               let (expected_type, expected_array_flag) = match name.as_slice() {
                 b"o_indexes" => (5, true),
                 b"status" => (10, false),

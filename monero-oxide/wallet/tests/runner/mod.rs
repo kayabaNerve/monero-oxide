@@ -25,7 +25,7 @@ mod builder;
 pub use builder::SignableTransactionBuilder;
 
 pub fn ring_len(rct_type: RctType) -> u8 {
-  #![allow(clippy::wildcard_enum_match_arm)]
+  #![expect(clippy::wildcard_enum_match_arm)]
   match rct_type {
     RctType::ClsagBulletproof => 11,
     RctType::ClsagBulletproofPlus => 16,

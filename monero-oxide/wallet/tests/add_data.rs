@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+#![expect(missing_docs)]
 
 use monero_oxide::transaction::Transaction;
 use monero_simple_request_rpc::SimpleRequestRpc;
@@ -6,7 +6,7 @@ use monero_wallet::{rpc::Rpc as _, extra::MAX_ARBITRARY_DATA_SIZE, send::SendErr
 
 mod runner;
 
-#[allow(clippy::upper_case_acronyms)]
+#[expect(clippy::upper_case_acronyms)]
 type SRR = SimpleRequestRpc;
 
 test!(

@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+#![expect(missing_docs)]
 
 use monero_simple_request_rpc::SimpleRequestRpc;
 use monero_wallet::{
@@ -8,7 +8,7 @@ use monero_wallet::{
 
 mod runner;
 
-#[allow(clippy::upper_case_acronyms)]
+#[expect(clippy::upper_case_acronyms)]
 type SRR = SimpleRequestRpc;
 type Tx = Transaction;
 
