@@ -45,7 +45,7 @@ jobs:
         run: git diff | wc -l | LC_ALL="en_US.utf8" grep -x -e "^[ ]*0"
 
   deny:
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # 6.0.0
 
@@ -56,7 +56,7 @@ jobs:
         run: cargo deny -L error --all-features check --hide-inclusion-graph
 
   fmt:
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # 6.0.0
 
@@ -86,7 +86,7 @@ jobs:
           RUSTDOCFLAGS="--cfg docsrs -Z unstable-options --document-hidden-items" cargo +nightly-2025-09-01 doc --workspace --all-features --document-private-items
 
   machete:
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # 6.0.0
       - name: Verify all dependencies are in use
