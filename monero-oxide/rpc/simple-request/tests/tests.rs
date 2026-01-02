@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use core::time::Duration;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
@@ -16,11 +18,11 @@ const ADDRESS: &str =
 
 #[tokio::test]
 async fn test_rpc() {
-  use monero_rpc::Rpc;
+  use monero_rpc::Rpc as _;
 
   let guard = SEQUENTIAL.lock().await;
 
-  let rpc = SimpleRequestRpc::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
+  let rpc = SimpleRequestRpc::new("http://monero:oxide@127.0.0.1:18081".to_owned()).await.unwrap();
 
   {
     // Test get_height
@@ -28,7 +30,7 @@ async fn test_rpc() {
     // The height should be the amount of blocks on chain
     // The number of a block should be its zero-indexed position
     // Accordingly, there should be no block whose number is the height
-    assert!(rpc.get_block_by_number(height).await.is_err());
+    rpc.get_block_by_number(height).await.unwrap_err();
     let block_number = height - 1;
     // There should be a block just prior
     let block = rpc.get_block_by_number(block_number).await.unwrap();
@@ -66,12 +68,12 @@ async fn test_rpc() {
 
 #[tokio::test]
 async fn test_decoy_rpc() {
-  use monero_rpc::{Rpc, DecoyRpc};
+  use monero_rpc::{Rpc as _, DecoyRpc as _};
 
   let guard = SEQUENTIAL.lock().await;
 
   let rpc = SimpleRequestRpc::with_custom_timeout(
-    "http://monero:oxide@127.0.0.1:18081".to_string(),
+    "http://monero:oxide@127.0.0.1:18081".to_owned(),
     Duration::from_mins(5),
   )
   .await
@@ -128,7 +130,7 @@ async fn test_zero_out_tx_o_indexes() {
 
   let guard = SEQUENTIAL.lock().await;
 
-  let rpc = SimpleRequestRpc::new("https://node.sethforprivacy.com".to_string()).await.unwrap();
+  let rpc = SimpleRequestRpc::new("https://node.sethforprivacy.com".to_owned()).await.unwrap();
 
   assert_eq!(
     rpc

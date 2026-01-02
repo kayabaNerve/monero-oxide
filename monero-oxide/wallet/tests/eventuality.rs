@@ -1,8 +1,10 @@
+#![allow(missing_docs)]
+
 use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 
 use monero_oxide::transaction::Transaction;
 use monero_wallet::{
-  rpc::Rpc,
+  rpc::Rpc as _,
   address::{AddressType, MoneroAddress},
 };
 
@@ -11,7 +13,7 @@ mod runner;
 test!(
   eventuality,
   (
-    |_, mut builder: Builder, _| async move {
+    async |_, mut builder: Builder, _| {
       // Add a standard address, a payment ID address, a subaddress, and a guaranteed address
       // Each have their own slight implications to eventualities
       builder.add_payment(
@@ -55,7 +57,7 @@ test!(
       assert_eq!(eventuality, Eventuality::read(&mut eventuality.serialize().as_slice()).unwrap());
       (tx, eventuality)
     },
-    |_, _, mut tx: Transaction, _, eventuality: Eventuality| async move {
+    async |_, _, mut tx: Transaction, _, eventuality: Eventuality| {
       // 4 explicitly outputs added and one change output
       assert_eq!(tx.prefix().outputs.len(), 5);
 
