@@ -1,10 +1,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
-#![deny(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(non_snake_case)]
 
-use core::ops::Deref;
+use core::ops::Deref as _;
 use std_shims::{
   vec,
   vec::Vec,
@@ -14,12 +13,12 @@ use std_shims::{
 use rand_core::{RngCore, CryptoRng};
 
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
-use subtle::{Choice, ConstantTimeEq, ConditionallySelectable};
+use subtle::{Choice, ConstantTimeEq as _, ConditionallySelectable as _};
 
 use curve25519_dalek::{
   constants::ED25519_BASEPOINT_POINT,
   scalar::Scalar as DScalar,
-  traits::{IsIdentity, MultiscalarMul, VartimePrecomputedMultiscalarMul},
+  traits::{IsIdentity as _, MultiscalarMul as _, VartimePrecomputedMultiscalarMul as _},
   edwards::{EdwardsPoint, VartimeEdwardsPrecomputation},
 };
 #[cfg(feature = "compile-time-generators")]
@@ -31,6 +30,7 @@ use monero_io::*;
 use monero_ed25519::*;
 
 mod decoys;
+pub(crate) use decoys::MAX_RING_SIZE;
 pub use decoys::Decoys;
 
 #[cfg(feature = "multisig")]
@@ -291,9 +291,7 @@ impl Clsag {
     let pseudo_out = Commitment::new(Scalar::from(mask), input.commitment.amount).commit().into();
     let mask_delta = input.commitment.mask.into() - mask;
 
-    let H =
-      Point::biased_hash(input.decoys.ring()[usize::from(signer_index)][0].compress().to_bytes())
-        .into();
+    let H = Point::biased_hash(input.decoys.signer_ring_members()[0].compress().to_bytes()).into();
     let D = H * mask_delta;
     let mut s = Vec::with_capacity(input.decoys.ring().len());
     for _ in 0 .. input.decoys.ring().len() {
@@ -390,14 +388,23 @@ impl Clsag {
           nonce.deref() * ED25519_BASEPOINT_TABLE,
           nonce.deref() * key_image_generators[i],
         );
-      // Effectively r - c x, except c x is (c_p x) + (c_c z), where z is the delta between the
-      // ring member's commitment and our pseudo-out commitment (which will only have a known
-      // discrete log over G if the amounts cancel out)
-      incomplete_clsag.s[usize::from(inputs[i].1.decoys.signer_index())] = Scalar::from(
-        nonce.deref() -
-          ((key_challenge * Zeroizing::new((*inputs[i].0.deref()).into()).deref()) +
-            challenged_mask),
-      );
+      {
+        // Effectively r - c x, except c x is (c_p x) + (c_c z), where z is the delta between the
+        // ring member's commitment and our pseudo-out commitment (which will only have a known
+        // discrete log over G if the amounts cancel out)
+        let signer_s = Scalar::from(
+          nonce.deref() -
+            ((key_challenge * Zeroizing::new((*inputs[i].0.deref()).into()).deref()) +
+              challenged_mask),
+        );
+        for s_index in 0 ..= MAX_RING_SIZE {
+          if usize::from(s_index) == incomplete_clsag.s.len() {
+            break;
+          }
+          let signer_index = s_index.ct_eq(&inputs[i].1.decoys.signer_index());
+          incomplete_clsag.s[usize::from(s_index)].conditional_assign(&signer_s, signer_index);
+        }
+      }
       let clsag = incomplete_clsag;
 
       // Zeroize private keys and nonces.

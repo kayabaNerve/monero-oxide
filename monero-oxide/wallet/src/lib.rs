@@ -1,9 +1,10 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![expect(unexpected_cfgs)]
+#![cfg_attr(monero_oxide_rust_nightly, feature(variant_count))]
 #![doc = include_str!("../README.md")]
-#![deny(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use core::ops::Deref;
+use core::ops::Deref as _;
 use std_shims::vec::Vec;
 
 use zeroize::{Zeroize, Zeroizing};
@@ -65,7 +66,7 @@ impl SharedKeyDerivations {
     keccak256(u)
   }
 
-  #[allow(clippy::needless_pass_by_value)]
+  #[expect(clippy::needless_pass_by_value)]
   fn output_derivations(
     uniqueness: Option<[u8; 32]>,
     ecdh: Zeroizing<Point>,
@@ -97,7 +98,7 @@ impl SharedKeyDerivations {
   }
 
   // H(8Ra || 0x8d)
-  #[allow(clippy::needless_pass_by_value)]
+  #[expect(clippy::needless_pass_by_value)]
   fn payment_id_xor(ecdh: Zeroizing<Point>) -> [u8; 8] {
     // 8Ra
     let output_derivation = Zeroizing::new(

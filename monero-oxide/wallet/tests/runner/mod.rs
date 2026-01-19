@@ -28,7 +28,10 @@ pub fn ring_len(rct_type: RctType) -> u8 {
   match rct_type {
     RctType::ClsagBulletproof => 11,
     RctType::ClsagBulletproofPlus => 16,
-    _ => panic!("ring size unknown for RctType"),
+    RctType::AggregateMlsagBorromean |
+    RctType::MlsagBorromean |
+    RctType::MlsagBulletproofs |
+    RctType::MlsagBulletproofsCompactAmount => panic!("ring size unknown for RctType"),
   }
 }
 
@@ -133,7 +136,7 @@ pub fn check_weight_and_fee(tx: &Transaction, fee_rate: FeeRate) {
 
 pub async fn rpc() -> MoneroDaemon<SimpleRequestTransport> {
   let rpc =
-    SimpleRequestTransport::new("http://monero:oxide@127.0.0.1:18081".to_string()).await.unwrap();
+    SimpleRequestTransport::new("http://monero:oxide@127.0.0.1:18081".to_owned()).await.unwrap();
 
   const BLOCKS_TO_MINE: usize = 110;
 

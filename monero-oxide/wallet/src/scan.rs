@@ -1,4 +1,4 @@
-use core::ops::Deref;
+use core::ops::Deref as _;
 use std_shims::{vec, vec::Vec, collections::HashMap};
 
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -87,6 +87,7 @@ struct InternalScanner {
 }
 
 impl Zeroize for InternalScanner {
+  #[expect(clippy::iter_over_hash_type)]
   fn zeroize(&mut self) {
     self.pair.zeroize();
     self.guaranteed.zeroize();
@@ -141,6 +142,17 @@ impl InternalScanner {
 
     let mut res = vec![];
     for (o, output) in tx.prefix().outputs.iter().enumerate() {
+      /*
+        Explicitly skip keys which are the identity.
+
+        These are theoretically able to be scanned (with negligible probability except for a
+        recipient who chooses their keys as to cause this), but are unspendable due to restrictions
+        the key image isn't the identity point (in place since the RingCT upgrade).
+      */
+      if output.key == CompressedPoint::IDENTITY {
+        continue;
+      }
+
       let Some(output_key) = output.key.decompress() else { continue };
 
       // Monero checks with each TX key and with the additional key for this output
@@ -159,11 +171,7 @@ impl InternalScanner {
           Zeroizing::new(Point::from(dalek_view.deref() * key.into()))
         };
         let output_derivations = SharedKeyDerivations::output_derivations(
-          if self.guaranteed {
-            Some(SharedKeyDerivations::uniqueness(&tx.prefix().inputs))
-          } else {
-            None
-          },
+          self.guaranteed.then(|| SharedKeyDerivations::uniqueness(&tx.prefix().inputs)),
           ecdh.clone(),
           o,
         );
@@ -349,7 +357,7 @@ impl Scanner {
   /// This function runs in variable time, notably with regards to the distribution of subaddress
   /// derivations (which should be reasonably uniform) and the amount of subaddresses registered.
   pub fn register_subaddress(&mut self, subaddress: SubaddressIndex) {
-    self.0.register_subaddress(subaddress)
+    self.0.register_subaddress(subaddress);
   }
 
   /// Scan a block.
@@ -384,7 +392,7 @@ impl GuaranteedScanner {
   /// This function runs in variable time, notably with regards to the distribution of subaddress
   /// derivations (which should be reasonably uniform) and the amount of subaddresses registered.
   pub fn register_subaddress(&mut self, subaddress: SubaddressIndex) {
-    self.0.register_subaddress(subaddress)
+    self.0.register_subaddress(subaddress);
   }
 
   /// Scan a block.

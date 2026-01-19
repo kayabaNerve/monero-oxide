@@ -1,15 +1,15 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
-#![deny(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use core::{fmt::Debug, future::Future};
 
 extern crate alloc;
 use alloc::{
+  borrow::ToOwned as _,
   format, vec,
   vec::Vec,
-  string::{String, ToString},
+  string::{String, ToString as _},
 };
 
 use serde::{Deserialize, de::DeserializeOwned};
@@ -57,6 +57,7 @@ const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 const MAX_RESPONSE_SIZE: usize = 100 * 1024 * 1024;
 
 // These are our own constants used for determining our own bounds on response sizes
+#[expect(clippy::as_conversions)]
 const HTTP_OVERHEAD_ESTIMATE: usize = u16::MAX as usize;
 const REQUEST_SIZE_TARGET: usize = MAX_REQUEST_SIZE - HTTP_OVERHEAD_ESTIMATE - 2048;
 const JSON_BYTE_OVERHEAD_FACTOR_ESTIMATE: usize = 8;
@@ -85,13 +86,13 @@ const TRANSACTION_SIZE_BOUND: usize = monero_oxide::primitives::const_max!(
 
 fn rpc_hex(value: &str) -> Result<Vec<u8>, InterfaceError> {
   hex::decode(value)
-    .map_err(|_| InterfaceError::InvalidInterface("expected hex wasn't hex".to_string()))
+    .map_err(|_| InterfaceError::InvalidInterface("expected hex wasn't hex".to_owned()))
 }
 
 fn hash_hex(hash: &str) -> Result<[u8; 32], InterfaceError> {
   rpc_hex(hash)?
     .try_into()
-    .map_err(|_| InterfaceError::InvalidInterface("hash wasn't 32-bytes".to_string()))
+    .map_err(|_| InterfaceError::InvalidInterface("hash wasn't 32-bytes".to_owned()))
 }
 
 #[derive(Deserialize)]
@@ -156,7 +157,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
        { "jsonrpc": "2.0", "method": "on_get_block_hash", "params": [1], "id": 1 }
       ]"#;
       let response: serde_json::Value =
-        result.rpc_call_internal("json_rpc", Some(BATCH_REQUEST.to_string()), 0).await?;
+        result.rpc_call_internal("json_rpc", Some(BATCH_REQUEST.to_owned()), 0).await?;
       if let Some(error) = response.get("error") {
         /*
           If the server failed to parse our valid JSON, we assume it's because it's expecting an
@@ -233,7 +234,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     res.truncate(response_size_limit);
 
     std_shims::string::String::from_utf8(res)
-      .map_err(|_| InterfaceError::InvalidInterface("response wasn't utf-8".to_string()))
+      .map_err(|_| InterfaceError::InvalidInterface("response wasn't utf-8".to_owned()))
   }
 
   async fn rpc_call_internal<Response: DeserializeOwned>(
@@ -243,9 +244,8 @@ impl<T: HttpTransport> MoneroDaemon<T> {
     response_size_limit: usize,
   ) -> Result<Response, InterfaceError> {
     let res = self.rpc_call_core(route, params, response_size_limit).await?;
-    serde_json::from_str(&res).map_err(|_| {
-      InterfaceError::InvalidInterface("response wasn't the expected json".to_string())
-    })
+    serde_json::from_str(&res)
+      .map_err(|_| InterfaceError::InvalidInterface("response wasn't the expected json".to_owned()))
   }
 
   /// Perform a RPC call to the specified route with the provided parameters.
@@ -319,7 +319,7 @@ impl<T: HttpTransport> MoneroDaemon<T> {
   ///
   /// Returns the hashes of the generated blocks and the last block's alleged number.
   ///
-  /// This is intended for testing purposes and does not validate the result in any way.
+  /// This is intended for testing purposes and may not validate the result in any way.
   pub async fn generate_blocks<const ADDR_BYTES: u128>(
     &self,
     address: &Address<ADDR_BYTES>,
@@ -331,19 +331,54 @@ impl<T: HttpTransport> MoneroDaemon<T> {
       height: usize,
     }
 
-    let res = self
-      .json_rpc_call_internal::<BlocksResponse>(
-        "generateblocks",
-        Some(format!(r#"{{ "wallet_address": "{address}", "amount_of_blocks": {block_count} }}"#)),
-        block_count.saturating_mul(32),
-      )
-      .await?;
+    /*
+      This pre-allocation is fine as the user is legitimately requesting this many blocks. It'll
+      redundant only only go unused if the following request errors, which makes this optimistic,
+      as fine within a function _intended_ as (and documented as) a test helper.
+    */
+    let mut blocks = Vec::with_capacity(block_count);
+    let mut last_height = None;
 
-    let mut blocks = Vec::with_capacity(res.blocks.len());
-    for block in res.blocks {
-      blocks.push(hash_hex(&block)?);
+    /*
+      We explicitly generate these one at a time due to how latency linearly increases with each
+      requested block, yet our transport is presumably configured with a constant timeout. This
+      ensures this request won't timeout simply because a large amount of blocks was requested, as
+      seen with https://github.com/monero-oxide/monero-oxide/issues/92.
+
+      While this will perform many more network requests than necessary (a linear amount instead
+      of a constant amount), this function is documented as being for testing purposes, so that
+      shouldn't be an issue.
+
+      Alternatively, we could 'fire and forget' the call to generate blocks, then asynchronously
+      observe the blockchain until it reached the expected length. This wouldn't let us properly
+      handle errors however, instead requiring we try to indirectly detect errors, and would be
+      over-engineered for what's _intended_ as a test helper (making the network traffic presumably
+      local, and the increased latency likely negligible compared to the latency of generating
+      these blocks anyways).
+    */
+    for _ in 0 .. block_count {
+      let res = self
+        .json_rpc_call_internal::<BlocksResponse>(
+          "generateblocks",
+          Some(format!(r#"{{ "wallet_address": "{address}", "amount_of_blocks": 1 }}"#)),
+          32,
+        )
+        .await?;
+
+      if res.blocks.len() != 1 {
+        Err(InterfaceError::InvalidInterface(
+          "unexpected amount of blocks from `generateblocks`".to_owned(),
+        ))?;
+      }
+      blocks.push(hash_hex(&res.blocks[0])?);
+
+      last_height = Some(res.height);
     }
-    Ok((blocks, res.height))
+
+    let last_height = last_height.ok_or_else(|| {
+      InterfaceError::InternalError("requested generation of zero blocks".to_owned())
+    })?;
+    Ok((blocks, last_height))
   }
 }
 
@@ -357,7 +392,7 @@ impl<T: HttpTransport> ProvidesBlockchainMeta for MoneroDaemon<T> {
       let res = self.rpc_call_internal::<HeightResponse>("get_height", None, 0).await?.height;
       res.checked_sub(1).ok_or_else(|| {
         InterfaceError::InvalidInterface(
-          "node claimed the blockchain didn't even have the genesis block".to_string(),
+          "node claimed the blockchain didn't even have the genesis block".to_owned(),
         )
       })
     }
@@ -416,7 +451,7 @@ mod provides_transaction {
         while !hashes_hex.is_empty() {
           let this_count = TRANSACTIONS_LIMIT.min(hashes_hex.len());
 
-          let txs = "\"".to_string() + &hashes_hex.drain(.. this_count).collect::<Vec<_>>().join("\",\"") + "\"";
+          let txs = "\"".to_owned() + &hashes_hex.drain(.. this_count).collect::<Vec<_>>().join("\",\"") + "\"";
           let txs: TransactionsResponse = self
             .rpc_call_internal(
               "get_transactions",
@@ -430,7 +465,7 @@ mod provides_transaction {
           }
           if txs.txs.len() != this_count {
             Err(InterfaceError::InvalidInterface(
-              "not missing any transactions yet didn't return all transactions".to_string(),
+              "not missing any transactions yet didn't return all transactions".to_owned(),
             ))?;
           }
 
@@ -451,7 +486,7 @@ mod provides_transaction {
               ))
             })?;
             if !buf.is_empty() {
-              Err(InterfaceError::InvalidInterface("transaction had extra bytes after it".to_string()))?;
+              Err(InterfaceError::InvalidInterface("transaction had extra bytes after it".to_owned()))?;
             }
 
             // We check this to ensure we didn't read a pruned transaction when we meant to read an
@@ -482,7 +517,7 @@ mod provides_transaction {
         while !hashes_hex.is_empty() {
           let this_count = TRANSACTIONS_LIMIT.min(hashes_hex.len());
 
-          let txs = "\"".to_string() + &hashes_hex.drain(.. this_count).collect::<Vec<_>>().join("\",\"") + "\"";
+          let txs = "\"".to_owned() + &hashes_hex.drain(.. this_count).collect::<Vec<_>>().join("\",\"") + "\"";
           let txs: TransactionsResponse = self
             .rpc_call_internal(
               "get_transactions",
@@ -496,7 +531,7 @@ mod provides_transaction {
           }
           if txs.txs.len() != this_count {
             Err(InterfaceError::InvalidInterface(
-              "not missing any transactions yet didn't return all pruned transactions".to_string(),
+              "not missing any transactions yet didn't return all pruned transactions".to_owned(),
             ))?;
           }
 
@@ -516,7 +551,7 @@ mod provides_transaction {
             })?;
             if !buf.is_empty() {
               Err(InterfaceError::InvalidInterface(
-                "pruned transaction had extra bytes after it".to_string(),
+                "pruned transaction had extra bytes after it".to_owned(),
               ))?;
             }
             let prunable_hash = (!matches!(tx, Transaction::V1 { .. }))
@@ -541,7 +576,7 @@ impl<T: HttpTransport> PublishTransaction for MoneroDaemon<T> {
     tx: &Transaction,
   ) -> impl Send + Future<Output = Result<(), PublishTransactionError>> {
     async move {
-      #[allow(dead_code)]
+      #[expect(dead_code, clippy::struct_excessive_bools)]
       #[derive(Deserialize)]
       struct SendRawResponse {
         status: String,

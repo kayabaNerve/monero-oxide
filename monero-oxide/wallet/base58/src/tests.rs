@@ -33,13 +33,16 @@ fn base58() {
   let max_decoded_block = "zzzzzzzzzzz";
   assert!(decode(max_decoded_block).is_none());
 
+  // Shifts into position without issue but fails to add the last character
+  assert!(decode("jpXCZedGfVz").is_none());
+
   let full_and_partial_block = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
   encode_decode(full_and_partial_block);
 }
 
 #[test]
 fn fuzz_base58() {
-  use rand_core::{RngCore, OsRng};
+  use rand_core::{RngCore as _, OsRng};
 
   for _ in 0 .. 1000 {
     for len in 1 .. 200 {
@@ -62,4 +65,15 @@ fn fuzz_base58() {
       }
     }
   }
+}
+
+#[test]
+fn non_canonical() {
+  // `decode_check("8Tge7kr") == decode_check("dLricHU")` without a check for if we're truncating
+  /*
+    let canon = crate::decode_check("8Tge7kr").unwrap();
+    let non_canon = crate::decode_check("dLricHU").unwrap();
+    assert_eq!(canon, non_canon);
+  */
+  assert!(crate::decode_check("dLricHU").is_none());
 }

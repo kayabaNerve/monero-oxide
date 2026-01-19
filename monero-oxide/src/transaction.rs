@@ -1,5 +1,4 @@
 use core::cmp::Ordering;
-#[allow(unused_imports)]
 use std_shims::prelude::*;
 use std_shims::io::{self, Read, Write};
 
@@ -304,7 +303,7 @@ impl TransactionPrefix {
   }
 }
 
-#[allow(private_bounds)]
+#[expect(private_bounds)]
 mod sealed {
   use core::fmt::Debug;
   use crate::ringct::*;
@@ -326,9 +325,11 @@ mod sealed {
       for input in inputs {
         match input {
           Input::ToKey { key_offsets, .. } => {
-            signatures.push(RingSignature::read(key_offsets.len(), r)?)
+            signatures.push(RingSignature::read(key_offsets.len(), r)?);
           }
-          _ => Err(io::Error::other("reading signatures for a transaction with non-ToKey inputs"))?,
+          Input::Gen { .. } => {
+            Err(io::Error::other("reading signatures for a transaction with non-`ToKey` inputs"))?;
+          }
         }
       }
       Ok(signatures)
@@ -345,22 +346,22 @@ mod sealed {
   }
 
   pub(crate) trait PotentiallyPrunedRctProofs: Clone + PartialEq + Eq + Debug {
-    fn write(&self, w: &mut impl Write) -> io::Result<()>;
-    fn read(
+    fn potentially_pruned_write(&self, w: &mut impl Write) -> io::Result<()>;
+    fn potentially_pruned_read(
       ring_length: usize,
       inputs: usize,
       outputs: usize,
       r: &mut impl Read,
     ) -> io::Result<Option<Self>>;
-    fn rct_type(&self) -> RctType;
+    fn potentially_pruned_rct_type(&self) -> RctType;
     fn base(&self) -> &RctBase;
   }
 
   impl PotentiallyPrunedRctProofs for RctProofs {
-    fn write(&self, w: &mut impl Write) -> io::Result<()> {
+    fn potentially_pruned_write(&self, w: &mut impl Write) -> io::Result<()> {
       self.write(w)
     }
-    fn read(
+    fn potentially_pruned_read(
       ring_length: usize,
       inputs: usize,
       outputs: usize,
@@ -368,7 +369,7 @@ mod sealed {
     ) -> io::Result<Option<Self>> {
       RctProofs::read(ring_length, inputs, outputs, r)
     }
-    fn rct_type(&self) -> RctType {
+    fn potentially_pruned_rct_type(&self) -> RctType {
       self.rct_type()
     }
     fn base(&self) -> &RctBase {
@@ -377,10 +378,10 @@ mod sealed {
   }
 
   impl PotentiallyPrunedRctProofs for PrunedRctProofs {
-    fn write(&self, w: &mut impl Write) -> io::Result<()> {
+    fn potentially_pruned_write(&self, w: &mut impl Write) -> io::Result<()> {
       self.base.write(w, self.rct_type)
     }
-    fn read(
+    fn potentially_pruned_read(
       _ring_length: usize,
       inputs: usize,
       outputs: usize,
@@ -388,7 +389,7 @@ mod sealed {
     ) -> io::Result<Option<Self>> {
       Ok(RctBase::read(inputs, outputs, r)?.map(|(rct_type, base)| Self { rct_type, base }))
     }
-    fn rct_type(&self) -> RctType {
+    fn potentially_pruned_rct_type(&self) -> RctType {
       self.rct_type
     }
     fn base(&self) -> &RctBase {
@@ -425,7 +426,6 @@ mod sealed {
 pub use sealed::*;
 
 /// A Monero transaction.
-#[allow(clippy::large_enum_variant)]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Transaction<P: PotentiallyPruned = NotPruned> {
   /// A version 1 transaction, used by the original Cryptonote codebase.
@@ -449,7 +449,6 @@ enum PrunableHash<'a> {
   V2([u8; 32]),
 }
 
-#[allow(private_bounds)]
 impl<P: PotentiallyPruned> Transaction<P> {
   /// Get the version of this transaction.
   pub fn version(&self) -> u8 {
@@ -490,7 +489,7 @@ impl<P: PotentiallyPruned> Transaction<P> {
         prefix.write(w)?;
         match proofs {
           None => w.write_all(&[0])?,
-          Some(proofs) => proofs.write(w)?,
+          Some(proofs) => proofs.potentially_pruned_write(w)?,
         }
       }
     }
@@ -522,7 +521,7 @@ impl<P: PotentiallyPruned> Transaction<P> {
 
       Ok(Transaction::V1 { prefix, signatures })
     } else if version == 2 {
-      let proofs = P::RctProofs::read(
+      let proofs = P::RctProofs::potentially_pruned_read(
         prefix.inputs.first().map_or(0, |input| match input {
           Input::Gen(_) => 0,
           Input::ToKey { key_offsets, .. } => key_offsets.len(),
@@ -539,7 +538,7 @@ impl<P: PotentiallyPruned> Transaction<P> {
   }
 
   // The hash of the transaction.
-  #[allow(clippy::needless_pass_by_value)]
+  #[expect(clippy::needless_pass_by_value)]
   fn hash_with_prunable_hash_internal(&self, prunable: PrunableHash<'_>) -> [u8; 32] {
     match self {
       Transaction::V1 { prefix, .. } => {
@@ -569,7 +568,7 @@ impl<P: PotentiallyPruned> Transaction<P> {
           let mut buf = Vec::with_capacity(512);
           proofs
             .base()
-            .write(&mut buf, proofs.rct_type())
+            .write(&mut buf, proofs.potentially_pruned_rct_type())
             .expect("write failed but <Vec as io::Write> doesn't fail");
           hashes.extend(keccak256(&buf));
         } else {

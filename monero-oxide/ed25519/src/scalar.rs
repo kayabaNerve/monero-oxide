@@ -1,15 +1,15 @@
-use core::ops::DerefMut;
+use core::ops::DerefMut as _;
 
 #[allow(unused_imports)]
 use std_shims::prelude::*;
 use std_shims::io::{self, *};
 
-use subtle::{Choice, ConstantTimeEq};
+use subtle::{Choice, ConstantTimeEq, ConditionallySelectable};
 use zeroize::{Zeroize, Zeroizing};
 
 use rand_core::{RngCore, CryptoRng};
 
-use sha3::{Digest, Keccak256};
+use sha3::{Digest as _, Keccak256};
 
 use monero_io::*;
 
@@ -26,6 +26,17 @@ impl PartialEq for Scalar {
   /// This defers to `ConstantTimeEq::ct_eq`.
   fn eq(&self, other: &Self) -> bool {
     bool::from(self.ct_eq(other))
+  }
+}
+
+impl ConditionallySelectable for Scalar {
+  fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
+    let mut result = [0; 32];
+    #[allow(clippy::needless_range_loop)]
+    for i in 0 .. 32 {
+      result[i] = u8::conditional_select(&a.0[i], &b.0[i], choice);
+    }
+    Self(result)
   }
 }
 

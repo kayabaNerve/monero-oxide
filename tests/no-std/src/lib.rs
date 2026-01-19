@@ -1,3 +1,4 @@
+#![expect(missing_docs)]
 #![no_std]
 
 pub use monero_epee;

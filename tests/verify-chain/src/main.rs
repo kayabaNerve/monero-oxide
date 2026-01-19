@@ -1,6 +1,5 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
-#![deny(missing_docs)]
 
 use serde::Deserialize;
 use serde_json::json;
@@ -227,25 +226,24 @@ async fn main() {
 
   // How many blocks to work on at once
   let async_parallelism: usize =
-    args.get(2).unwrap_or(&"8".to_string()).parse::<usize>().expect("invalid parallelism argument");
+    args.get(2).unwrap_or(&"8".to_owned()).parse::<usize>().expect("invalid parallelism argument");
 
   // Read further args as RPC URLs
   let default_nodes = vec![
-    "http://xmr-node-uk.cakewallet.com:18081".to_string(),
-    "http://xmr-node-eu.cakewallet.com:18081".to_string(),
+    "http://xmr-node-uk.cakewallet.com:18081".to_owned(),
+    "http://xmr-node-eu.cakewallet.com:18081".to_owned(),
   ];
   let mut specified_nodes = vec![];
   {
     let mut i = 0;
-    loop {
-      let Some(node) = args.get(3 + i) else { break };
+    while let Some(node) = args.get(3 + i) {
       specified_nodes.push(node.clone());
       i += 1;
     }
   }
   let nodes = if specified_nodes.is_empty() { default_nodes } else { specified_nodes };
 
-  let rpc = |url: String| async move {
+  let rpc = async |url: String| {
     SimpleRequestTransport::new(url.clone())
       .await
       .unwrap_or_else(|_| panic!("couldn't create SimpleRequestTransport connected to {url}"))
