@@ -111,11 +111,11 @@ impl<F: PrimeField> Add<&LinComb<F>> for LinComb<F> {
     self.WR.extend(&constraint.WR);
     self.WO.extend(&constraint.WO);
     for (i, sparse_vec) in &constraint.WCG {
-      if let Some(existing) = self.WCG.get_mut(i) {
-        existing.extend(sparse_vec);
-      } else {
-        self.WCG.insert(*i, sparse_vec.clone());
-      }
+      self
+        .WCG
+        .entry(*i)
+        .and_modify(|existing| existing.extend(sparse_vec))
+        .or_insert_with(|| sparse_vec.clone());
     }
     self.WV.extend(&constraint.WV);
     self.c += constraint.c;
@@ -133,12 +133,12 @@ impl<F: PrimeField> Sub<&LinComb<F>> for LinComb<F> {
     self.WR.extend(constraint.WR.iter().map(|(i, weight)| (*i, -*weight)));
     self.WO.extend(constraint.WO.iter().map(|(i, weight)| (*i, -*weight)));
     for (i, sparse_vec) in &constraint.WCG {
-      let sparse_vec = sparse_vec.iter().copied().map(|(j, value)| (j, -value));
-      if let Some(existing) = self.WCG.get_mut(i) {
-        existing.extend(sparse_vec);
-      } else {
-        self.WCG.insert(*i, sparse_vec.collect());
-      }
+      let mut sparse_vec = sparse_vec.iter().copied().map(|(j, value)| (j, -value));
+      self
+        .WCG
+        .entry(*i)
+        .and_modify(|existing| existing.extend(&mut sparse_vec))
+        .or_insert_with(|| sparse_vec.collect());
     }
     self.WV.extend(constraint.WV.iter().map(|(i, weight)| (*i, -*weight)));
     self.c -= constraint.c;
@@ -196,11 +196,11 @@ impl<F: PrimeField> LinComb<F> {
           dependent on the size of the IPA, hence why these _also_ update `highest_a_index`.
         */
         self.highest_a_index = self.highest_a_index.max(Some(j));
-        if let Some(values) = self.WCG.get_mut(&i) {
-          values.push((j, scalar));
-        } else {
-          self.WCG.insert(i, vec![(j, scalar)]);
-        }
+        self
+          .WCG
+          .entry(i)
+          .and_modify(|values| values.push((j, scalar)))
+          .or_insert_with(|| vec![(j, scalar)]);
       }
       Variable::V(i) => {
         self.highest_v_index = self.highest_v_index.max(Some(i));
