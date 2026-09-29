@@ -28,6 +28,9 @@ monero-interface = { path = "..", version = "0.2", default-features = false }
 
 monero-epee = { path = "../../epee", version = "0.2", default-features = false }
 
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["macros", "rt"] }
+
 [features]
 std = [
   "std-shims/std",

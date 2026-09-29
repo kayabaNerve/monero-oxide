@@ -607,6 +607,17 @@ impl<T: HttpTransport> PublishTransaction for MoneroDaemon<T> {
         Err(PublishTransactionError::TransactionRejected(res.reason))?;
       }
 
+      // A daemon may accept the transaction into its local pool yet refuse to relay it
+      // (e.g. restricted RPC mode, or the node is offline from peers). The transaction
+      // won't propagate to the network, and depending on the daemon's local policy may
+      // even be evicted, so treat this as a failure instead of silently reporting
+      // success.
+      if res.not_relayed {
+        Err(PublishTransactionError::TransactionRejected(
+          "daemon accepted the transaction but did not relay it".to_owned(),
+        ))?;
+      }
+
       Ok(())
     }
   }
@@ -688,4 +699,78 @@ mod provides_fee_rates {
 pub mod prelude {
   pub use monero_interface::prelude::*;
   pub use crate::{HttpTransport, MoneroDaemon};
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+  use core::future::Future;
+
+  use monero_interface::{InterfaceError, PublishTransaction as _, PublishTransactionError};
+  use monero_oxide::transaction::{Input, NotPruned, Timelock, Transaction, TransactionPrefix};
+
+  use crate::{HttpTransport, MoneroDaemon};
+
+  /// A transport which replies to any request with a canned response.
+  #[derive(Clone)]
+  struct CannedTransport {
+    response: &'static str,
+  }
+
+  impl HttpTransport for CannedTransport {
+    fn post(
+      &self,
+      _route: &str,
+      _body: Vec<u8>,
+      _response_size_limit: Option<usize>,
+    ) -> impl Send + Future<Output = Result<Vec<u8>, InterfaceError>> {
+      async move { Ok(self.response.as_bytes().to_vec()) }
+    }
+  }
+
+  // Directly assembles the daemon, skipping `MoneroDaemon::new` which performs live RPC calls.
+  fn daemon_with(response: &'static str) -> MoneroDaemon<CannedTransport> {
+    MoneroDaemon {
+      transport: CannedTransport { response },
+      response_size_limits: true,
+      supports_json_rpc_batch_requests: false,
+    }
+  }
+
+  // A dummy transaction; the canned transport never inspects it.
+  fn dummy_tx() -> Transaction<NotPruned> {
+    Transaction::V1 {
+      prefix: TransactionPrefix {
+        additional_timelock: Timelock::None,
+        inputs: vec![Input::Gen(0)],
+        outputs: vec![],
+        extra: vec![],
+      },
+      signatures: vec![],
+    }
+  }
+
+  #[tokio::test]
+  async fn publish_transaction_succeeds_when_relayed() {
+    let daemon = daemon_with(
+      r#"{ "status": "OK", "double_spend": false, "fee_too_low": false, "invalid_input": false,
+           "invalid_output": false, "low_mixin": false, "not_relayed": false, "overspend": false,
+           "too_big": false, "too_few_outputs": false, "reason": "" }"#,
+    );
+    daemon.publish_transaction(&dummy_tx()).await.unwrap();
+  }
+
+  #[tokio::test]
+  async fn publish_transaction_fails_when_not_relayed() {
+    // A daemon in restricted RPC mode (or otherwise refusing to relay) reports
+    // `status: OK` with `not_relayed: true`, per monerod's core_rpc_server.cpp.
+    let daemon = daemon_with(
+      r#"{ "status": "OK", "double_spend": false, "fee_too_low": false, "invalid_input": false,
+           "invalid_output": false, "low_mixin": false, "not_relayed": true, "overspend": false,
+           "too_big": false, "too_few_outputs": false, "reason": "Not relayed" }"#,
+    );
+    assert!(matches!(
+      daemon.publish_transaction(&dummy_tx()).await,
+      Err(PublishTransactionError::TransactionRejected(_))
+    ));
+  }
 }
